@@ -858,18 +858,87 @@ select:focus-visible {
   margin: 18px 0;
 }
 
-.cv-provider-profile,
 .cv-provider-dashboard > .cv-card {
   margin-top: 18px;
+}
+
+.cv-provider-inline-details {
+  min-width: 0;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #edf1ed;
+  animation: cv-details-enter .18s ease-out both;
+}
+
+.cv-provider-inline-content {
+  min-width: 0;
+  color: #526b5e;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.cv-provider-inline-content p {
+  margin: 0 0 10px;
+}
+
+.cv-provider-inline-content h4 {
+  margin: 14px 0 6px;
+  color: #25483b;
+  font: 800 12px/1.45 Manrope, sans-serif;
+}
+
+.cv-provider-inline-content ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.cv-provider-inline-content dl {
+  display: grid;
+  gap: 7px;
+  margin: 10px 0;
+}
+
+.cv-provider-inline-content dl > div {
+  display: grid;
+  grid-template-columns: minmax(82px, .45fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.cv-provider-inline-content dt {
+  color: #74877b;
+  font-weight: 700;
+}
+
+.cv-provider-inline-content dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.cv-provider-inline-error {
+  color: #a13e33;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.cv-provider-inline-error p {
+  margin: 0 0 8px;
+}
+
+@keyframes cv-details-enter {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cv-provider-inline-details {
+    animation: none;
+  }
 }
 
 .cv-provider-dashboard {
   display: grid;
   gap: 16px;
-}
-
-.cv-provider-profile p {
-  line-height: 1.65;
 }
 
 .cv-review-row {

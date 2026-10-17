@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth.security import get_current_user, hash_password, revoke_user_sessions
+from app.auth.security import ROLE_NAMES, get_current_user, hash_password, revoke_user_sessions
 from app.core.database import get_db
 from app.models.billing import Invoice, Payment
 from app.models.providers import Appointment, Doctor, Hospital
@@ -19,7 +19,6 @@ from app.services.notification_service import notify_user
 
 router = APIRouter(prefix="/admin", tags=["Administration"])
 ADMIN_ROLES = {"platform_admin", "hospital_admin"}
-MANAGED_ROLES = {"doctor", "hospital_staff", "hospital_admin", "platform_admin"}
 
 
 class UserAdminUpdate(BaseModel):
@@ -27,6 +26,13 @@ class UserAdminUpdate(BaseModel):
     hospital_id: int | None = Field(default=None, gt=0)
     doctor_id: int | None = Field(default=None, gt=0)
     is_active: bool | None = None
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, value: str | None) -> str | None:
+        if value is not None and value not in ROLE_NAMES:
+            raise ValueError("Unsupported account role.")
+        return value
 
     @model_validator(mode="after")
     def require_update(self):
@@ -128,6 +134,8 @@ def create_managed_account(
     user: User = Depends(get_current_user),
 ):
     hospital_id = _admin_hospital(user)
+    if user.role == "platform_admin" and payload.role != "hospital_admin":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Platform administrators may only provision hospital administrator accounts.")
     if user.role == "hospital_admin" and payload.role != "doctor":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Hospital administrators may only create doctor accounts.")
     hospital = db.get(Hospital, payload.hospital_id)
@@ -228,14 +236,17 @@ def admin_overview(
 def list_admin_users(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
-    role: str | None = Query(default=None, pattern="^(doctor|hospital_staff|hospital_admin|platform_admin)$"),
+    role: str | None = Query(default=None, pattern="^(patient|doctor|hospital_staff|hospital_admin|platform_admin)$"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
     hospital_id = _admin_hospital(user)
-    query = select(User).where(User.role != "patient")
+    query = select(User)
     if hospital_id is not None:
-        query = query.where(User.hospital_id == hospital_id, User.role == "hospital_staff")
+        query = query.where(
+            User.hospital_id == hospital_id,
+            User.role.in_(("doctor", "hospital_staff")),
+        )
     if role:
         query = query.where(User.role == role)
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
@@ -272,59 +283,98 @@ def update_admin_user(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Administration access is required.")
     if not payload.model_fields_set:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Provide an account role or active-state update.")
+    if user.role == "platform_admin":
+        locked_platform_admin_ids = db.scalars(
+            select(User.id)
+            .where(User.role == "platform_admin", User.is_active.is_(True))
+            .order_by(User.id.asc())
+            .with_for_update()
+        ).all()
+    else:
+        locked_platform_admin_ids = []
     target = db.scalar(select(User).where(User.id == user_id).with_for_update())
-    if target is None or target.role == "patient":
+    if target is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Managed account not found.")
-    if target.id == user.id:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Administrators cannot change their own role or account status here.")
+    previous_role = target.role
+    previous_hospital_id = target.hospital_id
+    previous_doctor_id = target.doctor_id
 
     if user.role == "hospital_admin":
-        if target.hospital_id != user.hospital_id or target.role != "hospital_staff":
+        if target.hospital_id != user.hospital_id or target.role not in {"doctor", "hospital_staff"}:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Managed account not found in this hospital.")
-        if payload.role is not None or payload.hospital_id is not None or payload.doctor_id is not None:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Hospital administrators may only activate or deactivate hospital staff.")
+        if payload.role is not None and payload.role not in {"doctor", "hospital_staff"}:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Hospital administrators may assign only doctor or hospital staff roles.")
+        if payload.hospital_id is not None and payload.hospital_id != user.hospital_id:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Hospital administrators cannot assign accounts to another hospital.")
     else:
-        if target.role == "platform_admin":
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "Platform administrator roles cannot be changed through this endpoint.")
-        if payload.role is not None:
-            if payload.role not in MANAGED_ROLES - {"platform_admin"}:
-                raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Unsupported managed account role.")
-            target.role = payload.role
-        if payload.hospital_id is not None:
-            if db.get(Hospital, payload.hospital_id) is None:
-                raise HTTPException(status.HTTP_404_NOT_FOUND, "Hospital not found.")
-            target.hospital_id = payload.hospital_id
-        if payload.doctor_id is not None:
-            doctor = db.get(Doctor, payload.doctor_id)
-            if doctor is None:
-                raise HTTPException(status.HTTP_404_NOT_FOUND, "Clinician profile not found.")
-            target.doctor_id = doctor.id
-            target.hospital_id = doctor.hospital_id
-        if target.role == "doctor":
-            doctor = db.get(Doctor, target.doctor_id) if target.doctor_id is not None else None
-            if doctor is None or doctor.hospital_id != target.hospital_id:
-                raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Doctor accounts must be linked to a clinician at the assigned hospital.")
-        elif target.role in {"hospital_staff", "hospital_admin"}:
-            if target.hospital_id is None or db.get(Hospital, target.hospital_id) is None:
-                raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Hospital accounts must be assigned to an existing hospital.")
-            target.doctor_id = None
-        elif target.role == "platform_admin":
-            target.hospital_id = None
-            target.doctor_id = None
+        if payload.role is not None and payload.role not in ROLE_NAMES:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Unsupported account role.")
 
+    next_role = payload.role or target.role
+    next_hospital_id = payload.hospital_id
+    next_doctor_id = payload.doctor_id
+    role_changed = payload.role is not None and payload.role != target.role
+
+    if next_role == "doctor":
+        if next_doctor_id is None and not role_changed:
+            next_doctor_id = target.doctor_id
+        doctor = db.scalar(
+            select(Doctor).where(Doctor.id == next_doctor_id).with_for_update()
+        ) if next_doctor_id is not None else None
+        if doctor is None or not doctor.is_active:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Doctor accounts must be linked to an active clinician profile.")
+        assigned_doctor = db.scalar(
+            select(User.id).where(
+                User.doctor_id == doctor.id,
+                User.id != target.id,
+            )
+        )
+        if assigned_doctor is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "This clinician profile is already linked to another account.")
+        if next_hospital_id is None:
+            next_hospital_id = doctor.hospital_id
+        if doctor.hospital_id != next_hospital_id:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Doctor profile and account must belong to the same hospital.")
+    elif next_role in {"hospital_admin", "hospital_staff"}:
+        if next_hospital_id is None:
+            next_hospital_id = target.hospital_id
+        if next_hospital_id is None or db.get(Hospital, next_hospital_id) is None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Hospital accounts must be assigned to an existing hospital.")
+        next_doctor_id = None
+    else:
+        if payload.hospital_id is not None or payload.doctor_id is not None:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Patient and platform administrator accounts cannot be assigned to a hospital or clinician.")
+        next_hospital_id = None
+        next_doctor_id = None
+
+    if user.role == "hospital_admin" and (
+        next_hospital_id != user.hospital_id
+        or next_role not in {"doctor", "hospital_staff"}
+    ):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Hospital administrators may manage only doctor and staff accounts in their hospital.")
+
+    removes_platform_admin = target.role == "platform_admin" and (
+        next_role != "platform_admin" or payload.is_active is False
+    )
+    if removes_platform_admin and target.is_active:
+        if len(locked_platform_admin_ids) <= 1:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "The last active platform administrator cannot be removed or downgraded.",
+            )
+
+    target.role = next_role
+    target.hospital_id = next_hospital_id
+    target.doctor_id = next_doctor_id
     if payload.is_active is not None:
-        if target.role == "platform_admin" and not payload.is_active:
-            active_platform_admins = db.scalar(
-                select(func.count()).select_from(User).where(
-                    User.role == "platform_admin",
-                    User.is_active.is_(True),
-                )
-            ) or 0
-            if active_platform_admins <= 1:
-                raise HTTPException(status.HTTP_409_CONFLICT, "The last active platform administrator cannot be deactivated.")
         target.is_active = payload.is_active
 
-    revoke_user_sessions(db, target.id)
+    scope_changed = (
+        previous_hospital_id != target.hospital_id
+        or previous_doctor_id != target.doctor_id
+    )
+    if role_changed or scope_changed or payload.is_active is not None:
+        revoke_user_sessions(db, target.id)
     record_audit(
         db,
         request,
@@ -333,7 +383,11 @@ def update_admin_user(
         hospital_id=target.hospital_id,
         resource_type="user",
         resource_id=target.id,
-        details={"role": target.role, "is_active": target.is_active},
+        details={
+            "previous_role": previous_role,
+            "role": target.role,
+            "is_active": target.is_active,
+        },
     )
     db.commit()
     db.refresh(target)

@@ -16,7 +16,7 @@ from app.main import app
 from app.models.providers import Appointment, Doctor, Hospital
 from app.models.billing import Invoice, Payment, PaymentWebhookEvent
 from app.models.user import User
-from app.routes import billing_routes
+from app.services import payment_service
 from tests.auth_utils import make_session_token
 
 
@@ -99,7 +99,7 @@ def test_staff_invoice_owner_checkout_and_captured_payment(monkeypatch):
     original_async_client = httpx.AsyncClient
     transport = httpx.MockTransport(provider_response)
     monkeypatch.setattr(
-        billing_routes.httpx,
+        payment_service.httpx,
         "AsyncClient",
         lambda **kwargs: original_async_client(transport=transport, **kwargs),
     )

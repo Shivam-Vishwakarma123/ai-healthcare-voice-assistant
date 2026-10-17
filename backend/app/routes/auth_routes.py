@@ -8,10 +8,10 @@ from email.message import EmailMessage
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.core.email_validation import normalize_email
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -96,13 +96,33 @@ class BootstrapAdminIn(BaseModel):
 
 
 class LoginIn(BaseModel):
-    email: str
+    email: str | None = None
+    username: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    )
     password: str = Field(min_length=1, max_length=128)
 
-    @field_validator("email")
-    @classmethod
-    def validate_email(cls, value: str) -> str:
-        return normalize_email(value)
+    @model_validator(mode="after")
+    def normalize_login_identifier(self):
+        if (self.email is None) == (self.username is None):
+            raise ValueError("Provide exactly one email address or username.")
+        if self.email is not None:
+            self.email = normalize_email(self.email)
+        else:
+            self.username = self.username.strip().lower()
+            if not self.username:
+                raise ValueError("Username must not be empty.")
+        return self
+
+    @property
+    def login_identifier(self) -> str:
+        if self.email is not None:
+            return self.email
+        assert self.username is not None
+        return self.username
 
 
 class PasswordResetRequest(BaseModel):
@@ -123,6 +143,7 @@ class UserOut(BaseModel):
     id: int
     full_name: str
     email: str
+    username: str | None = None
     role: str
     phone_number: str | None = None
 
@@ -221,9 +242,11 @@ def register(payload: RegisterIn, request: Request, db: Session = Depends(get_db
 
 @router.post("/login", response_model=TokenOut)
 def login(payload: LoginIn, request: Request, db: Session = Depends(get_db)):
-    normalized_email = str(payload.email).lower()
-    enforce_auth_rate_limit(request, normalized_email)
-    user = db.scalar(select(User).where(User.email == normalized_email))
+    identifier = payload.login_identifier
+    enforce_auth_rate_limit(request, identifier)
+    user = db.scalar(
+        select(User).where(or_(User.email == identifier, User.username == identifier))
+    )
     stored_hash = user.password_hash if user else dummy_password_hash
     password_valid = verify_password(payload.password, stored_hash)
     if not user or not password_valid or not user.is_active:

@@ -14,7 +14,7 @@ from app.models.billing import Invoice, Payment
 from app.models.providers import Appointment, Doctor, Hospital
 from app.models.security import AdminBootstrapState
 from app.models.user import User
-from app.routes import billing_routes
+from app.services import payment_service
 from tests.auth_utils import make_session_token
 
 
@@ -178,7 +178,7 @@ def test_demo_payment_modes_use_only_valid_attempts_and_settle_once(db_sessions,
     monkeypatch.setattr(settings, "razorpay_key_id", "")
     monkeypatch.setattr(settings, "razorpay_key_secret", "")
     provider_calls = []
-    monkeypatch.setattr(billing_routes.httpx, "AsyncClient", lambda **_: provider_calls.append("called"))
+    monkeypatch.setattr(payment_service.httpx, "AsyncClient", lambda **_: provider_calls.append("called"))
 
     with db_sessions() as db:
         hospital = Hospital(name="Demo Clinic", city="Raipur", state="CG")
@@ -231,6 +231,11 @@ def test_demo_payment_modes_use_only_valid_attempts_and_settle_once(db_sessions,
             "online_payment_enabled": True,
             "demo_payment_enabled": True,
         }
+        assert client.post(
+            "/api/v1/billing/checkout",
+            headers=_headers(tokens["patient"]),
+            json={"invoice_id": 999999},
+        ).status_code == 404
         mismatch = client.post(
             "/api/v1/billing/invoices",
             headers=_headers(tokens["staff"]),

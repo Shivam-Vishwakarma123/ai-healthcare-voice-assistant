@@ -499,7 +499,6 @@ def main() -> None:
     with SessionLocal.begin() as db:
         counts = seed_demo_data(db)
     print(f"CareVoice fictional demo data seeded: {counts}")
-    print("Development-only login password: CareVoiceDemo2026!")
 
 
 if __name__ == "__main__":

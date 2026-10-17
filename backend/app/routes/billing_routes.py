@@ -5,7 +5,6 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
@@ -20,8 +19,17 @@ from app.models.providers import Appointment, Doctor, Hospital
 from app.models.user import User
 from app.services.audit_service import record_audit
 from app.services.notification_service import notify_user
+from app.services.payment_service import PaymentProviderError, PaymentService, RazorpayPaymentService
 
 router = APIRouter(prefix="/billing", tags=["Billing"])
+
+
+def _payment_service() -> PaymentService:
+    return RazorpayPaymentService(
+        settings.razorpay_key_id,
+        settings.razorpay_key_secret,
+        settings.razorpay_api_base_url,
+    )
 
 
 class InvoiceCreate(BaseModel):
@@ -322,34 +330,14 @@ async def create_checkout(payload: CheckoutCreate, request: Request, db: Session
         return _checkout_order(invoice, payment)
 
     try:
-        async with httpx.AsyncClient(
-            auth=(settings.razorpay_key_id, settings.razorpay_key_secret),
-            timeout=httpx.Timeout(15.0, connect=5.0),
-        ) as client:
-            response = await client.post(
-                f"{settings.razorpay_api_base_url.rstrip('/')}/orders",
-                json={
-                    "amount": invoice.amount_minor,
-                    "currency": invoice.currency,
-                    "receipt": invoice.invoice_number,
-                    "notes": {"invoice_id": str(invoice.id)},
-                },
-            )
-            response.raise_for_status()
-            order = response.json()
-        order_id = order["id"]
-        if (
-            not isinstance(order_id, str)
-            or not order_id
-            or type(order.get("amount")) is not int
-            or order.get("amount") != invoice.amount_minor
-            or order.get("currency") != invoice.currency
-        ):
-            raise ValueError("Razorpay returned invalid or mismatched order details.")
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Razorpay could not create a checkout order.") from exc
-    except (httpx.RequestError, ValueError, KeyError, TypeError) as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Could not create a Razorpay checkout order.") from exc
+        order_id = await _payment_service().create_order(
+            invoice_id=invoice.id,
+            invoice_number=invoice.invoice_number,
+            amount_minor=invoice.amount_minor,
+            currency=invoice.currency,
+        )
+    except PaymentProviderError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
 
     payment = Payment(invoice_id=invoice.id, provider_order_id=order_id, status="created")
     db.add(payment)
@@ -497,21 +485,9 @@ async def verify_checkout(payload: CheckoutVerify, request: Request, db: Session
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Payment signature is invalid.")
 
     try:
-        async with httpx.AsyncClient(
-            auth=(settings.razorpay_key_id, settings.razorpay_key_secret),
-            timeout=httpx.Timeout(15.0, connect=5.0),
-        ) as client:
-            response = await client.get(
-                f"{settings.razorpay_api_base_url.rstrip('/')}/payments/{payload.razorpay_payment_id}"
-            )
-            response.raise_for_status()
-            captured_payment = response.json()
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Razorpay could not confirm the payment.") from exc
-    except (httpx.RequestError, ValueError) as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Could not confirm payment with Razorpay.") from exc
-    if not isinstance(captured_payment, dict):
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Razorpay returned an invalid payment response.")
+        captured_payment = await _payment_service().fetch_payment(payload.razorpay_payment_id)
+    except PaymentProviderError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     if (
         captured_payment.get("order_id") != payload.razorpay_order_id
         or type(captured_payment.get("amount")) is not int

@@ -202,6 +202,17 @@ def test_cli_refuses_to_seed_outside_development_and_test(monkeypatch):
         engine.dispose()
 
 
+def test_cli_does_not_print_seed_password(monkeypatch, capsys):
+    monkeypatch.setattr(settings, "app_env", "test")
+    engine, sessions = _seeded_database()
+    monkeypatch.setattr("app.seed_demo.SessionLocal", sessions)
+    try:
+        main()
+        assert DEMO_PASSWORD not in capsys.readouterr().out
+    finally:
+        engine.dispose()
+
+
 def test_demo_seed_uses_slots_in_the_past_and_future():
     engine, sessions = _seeded_database()
     try:

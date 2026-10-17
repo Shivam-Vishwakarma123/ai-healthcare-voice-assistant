@@ -36,13 +36,15 @@ class HashEmbeddingProvider:
     """Deterministic, local lexical baseline; not a semantic embedding model."""
 
     def embed(self, text: str) -> list[float]:
+        tokens = re.findall(r"[^\W_]+", (text or "").casefold(), flags=re.UNICODE)
+        if not tokens:
+            raise EmbeddingProviderError("Embedding provider requires a non-empty text input.")
         dimensions = max(32, min(settings.embedding_dimensions, 4096))
         vector = [0.0] * dimensions
-        tokens = re.findall(r"[^\W_]+", (text or "").casefold(), flags=re.UNICODE)
         for token in tokens:
             bucket = int.from_bytes(hashlib.sha256(token.encode("utf-8")).digest()[:4], "big") % dimensions
             vector[bucket] += 1.0
-        return _normalize(vector) if any(vector) else vector
+        return _normalize(vector)
 
 
 class OpenAICompatibleEmbeddingProvider:

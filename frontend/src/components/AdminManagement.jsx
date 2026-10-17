@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../services/api";
+import AdminUserRow, { requiresPlatformAdminDemotionConfirmation } from "./AdminUserRow";
 import NotificationContactForm from "./NotificationContactForm";
 
 function countLabel(metric) {
@@ -11,32 +12,53 @@ function AdminSection({ title, children }) {
   return <section className="cv-card cv-admin-section"><h2>{title}</h2>{children}</section>;
 }
 
-export default function AdminManagement({ token, user, onUserUpdated, language = "en" }) {
+async function fetchAllAdminUsers(token) {
+  const firstPage = await apiRequest("/admin/users?limit=100&offset=0", token);
+  const pageOffsets = [];
+  for (let offset = firstPage.items.length; offset < firstPage.total; offset += firstPage.limit) {
+    pageOffsets.push(offset);
+  }
+  const remainingPages = await Promise.all(
+    pageOffsets.map((offset) =>
+      apiRequest(`/admin/users?limit=${firstPage.limit}&offset=${offset}`, token),
+    ),
+  );
+  return [firstPage, ...remainingPages].flatMap((page) => page.items);
+}
+
+export default function AdminManagement({
+  token,
+  onUserUpdated,
+  onSessionInvalidated,
+  language = "en",
+}) {
   const [data, setData] = useState(null);
+  const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [draftRoles, setDraftRoles] = useState({});
+  const [roleDrafts, setRoleDrafts] = useState({});
   const [accountForm, setAccountForm] = useState({
     full_name: "",
     email: "",
-    role: user?.role === "platform_admin" ? "hospital_admin" : "doctor",
+    role: "hospital_admin",
     hospital_id: "",
     doctor_id: "",
     password: "",
     password_confirmation: "",
   });
   const hi = language === "hi";
-  const platformAdmin = user?.role === "platform_admin";
+  const platformAdmin = currentUser?.role === "platform_admin";
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [overview, users, appointments, payments, audit, notifications, hospitals, doctors] = await Promise.all([
+      const [authenticatedUser, overview, users, appointments, payments, audit, notifications, hospitals, doctors] = await Promise.all([
+        apiRequest("/auth/me", token),
         apiRequest("/admin/overview", token),
-        apiRequest("/admin/users?limit=50", token),
+        fetchAllAdminUsers(token),
         apiRequest("/admin/appointments?limit=50", token),
         apiRequest("/admin/payments?limit=50", token),
         apiRequest("/admin/audit-logs?limit=50", token),
@@ -44,8 +66,14 @@ export default function AdminManagement({ token, user, onUserUpdated, language =
         apiRequest("/admin/hospitals", token),
         apiRequest("/admin/doctors", token),
       ]);
-      setData({ overview, users: users.items, appointments: appointments.items, payments: payments.items, audit: audit.items, notifications: notifications.items, hospitals, doctors });
-      if (user?.hospital_id) setAccountForm((current) => ({ ...current, hospital_id: String(user.hospital_id) }));
+      setCurrentUser(authenticatedUser);
+      setData({ overview, users, appointments: appointments.items, payments: payments.items, audit: audit.items, notifications: notifications.items, hospitals, doctors });
+      setRoleDrafts({});
+      setAccountForm((current) => ({
+        ...current,
+        role: authenticatedUser.role === "platform_admin" ? "hospital_admin" : "doctor",
+        hospital_id: authenticatedUser.hospital_id ? String(authenticatedUser.hospital_id) : current.hospital_id,
+      }));
     } catch (reason) {
       setError(reason?.message || (hi ? "प्रशासन की जानकारी लोड नहीं हो सकी।" : "Administration data could not be loaded."));
     } finally {
@@ -56,18 +84,78 @@ export default function AdminManagement({ token, user, onUserUpdated, language =
   useEffect(() => { load(); }, [load]);
 
   async function updateUser(account) {
+    const isCurrentAccount = account.id === currentUser?.id;
+    if (
+      isCurrentAccount &&
+      !window.confirm(
+        "Deactivating your own account will immediately sign you out. Continue?",
+      )
+    ) {
+      return;
+    }
     setBusyId(`user-${account.id}`);
     setError("");
     setNotice("");
-    const body = platformAdmin
-      ? { role: draftRoles[account.id] || account.role }
-      : { is_active: !account.is_active };
     try {
-      await apiRequest(`/admin/users/${account.id}`, token, { method: "PATCH", body: JSON.stringify(body) });
+      await apiRequest(`/admin/users/${account.id}`, token, {
+        method: "PATCH",
+        body: JSON.stringify({ is_active: !account.is_active }),
+      });
       setNotice(hi ? "खाता अपडेट हुआ।" : "Account updated. Existing sessions were revoked where applicable.");
+      if (isCurrentAccount && !account.is_active && onSessionInvalidated) {
+        window.alert("Your account was deactivated. You will be signed out.");
+        onSessionInvalidated();
+        return;
+      }
       await load();
     } catch (reason) {
       setError(reason?.message || (hi ? "खाता अपडेट नहीं हो सका।" : "Account could not be updated."));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function saveRole(account, draft) {
+    const selfDemotion = requiresPlatformAdminDemotionConfirmation(
+      account,
+      currentUser,
+      draft.role,
+    );
+    if (
+      selfDemotion &&
+      !window.confirm(
+        "Changing your own role will immediately remove Platform Admin permissions and sign you out. Continue?",
+      )
+    ) {
+      return;
+    }
+
+    setBusyId(`user-${account.id}`);
+    setError("");
+    setNotice("");
+    const body = { role: draft.role };
+    if (["hospital_admin", "hospital_staff", "doctor"].includes(draft.role)) {
+      body.hospital_id = Number(draft.hospital_id);
+    }
+    if (draft.role === "doctor") body.doctor_id = Number(draft.doctor_id);
+    try {
+      const updated = await apiRequest(`/admin/users/${account.id}`, token, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      });
+      setNotice(
+        hi
+          ? `भूमिका ${updated.role.replaceAll("_", " ")} में अपडेट हुई।`
+          : `Role updated to ${updated.role.replaceAll("_", " ")}.`,
+      );
+      if (selfDemotion && onSessionInvalidated) {
+        window.alert("Your role changed. You will be signed out; sign in again with your new role.");
+        onSessionInvalidated();
+        return;
+      }
+      await load();
+    } catch (reason) {
+      setError(reason?.message || (hi ? "भूमिका अपडेट नहीं हो सकी।" : "Role could not be updated."));
     } finally {
       setBusyId(null);
     }
@@ -145,7 +233,7 @@ export default function AdminManagement({ token, user, onUserUpdated, language =
       {loading && <div className="cv-loading" role="status">{hi ? "प्रशासन डेटा लोड हो रहा है…" : "Loading administration data…"}</div>}
       {data && (
         <>
-          <NotificationContactForm token={token} user={user} onUpdated={onUserUpdated} language={language} />
+          <NotificationContactForm token={token} user={currentUser} onUpdated={onUserUpdated} language={language} />
           <div className="cv-metrics">
             {Object.entries(data.overview.users_by_role).map(([role, metric]) => <article className="cv-metric" key={role}><span className="cv-metric-label">{role.replaceAll("_", " ")}</span><strong>{countLabel(metric)}</strong><small>{hi ? "सक्रिय खाते; छोटे समूह छिपाए गए" : "Active accounts; small counts suppressed"}</small></article>)}
             {Object.entries(data.overview.appointments_by_status).map(([state, metric]) => <article className="cv-metric" key={`appointment-${state}`}><span className="cv-metric-label">{hi ? "अपॉइंटमेंट" : "Appointments"} · {state}</span><strong>{countLabel(metric)}</strong><small>{hi ? "एकत्रित स्थिति" : "Aggregated status"}</small></article>)}
@@ -154,24 +242,40 @@ export default function AdminManagement({ token, user, onUserUpdated, language =
 
           <AdminSection title={hi ? "खाता और भूमिका प्रबंधन" : "User roles and account access"}>
             {data.users.length ? <div className="cv-admin-table-wrap"><table className="cv-admin-table"><thead><tr><th>Account</th><th>Role</th><th>Hospital</th><th>Status</th><th>Action</th></tr></thead><tbody>
-              {data.users.map((account) => <tr key={account.id}>
-                <td>{account.full_name}<small>{account.email}</small></td>
-                <td>{platformAdmin ? <select aria-label={`Role for ${account.full_name}`} value={draftRoles[account.id] || account.role} onChange={(event) => setDraftRoles({ ...draftRoles, [account.id]: event.target.value })}>{[...(account.doctor_id ? ["doctor"] : []), "hospital_staff", "hospital_admin"].map((role) => <option key={role}>{role}</option>)}</select> : account.role}</td>
-                <td>{account.hospital_id ?? "—"}</td><td>{account.is_active ? "Active" : "Inactive"}</td>
-                <td><button className="cv-button cv-button-quiet" disabled={busyId === `user-${account.id}`} onClick={() => updateUser(account)}>{platformAdmin ? "Save role" : account.is_active ? "Deactivate" : "Reactivate"}</button></td>
-              </tr>)}
+              {data.users.map((account) => <AdminUserRow
+                key={account.id}
+                account={account}
+                currentUser={currentUser}
+                busy={busyId === `user-${account.id}`}
+                draft={roleDrafts[account.id]}
+                hospitals={data.hospitals}
+                doctors={data.doctors}
+                onDraftChange={(id, patch) => setRoleDrafts((drafts) => ({
+                  ...drafts,
+                  [id]: {
+                    ...(drafts[id] || {
+                      role: account.role,
+                      hospital_id: account.hospital_id || "",
+                      doctor_id: account.doctor_id || "",
+                    }),
+                    ...patch,
+                  },
+                }))}
+                onSaveRole={saveRole}
+                onToggle={updateUser}
+              />)}
             </tbody></table></div> : <p className="cv-subtle">No managed staff accounts.</p>}
           </AdminSection>
 
-          <AdminSection title={hi ? "स्टाफ खाता बनाएँ" : "Create a staff account"}>
+          <AdminSection title={hi ? (platformAdmin ? "अस्पताल एडमिन खाता बनाएँ" : "स्टाफ खाता बनाएँ") : (platformAdmin ? "Provision a Hospital Admin" : "Create a doctor account")}>
             <form className="cv-form" onSubmit={createAccount}>
               <div className="cv-form-row">
                 <label>{hi ? "पूरा नाम" : "Full name"}<input required minLength={2} maxLength={120} autoComplete="name" value={accountForm.full_name} onChange={(event) => setAccountForm({ ...accountForm, full_name: event.target.value })} /></label>
                 <label>{hi ? "ईमेल" : "Email"}<input required type="email" maxLength={254} autoComplete="email" value={accountForm.email} onChange={(event) => setAccountForm({ ...accountForm, email: event.target.value })} /></label>
               </div>
-              {platformAdmin && <label>{hi ? "भूमिका" : "Role"}<select value={accountForm.role} onChange={(event) => setAccountForm({ ...accountForm, role: event.target.value, doctor_id: "" })}><option value="hospital_admin">Hospital administrator</option><option value="doctor">Doctor login</option></select></label>}
+              {platformAdmin && <p className="cv-subtle">{hi ? "प्लेटफ़ॉर्म एडमिन केवल अस्पताल एडमिन खाते बना सकता है।" : "Platform administrators can provision Hospital Admin accounts only."}</p>}
               {platformAdmin && <label>{hi ? "अस्पताल" : "Hospital"}<select required value={accountForm.hospital_id} onChange={(event) => setAccountForm({ ...accountForm, hospital_id: event.target.value, doctor_id: "" })}><option value="">Select hospital</option>{data.hospitals.map((hospital) => <option key={hospital.id} value={hospital.id}>#{hospital.id} · {hospital.name} ({hospital.verification_status})</option>)}</select></label>}
-              {!platformAdmin && <p className="cv-subtle">{hi ? `अस्पताल #${user.hospital_id} के लिए डॉक्टर लॉगिन बनाया जाएगा।` : `This doctor account will be assigned to your hospital (#${user.hospital_id}).`}</p>}
+              {!platformAdmin && <p className="cv-subtle">{hi ? `अस्पताल #${currentUser.hospital_id} के लिए डॉक्टर लॉगिन बनाया जाएगा।` : `This doctor account will be assigned to your hospital (#${currentUser.hospital_id}).`}</p>}
               {accountForm.role === "doctor" && <label>{hi ? "चिकित्सक प्रोफ़ाइल" : "Clinician profile"}<select required value={accountForm.doctor_id} onChange={(event) => setAccountForm({ ...accountForm, doctor_id: event.target.value })}><option value="">Select clinician</option>{data.doctors.filter((doctor) => Number(doctor.hospital_id) === Number(accountForm.hospital_id) && doctor.is_active).map((doctor) => <option key={doctor.id} value={doctor.id}>#{doctor.id} · {doctor.full_name} — {doctor.specialty}</option>)}</select></label>}
               <div className="cv-form-row">
                 <label>{hi ? "पासवर्ड (12+ अक्षर)" : "Password (12+ characters)"}<input required type="password" minLength={12} maxLength={128} autoComplete="new-password" value={accountForm.password} onChange={(event) => setAccountForm({ ...accountForm, password: event.target.value })} /></label>

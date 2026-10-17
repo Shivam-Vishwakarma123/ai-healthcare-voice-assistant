@@ -61,6 +61,7 @@ def _admin_app():
             password_hash="unused",
             role="hospital_admin",
             hospital_id=hospital_one.id,
+            phone_number="+919876543211",
         )
         other_admin = User(
             full_name="Hospital Two Admin",
@@ -138,8 +139,12 @@ def _admin_app():
             "hospital_one": hospital_one.id,
             "hospital_two": hospital_two.id,
             "doctor_one": doctor_one.id,
+            "doctor_two": doctor_two.id,
+            "patient": patient.id,
             "staff_one": staff_one.id,
             "staff_two": staff_two.id,
+            "hospital_admin": hospital_admin.id,
+            "platform_admin": platform_admin.id,
             "appointment": appointment.id,
         }
     app.dependency_overrides[get_db] = override_database
@@ -186,7 +191,7 @@ def test_admin_access_tenant_isolation_and_database_aggregates():
         engine.dispose()
 
 
-def test_platform_role_management_and_hospital_scoped_activation(monkeypatch):
+def test_platform_admin_account_scope_and_hospital_scoped_activation(monkeypatch):
     engine, factory, tokens, ids = _admin_app()
     monkeypatch.setattr(notification_service.settings, "smtp_host", "")
     monkeypatch.setattr(notification_service.settings, "smtp_from_email", "")
@@ -194,6 +199,31 @@ def test_platform_role_management_and_hospital_scoped_activation(monkeypatch):
     monkeypatch.setattr(notification_service.settings, "sms_api_token", "")
     try:
         with TestClient(app) as client:
+            platform_users = client.get(
+                "/api/v1/admin/users",
+                headers=_headers(tokens["platform_admin"]),
+            )
+            assert platform_users.status_code == 200
+            self_account = next(
+                item for item in platform_users.json()["items"]
+                if item["id"] == ids["platform_admin"]
+            )
+            assert self_account["role"] == "platform_admin"
+
+            own_role_change = client.patch(
+                f"/api/v1/admin/users/{ids['platform_admin']}",
+                headers=_headers(tokens["platform_admin"]),
+                json={"role": "hospital_staff", "hospital_id": ids["hospital_one"]},
+            )
+            assert own_role_change.status_code == 409
+
+            invalid_role = client.patch(
+                f"/api/v1/admin/users/{ids['staff_one']}",
+                headers=_headers(tokens["platform_admin"]),
+                json={"role": "invalid_role"},
+            )
+            assert invalid_role.status_code == 422
+
             cross_tenant = client.patch(
                 f"/api/v1/admin/users/{ids['staff_two']}",
                 headers=_headers(tokens["hospital_admin"]),
@@ -207,6 +237,25 @@ def test_platform_role_management_and_hospital_scoped_activation(monkeypatch):
                 json={"role": "hospital_admin"},
             )
             assert role_escalation.status_code == 403
+            platform_escalation = client.patch(
+                f"/api/v1/admin/users/{ids['staff_one']}",
+                headers=_headers(tokens["hospital_admin"]),
+                json={"role": "platform_admin"},
+            )
+            assert platform_escalation.status_code == 403
+
+            unauthorized_staff_change = client.patch(
+                f"/api/v1/admin/users/{ids['staff_one']}",
+                headers=_headers(tokens["staff"]),
+                json={"role": "patient"},
+            )
+            assert unauthorized_staff_change.status_code == 403
+            unauthorized_patient_change = client.patch(
+                f"/api/v1/admin/users/{ids['patient']}",
+                headers=_headers(tokens["patient"]),
+                json={"role": "doctor"},
+            )
+            assert unauthorized_patient_change.status_code == 403
 
             deactivated = client.patch(
                 f"/api/v1/admin/users/{ids['staff_one']}",
@@ -216,17 +265,50 @@ def test_platform_role_management_and_hospital_scoped_activation(monkeypatch):
             assert deactivated.status_code == 200
             assert deactivated.json()["is_active"] is False
 
-            promoted = client.patch(
-                f"/api/v1/admin/users/{ids['staff_two']}",
+            managed_admin = client.patch(
+                f"/api/v1/admin/users/{ids['hospital_admin']}",
                 headers=_headers(tokens["platform_admin"]),
-                json={"role": "hospital_admin"},
+                json={"is_active": False},
             )
-            assert promoted.status_code == 200
-            assert promoted.json()["role"] == "hospital_admin"
+            assert managed_admin.status_code == 200
+            assert managed_admin.json()["role"] == "hospital_admin"
+            assert managed_admin.json()["is_active"] is False
+
+            forbidden_provisioning = client.post(
+                "/api/v1/admin/accounts",
+                headers=_headers(tokens["platform_admin"]),
+                json={
+                    "full_name": "Unauthorized Staff Account",
+                    "email": f"unauthorized-{uuid4()}@example.test",
+                    "role": "doctor",
+                    "hospital_id": ids["hospital_one"],
+                    "doctor_id": ids["doctor_one"],
+                    "password": "ValidPassword@2026!",
+                    "password_confirmation": "ValidPassword@2026!",
+                },
+            )
+            assert forbidden_provisioning.status_code == 403
+
+            provisioned = client.post(
+                "/api/v1/admin/accounts",
+                headers=_headers(tokens["platform_admin"]),
+                json={
+                    "full_name": "New Hospital Admin",
+                    "email": f"new-admin-{uuid4()}@example.test",
+                    "role": "hospital_admin",
+                    "hospital_id": ids["hospital_one"],
+                    "password": "ValidPassword@2026!",
+                    "password_confirmation": "ValidPassword@2026!",
+                },
+            )
+            assert provisioned.status_code == 201
+            assert provisioned.json()["role"] == "hospital_admin"
+            assert provisioned.json()["hospital_id"] == ids["hospital_one"]
 
             with factory() as db:
-                account = db.get(User, ids["staff_two"])
+                account = db.get(User, ids["hospital_admin"])
                 assert account.role == "hospital_admin"
+                assert db.get(User, ids["platform_admin"]).role == "platform_admin"
                 assert db.scalar(select(func.count()).select_from(AuthSession).where(
                     AuthSession.user_id == account.id,
                     AuthSession.revoked_at.is_not(None),
@@ -237,7 +319,84 @@ def test_platform_role_management_and_hospital_scoped_activation(monkeypatch):
                         select(NotificationDelivery).where(NotificationDelivery.user_id == account.id)
                     ).all()
                 }
-                assert delivery_outcomes == {"email": "unconfigured", "sms": "no_recipient"}
+                assert delivery_outcomes == {"email": "unconfigured", "sms": "unconfigured"}
+    finally:
+        app.dependency_overrides.clear()
+        engine.dispose()
+
+
+def test_platform_admin_assigns_all_roles_and_revokes_sessions(monkeypatch):
+    engine, factory, tokens, ids = _admin_app()
+    monkeypatch.setattr(notification_service.settings, "smtp_host", "")
+    monkeypatch.setattr(notification_service.settings, "smtp_from_email", "")
+    monkeypatch.setattr(notification_service.settings, "sms_api_url", "")
+    monkeypatch.setattr(notification_service.settings, "sms_api_token", "")
+    try:
+        with TestClient(app) as client:
+            role_updates = [
+                ("patient", {}),
+                ("hospital_staff", {"hospital_id": ids["hospital_one"]}),
+                ("hospital_admin", {"hospital_id": ids["hospital_one"]}),
+                ("doctor", {"hospital_id": ids["hospital_two"], "doctor_id": ids["doctor_two"]}),
+                ("platform_admin", {}),
+            ]
+            for role, scope in role_updates:
+                with factory() as db:
+                    target = db.get(User, ids["staff_one"])
+                    target_session_token = make_session_token(db, target)
+
+                response = client.patch(
+                    f"/api/v1/admin/users/{ids['staff_one']}",
+                    headers=_headers(tokens["platform_admin"]),
+                    json={"role": role, **scope},
+                )
+                assert response.status_code == 200, response.text
+                assert response.json()["role"] == role
+                with factory() as db:
+                    persisted = db.get(User, ids["staff_one"])
+                    assert persisted.role == role
+                    if role == "doctor":
+                        assert persisted.hospital_id == ids["hospital_two"]
+                        assert persisted.doctor_id == ids["doctor_two"]
+                assert client.get(
+                    "/api/v1/auth/me",
+                    headers=_headers(target_session_token),
+                ).status_code == 401
+
+            duplicate_doctor = client.patch(
+                f"/api/v1/admin/users/{ids['staff_two']}",
+                headers=_headers(tokens["platform_admin"]),
+                json={
+                    "role": "doctor",
+                    "hospital_id": ids["hospital_one"],
+                    "doctor_id": ids["doctor_one"],
+                },
+            )
+            assert duplicate_doctor.status_code == 409
+
+            with factory() as db:
+                own_account = db.get(User, ids["platform_admin"])
+                own_session_token = make_session_token(db, own_account)
+            own_role_change = client.patch(
+                f"/api/v1/admin/users/{ids['platform_admin']}",
+                headers=_headers(tokens["platform_admin"]),
+                json={"role": "hospital_staff", "hospital_id": ids["hospital_one"]},
+            )
+            assert own_role_change.status_code == 200
+            assert own_role_change.json()["role"] == "hospital_staff"
+            with factory() as db:
+                assert db.get(User, ids["platform_admin"]).role == "hospital_staff"
+                assert db.scalar(
+                    select(func.count()).select_from(User).where(
+                        User.role == "platform_admin",
+                        User.is_active.is_(True),
+                    )
+                ) >= 1
+            # The self-demotion revoked this token; it cannot be reused for privileged actions.
+            assert client.get(
+                "/api/v1/admin/users",
+                headers=_headers(own_session_token),
+            ).status_code == 401
     finally:
         app.dependency_overrides.clear()
         engine.dispose()
@@ -310,16 +469,16 @@ def test_notification_provider_failures_are_persisted_without_reverting_admin_ac
     try:
         with TestClient(app) as client:
             response = client.patch(
-                f"/api/v1/admin/users/{ids['staff_one']}",
+                f"/api/v1/admin/users/{ids['hospital_admin']}",
                 headers=_headers(tokens["platform_admin"]),
                 json={"is_active": False},
             )
             assert response.status_code == 200
             assert response.json()["is_active"] is False
             with factory() as db:
-                assert db.get(User, ids["staff_one"]).is_active is False
+                assert db.get(User, ids["hospital_admin"]).is_active is False
                 outcomes = db.scalars(
-                    select(NotificationDelivery).where(NotificationDelivery.user_id == ids["staff_one"])
+                    select(NotificationDelivery).where(NotificationDelivery.user_id == ids["hospital_admin"])
                 ).all()
                 assert {item.channel: item.status for item in outcomes} == {"email": "failed", "sms": "failed"}
                 assert all(item.failure_code == "failed" for item in outcomes)

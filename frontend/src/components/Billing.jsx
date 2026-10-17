@@ -146,7 +146,7 @@ export default function Billing({ token, user, language = "en" }) {
         body: JSON.stringify({ order_id: demoCheckout.order_id, outcome }),
       });
       const messages = {
-        success: `DEMO / NOT A REAL PAYMENT — simulated receipt ${result.transaction_id}; invoice ${result.invoice_number} is paid in this development database.`,
+        success: `DEMO / NOT A REAL PAYMENT — simulated reference ${result.transaction_id}; invoice ${result.invoice_number} is paid in this development database.`,
         failed: `DEMO / NOT A REAL PAYMENT — simulated failure recorded (${result.transaction_id}); invoice remains unpaid.`,
         cancelled: `DEMO / NOT A REAL PAYMENT — checkout cancelled (${result.transaction_id}); invoice remains unpaid.`,
       };
@@ -202,7 +202,7 @@ export default function Billing({ token, user, language = "en" }) {
               <div><b>{invoice.invoice_number}</b><p>{invoice.description} · {new Date(invoice.created_at).toLocaleDateString(hi ? "hi-IN" : "en-IN")}</p></div>
             <strong>{formatMoney(invoice.amount_minor, invoice.currency)}</strong>
               <span className={`invoice-status ${invoice.status}`}>{invoice.status === "paid" ? (hi ? "भुगतान हुआ" : "Paid") : (hi ? "बकाया" : "Unpaid")}</span>
-              {invoice.status === "unpaid" && <button className="primary" type="button" onClick={() => payInvoice(invoice)} disabled={busyId !== null || !enabled}>{busyId === invoice.id ? (hi ? "खुल रहा है…" : "Opening…") : (hi ? "अभी भुगतान करें" : "Pay now")}</button>}
+              {invoice.status === "unpaid" && <button className="primary" type="button" onClick={() => payInvoice(invoice)} disabled={busyId !== null || !enabled}>{busyId === invoice.id ? (hi ? "खुल रहा है…" : "Opening…") : paymentMode === "demo" ? (hi ? "डेमो भुगतान" : "Demo payment") : (hi ? "अभी भुगतान करें" : "Pay now")}</button>}
           </article>)}</div>}
           {loaded && !enabled && invoices.some((invoice) => invoice.status === "unpaid") && <p className="muted gateway-note">{hi ? "ऑनलाइन भुगतान अभी उपलब्ध नहीं है। अपने क्लिनिक से संपर्क करें; व्यवस्थापक को Razorpay कुंजियाँ कॉन्फ़िगर करनी होंगी।" : "Online payment is temporarily unavailable. Contact your clinic; an administrator must configure Razorpay test/live keys."}</p>}
           {loaded && paymentMode === "live" && enabled && <p className="muted gateway-note">{hi ? "भुगतान Razorpay द्वारा संसाधित होते हैं। CareVoice कार्ड या बैंक विवरण संग्रहीत नहीं करता।" : "Payments are processed by Razorpay. CareVoice does not store card or bank details."}</p>}
@@ -218,8 +218,8 @@ export default function Billing({ token, user, language = "en" }) {
       {demoCheckout && <div className="cv-dialog-backdrop" role="presentation">
         <section className="cv-dialog cv-demo-checkout" role="dialog" aria-modal="true" aria-labelledby="demo-checkout-title" aria-describedby="demo-checkout-description">
           <span className="eyebrow">DEMO / NOT A REAL PAYMENT</span>
-          <h2 id="demo-checkout-title">Simulated checkout</h2>
-          <p id="demo-checkout-description">This development-only flow does not contact a payment provider and does not collect card or banking details.</p>
+          <h2 id="demo-checkout-title">Demo Payment</h2>
+          <p id="demo-checkout-description">Demo mode — no real money will be charged. This simulation does not contact a payment provider and does not ask for card or banking details.</p>
           <p><strong>{demoCheckout.invoice_number}</strong> · {formatMoney(demoCheckout.amount_minor, demoCheckout.currency)}</p>
           <div className="cv-form-row">
             <button className="cv-button cv-button-primary" type="button" disabled={busyId === demoCheckout.order_id} onClick={() => completeDemoPayment("success")}>Simulate success</button>

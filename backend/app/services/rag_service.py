@@ -85,8 +85,10 @@ def chunk_text(text: str, *, chunk_size: int | None = None, overlap: int | None 
     normalized = re.sub(r"\s+", " ", text or "").strip()
     if not normalized:
         return []
-    chunk_size = chunk_size or settings.rag_chunk_size
-    overlap = overlap if overlap is not None else settings.rag_chunk_overlap
+    if chunk_size is None:
+        chunk_size = settings.rag_chunk_size
+    if overlap is None:
+        overlap = settings.rag_chunk_overlap
     if chunk_size < 100 or overlap < 0 or overlap >= chunk_size:
         raise ValueError("RAG chunk size must be at least 100 and overlap must be smaller than chunk size.")
     chunks: list[str] = []
@@ -262,7 +264,7 @@ class RAGService:
 
     def search(self, db: Session, query: str, *, limit: int = 5, category: str | None = None) -> list[RAGSearchResult]:
         sanitized = sanitize_search_query(query)
-        if not sanitized or limit < 1:
+        if not sanitized or limit < 1 or not _lexical_tokens(sanitized):
             return []
         query_vector = generate_embedding(sanitized)
         embedding_profile = _embedding_profile(len(query_vector))

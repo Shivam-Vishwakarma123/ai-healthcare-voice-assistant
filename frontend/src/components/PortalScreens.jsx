@@ -33,6 +33,53 @@ function LoadingState({ label = "Loading…" }) {
   return <div className="cv-loading" role="status"><span className="cv-spinner" aria-hidden="true" />{label}</div>;
 }
 
+function ProviderInlineDetails({ type, detail, loading, error, onRetry, language }) {
+  const hi = language === "hi";
+  if (loading) return <LoadingState label={hi ? "विवरण लोड हो रहे हैं…" : "Loading details…"} />;
+  if (error) {
+    return (
+      <div className="cv-provider-inline-error" role="alert">
+        <p>{error}</p>
+        <button className="cv-button cv-button-quiet" type="button" onClick={onRetry}>{hi ? "फिर कोशिश करें" : "Retry"}</button>
+      </div>
+    );
+  }
+  if (!detail) return <p className="cv-subtle">{hi ? "विवरण उपलब्ध नहीं हैं।" : "Details are not available."}</p>;
+
+  if (type === "doctors") {
+    const qualifications = detail.qualifications || [];
+    const schedules = (detail.schedules || []).filter((item) => item.is_active);
+    return (
+      <div className="cv-provider-inline-content">
+        <p>{detail.bio || detail.specialty}</p>
+        <dl>
+          <div><dt>{hi ? "विशेषताएँ" : "Specialties"}</dt><dd>{(detail.specialties || [detail.specialty]).join(", ")}</dd></div>
+          <div><dt>{hi ? "अनुभव" : "Experience"}</dt><dd>{hi ? `${detail.experience_years} वर्ष` : `${detail.experience_years} years`}</dd></div>
+          <div><dt>{hi ? "परामर्श शुल्क" : "Consultation fee"}</dt><dd>{formatMoney(detail.fee_minor)}</dd></div>
+          <div><dt>{hi ? "भाषाएँ" : "Languages"}</dt><dd>{(detail.languages || []).join(", ") || "—"}</dd></div>
+          <div><dt>{hi ? "परामर्श प्रकार" : "Consultation types"}</dt><dd>{(detail.consultation_types || []).map((item) => item.replaceAll("_", " ")).join(", ") || "—"}</dd></div>
+        </dl>
+        <h4>{hi ? "योग्यताएँ" : "Qualifications"}</h4>
+        {qualifications.length ? <ul>{qualifications.map((item) => <li key={item.id}>{item.degree} · {item.institution} · {item.verification_status}</li>)}</ul> : <p className="cv-subtle">{hi ? "कोई प्रकाशित योग्यता नहीं है।" : "No qualifications have been published."}</p>}
+        <h4>{hi ? "उपलब्धता" : "Availability"}</h4>
+        {schedules.length ? <ul>{schedules.map((item) => <li key={item.id}>{["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][item.day_of_week]} · {item.starts_at.slice(0, 5)}–{item.ends_at.slice(0, 5)} ({item.timezone}) · {item.consultation_type.replaceAll("_", " ")}</li>)}</ul> : <p className="cv-subtle">{hi ? "कोई समय-सारणी प्रकाशित नहीं है।" : "No availability has been published."}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="cv-provider-inline-content">
+      <p>{detail.description || (hi ? "विवरण उपलब्ध नहीं हैं।" : "No additional description has been provided.")}</p>
+      <dl>
+        <div><dt>{hi ? "पता" : "Address"}</dt><dd>{detail.address || "—"}</dd></div>
+        <div><dt>{hi ? "फ़ोन" : "Phone"}</dt><dd>{detail.phone ? <a href={`tel:${detail.phone}`}>{detail.phone}</a> : "—"}</dd></div>
+        <div><dt>{hi ? "वेबसाइट" : "Website"}</dt><dd>{detail.website ? <a href={detail.website} target="_blank" rel="noreferrer">{detail.website}</a> : "—"}</dd></div>
+        <div><dt>{hi ? "विभाग" : "Departments"}</dt><dd>{detail.departments || "—"}</dd></div>
+      </dl>
+    </div>
+  );
+}
+
 function AppointmentSlotPicker({ token, doctorId, consultationType, value, onChange, language }) {
   const [day, setDay] = useState(() => getISTDate(1));
   const [slots, setSlots] = useState([]);
@@ -518,18 +565,18 @@ export function ProviderDashboardPage({ user, token, onUserUpdated, language = "
   );
 }
 
-export function CareDirectoryPage({ token, onNavigate, language = "en", canBook = true }) {
+export function CareDirectoryPage({ token, onNavigate, onAppointmentBooked, language = "en", canBook = true }) {
   const [doctors, setDoctors] = useState([]);
   const [hospitals, setHospitals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [directoryError, setDirectoryError] = useState("");
-  const [profileError, setProfileError] = useState("");
   const [bookingError, setBookingError] = useState("");
-  const [profileLoading, setProfileLoading] = useState(false);
-  const [profileRequest, setProfileRequest] = useState(null);
+  const [expandedProfileKey, setExpandedProfileKey] = useState(null);
+  const [profileDetails, setProfileDetails] = useState({});
+  const [profileLoadingKey, setProfileLoadingKey] = useState(null);
+  const [profileErrors, setProfileErrors] = useState({});
   const [query, setQuery] = useState("");
   const [selectedDoctor, setSelectedDoctor] = useState(null);
-  const [selectedProfile, setSelectedProfile] = useState(null);
   const [scheduledFor, setScheduledFor] = useState("");
   const bookingCommandRef = useRef(null);
   const [consultationType, setConsultationType] = useState("in_person");
@@ -548,6 +595,8 @@ export function CareDirectoryPage({ token, onNavigate, language = "en", canBook 
   const bookDialogRef = useRef(null);
   const bookingTriggerRef = useRef(null);
   const savingRef = useRef(saving);
+  const profileDetailsRef = useRef({});
+  const profileRequestsRef = useRef(new Map());
   const hi = language === "hi";
 
   useEffect(() => { savingRef.current = saving; }, [saving]);
@@ -606,20 +655,56 @@ export function CareDirectoryPage({ token, onNavigate, language = "en", canBook 
     };
   }, [selectedDoctor]);
 
-  async function showProfile(type, profile) {
-    setProfileRequest({ type, profile });
-    setSelectedProfile(null);
-    setProfileLoading(true);
-    setProfileError("");
-    try {
-      const fullProfile = await apiRequest(`/providers/${type}/${profile.id}`, token);
-      setSelectedProfile({ type, value: fullProfile });
-    } catch (reason) {
-      setProfileError(reason?.message || "Profile could not be loaded.");
-    } finally {
-      setProfileLoading(false);
-    }
+  async function loadProviderProfile(type, profileId) {
+    const key = `${type}:${profileId}`;
+    if (profileDetailsRef.current[key]) return profileDetailsRef.current[key];
+    if (profileRequestsRef.current.has(key)) return profileRequestsRef.current.get(key);
+    setProfileLoadingKey(key);
+    setProfileErrors((current) => ({ ...current, [key]: "" }));
+    const request = apiRequest(`/providers/${type}/${profileId}`, token)
+      .then((fullProfile) => {
+        profileDetailsRef.current[key] = fullProfile;
+        setProfileDetails((current) => ({ ...current, [key]: fullProfile }));
+        return fullProfile;
+      })
+      .catch((reason) => {
+        const message = reason?.message || (hi ? "विवरण लोड नहीं हो सके।" : "Details could not be loaded.");
+        setProfileErrors((current) => ({ ...current, [key]: message }));
+        return null;
+      })
+      .finally(() => {
+        profileRequestsRef.current.delete(key);
+        setProfileLoadingKey((current) => current === key ? null : current);
+      });
+    profileRequestsRef.current.set(key, request);
+    return await request;
+  }
 
+  async function showProfile(type, profile) {
+    const key = `${type}:${profile.id}`;
+    if (expandedProfileKey === key) {
+      setExpandedProfileKey(null);
+      return;
+    }
+    setExpandedProfileKey(key);
+    await loadProviderProfile(type, profile.id);
+  }
+
+  function renderProfileDetails(type, profileId) {
+    const key = `${type}:${profileId}`;
+    const expanded = expandedProfileKey === key;
+    return (
+      <div className="cv-provider-inline-details" id={`provider-details-${type}-${profileId}`} aria-live="polite" hidden={!expanded}>
+        {expanded && <ProviderInlineDetails
+            type={type}
+            detail={profileDetails[key]}
+            loading={profileLoadingKey === key}
+            error={profileErrors[key]}
+            onRetry={() => loadProviderProfile(type, profileId)}
+            language={language}
+          />}
+      </div>
+    );
   }
 
   async function getRecommendations(event) {
@@ -664,17 +749,21 @@ export function CareDirectoryPage({ token, onNavigate, language = "en", canBook 
       if (bookingCommandRef.current?.fingerprint !== fingerprint) {
         bookingCommandRef.current = { fingerprint, key: createIdempotencyKey() };
       }
-      await apiRequest("/providers/appointments", token, {
+      const createdAppointment = await apiRequest("/providers/appointments", token, {
         method: "POST",
         headers: { "Idempotency-Key": bookingCommandRef.current.key },
         body: JSON.stringify(booking),
       });
+      if (!createdAppointment?.id || createdAppointment.status !== "scheduled") {
+        throw new Error(hi ? "सर्वर ने बुकिंग की पुष्टि नहीं की।" : "The server did not confirm the appointment booking.");
+      }
       setNotice(hi ? "अपॉइंटमेंट बुक हो गया है।" : "Your appointment was booked successfully.");
       setSelectedDoctor(null);
       setScheduledFor("");
       setNotes("");
       bookingCommandRef.current = null;
-      onNavigate("Appointments");
+      if (onAppointmentBooked) onAppointmentBooked(createdAppointment);
+      else onNavigate("Appointments");
     } catch (reason) {
       setBookingError(reason?.message || (hi ? "अपॉइंटमेंट बुक नहीं हो पाया।" : "The appointment could not be booked."));
     } finally {
@@ -686,8 +775,6 @@ export function CareDirectoryPage({ token, onNavigate, language = "en", canBook 
     <>
       <ScreenTitle title={hi ? "देखभाल खोजें" : "Find care"} description={hi ? "डॉक्टर और अस्पतालों की लाइव डायरेक्टरी ब्राउज़ करें।" : "Browse the live doctor and hospital directory. Bookings are sent to the clinic API."} />
       {directoryError && <InlineError message={directoryError} onRetry={() => loadDirectory()} />}
-      {profileError && <InlineError message={profileError} onRetry={() => profileRequest && showProfile(profileRequest.type, profileRequest.profile)} />}
-      {profileLoading && <LoadingState label={hi ? "प्रोफ़ाइल लोड हो रही है…" : "Loading provider profile…"} />}
       {bookingError && !selectedDoctor && <InlineError message={bookingError} />}
       {notice && <div className="cv-success" role="status">{notice}</div>}
       <label className="cv-search">
@@ -719,7 +806,14 @@ export function CareDirectoryPage({ token, onNavigate, language = "en", canBook 
           <p><strong>{hi ? "मानदंड मिलान" : "Criteria match"}: {Math.round(item.score * 100)}%</strong></p>
           <ul>{item.match_reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
           <p className="cv-subtle">{item.availability_note}</p>
-          <button className="cv-button cv-button-quiet" disabled={profileLoading} onClick={() => showProfile("doctors", { id: item.doctor_id })}>{hi ? "प्रोफ़ाइल देखें" : "View profile"}</button>
+          <button
+            className="cv-button cv-button-quiet"
+            type="button"
+            aria-expanded={expandedProfileKey === `doctors:${item.doctor_id}`}
+            aria-controls={`provider-details-doctors-${item.doctor_id}`}
+            onClick={() => showProfile("doctors", { id: item.doctor_id })}
+          >{expandedProfileKey === `doctors:${item.doctor_id}` ? (hi ? "कम दिखाएँ" : "Hide details") : (hi ? "प्रोफ़ाइल देखें" : "View profile")}</button>
+          {renderProfileDetails("doctors", item.doctor_id)}
         </article>)}</div>
       </section>}
       {loading ? <LoadingState label={hi ? "केयर डायरेक्टरी लोड हो रही है…" : "Loading the care directory…"} /> : (
@@ -734,7 +828,14 @@ export function CareDirectoryPage({ token, onNavigate, language = "en", canBook 
                 <p className="cv-location">{doctor.hospital_name || (hi ? "स्वतंत्र प्रदाता" : "Independent provider")}</p>
                 <div className="cv-doctor-meta"><span>{doctor.languages?.join(", ") || (hi ? "भाषाएँ सूचीबद्ध नहीं" : "Languages not listed")}</span><strong>{formatMoney(doctor.fee_minor)}</strong></div>
                 <p className="cv-subtle">{doctor.consultation_types?.map((item) => item.replaceAll("_", " ")).join(" · ")}</p>
-                <button className="cv-button cv-button-quiet cv-full" disabled={profileLoading} onClick={() => showProfile("doctors", doctor)}>{hi ? "प्रोफ़ाइल देखें" : "View profile"}</button>
+                <button
+                  className="cv-button cv-button-quiet cv-full"
+                  type="button"
+                  aria-expanded={expandedProfileKey === `doctors:${doctor.id}`}
+                  aria-controls={`provider-details-doctors-${doctor.id}`}
+                  onClick={() => showProfile("doctors", doctor)}
+                >{expandedProfileKey === `doctors:${doctor.id}` ? (hi ? "कम दिखाएँ" : "Hide details") : (hi ? "प्रोफ़ाइल देखें" : "View profile")}</button>
+                {renderProfileDetails("doctors", doctor.id)}
                 {canBook && <button ref={bookingTriggerRef} className="cv-button cv-button-secondary cv-full" disabled={!doctor.is_active || !doctor.schedules?.some((item) => item.is_active)} onClick={() => { bookingTriggerRef.current = document.activeElement; setSelectedDoctor(doctor); setScheduledFor(""); setConsultationType(doctor.consultation_types?.[0] || "in_person"); setBookingError(""); setNotice(""); }}>
                   {!doctor.is_active ? (hi ? "अनुपलब्ध" : "Unavailable") : !doctor.schedules?.some((item) => item.is_active) ? (hi ? "समय-सारणी उपलब्ध नहीं" : "No published schedule") : (hi ? "अपॉइंटमेंट बुक करें" : "Book appointment")}
                 </button>}
@@ -749,7 +850,14 @@ export function CareDirectoryPage({ token, onNavigate, language = "en", canBook 
                 <div><div className="cv-doctor-name"><h3>{hospital.name}</h3><span className={`cv-verification ${hospital.verified ? "" : "unverified"}`}>{hospital.verified ? (hi ? "सत्यापित" : "Verified") : (hi ? "असत्यापित" : "Not verified")}</span></div>
                   <p className="cv-location">{hospital.city}, {hospital.state}</p><p className="cv-specialty">{hospital.departments}</p>
                   {hospital.description && <p className="cv-subtle">{hospital.description}</p>}
-                  <button className="cv-button cv-button-quiet" disabled={profileLoading} onClick={() => showProfile("hospitals", hospital)}>{hi ? "अस्पताल विवरण" : "View hospital"}</button>
+                  <button
+                    className="cv-button cv-button-quiet"
+                    type="button"
+                    aria-expanded={expandedProfileKey === `hospitals:${hospital.id}`}
+                    aria-controls={`provider-details-hospitals-${hospital.id}`}
+                    onClick={() => showProfile("hospitals", hospital)}
+                  >{expandedProfileKey === `hospitals:${hospital.id}` ? (hi ? "कम दिखाएँ" : "Hide details") : (hi ? "अस्पताल विवरण" : "View hospital")}</button>
+                  {renderProfileDetails("hospitals", hospital.id)}
                 </div>
               </article>
             ))}</div> : <EmptyState title={hi ? "अभी कोई अस्पताल सूचीबद्ध नहीं" : "No hospitals listed"} description={hi ? "क्लिनिक ने अभी कोई अस्पताल रिकॉर्ड उपलब्ध नहीं कराया है।" : "The clinic has not provided any hospital records yet."} />}
@@ -765,32 +873,6 @@ export function CareDirectoryPage({ token, onNavigate, language = "en", canBook 
             <button className="cv-button cv-button-quiet" disabled={hospitalOffset + pageSize >= directoryTotals.hospitals} onClick={() => setHospitalOffset(hospitalOffset + pageSize)}>{hi ? "अगले अस्पताल" : "Next hospitals"}</button>
           </nav>}
         </>
-      )}
-      {selectedProfile && (
-        <section className="cv-card cv-provider-profile" aria-labelledby="cv-provider-profile-title">
-          <button className="cv-button cv-button-quiet" onClick={() => setSelectedProfile(null)}>{hi ? "बंद करें" : "Close profile"}</button>
-          {selectedProfile.type === "doctors" ? (
-            <>
-              <ScreenTitle eyebrow={selectedProfile.value.verified ? (hi ? "सत्यापित चिकित्सक" : "VERIFIED CLINICIAN") : (hi ? "चिकित्सक प्रोफ़ाइल" : "CLINICIAN PROFILE")} title={selectedProfile.value.full_name} description={selectedProfile.value.bio || selectedProfile.value.specialty} />
-              <p><strong>{hi ? "विशेषज्ञताएँ" : "Specialties"}:</strong> {selectedProfile.value.specialties.join(", ")}</p>
-              <p><strong>{hi ? "भाषाएँ" : "Languages"}:</strong> {selectedProfile.value.languages.join(", ") || "—"}</p>
-              <p><strong>{hi ? "परामर्श" : "Consultations"}:</strong> {selectedProfile.value.consultation_types.join(", ")}</p>
-              <h3>{hi ? "योग्यताएँ" : "Qualifications"}</h3>
-              {selectedProfile.value.qualifications.length ? selectedProfile.value.qualifications.map((item) => <p key={item.id}>{item.degree} · {item.institution} · {item.verification_status}</p>) : <p className="cv-subtle">{hi ? "योग्यताएँ उपलब्ध नहीं हैं।" : "No qualifications have been published."}</p>}
-              <h3>{hi ? "साप्ताहिक समय-सारणी" : "Weekly schedule"}</h3>
-              {selectedProfile.value.schedules.length ? selectedProfile.value.schedules.filter((item) => item.is_active).map((item) => <p key={item.id}>{["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][item.day_of_week]} · {item.starts_at.slice(0, 5)}–{item.ends_at.slice(0, 5)} ({item.timezone}) · {item.consultation_type.replaceAll("_", " ")}</p>) : <p className="cv-subtle">{hi ? "कोई समय-सारणी प्रकाशित नहीं है।" : "No recurring schedule has been published."}</p>}
-            </>
-          ) : (
-            <>
-              <ScreenTitle eyebrow={selectedProfile.value.verified ? (hi ? "सत्यापित अस्पताल" : "VERIFIED HOSPITAL") : (hi ? "अस्पताल प्रोफ़ाइल" : "HOSPITAL PROFILE")} title={selectedProfile.value.name} description={`${selectedProfile.value.city}, ${selectedProfile.value.state}`} />
-              <p>{selectedProfile.value.departments}</p>
-              {selectedProfile.value.address && <p>{selectedProfile.value.address}</p>}
-              {selectedProfile.value.phone && <p><a href={`tel:${selectedProfile.value.phone}`}>{selectedProfile.value.phone}</a></p>}
-              {selectedProfile.value.website && <p><a href={selectedProfile.value.website} target="_blank" rel="noreferrer">{selectedProfile.value.website}</a></p>}
-              <p>{selectedProfile.value.description}</p>
-            </>
-          )}
-        </section>
       )}
       {selectedDoctor && (
         <div className="cv-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setSelectedDoctor(null); }}>
@@ -815,7 +897,7 @@ export function CareDirectoryPage({ token, onNavigate, language = "en", canBook 
   );
 }
 
-export function AppointmentsPage({ token, language = "en", user }) {
+export function AppointmentsPage({ token, language = "en", user, recentAppointment }) {
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -844,6 +926,13 @@ export function AppointmentsPage({ token, language = "en", user }) {
     }
   }
   useEffect(() => { loadAppointments(); }, [token]);
+  useEffect(() => {
+    if (!recentAppointment) return;
+    setAppointments((current) => [
+      recentAppointment,
+      ...current.filter((item) => item.id !== recentAppointment.id),
+    ]);
+  }, [recentAppointment]);
 
   async function cancelAppointment(appointment) {
     if (!window.confirm(hi ? "क्या आप यह अपॉइंटमेंट रद्द करना चाहते हैं?" : "Cancel this appointment?")) return;

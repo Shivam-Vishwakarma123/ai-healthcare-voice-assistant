@@ -50,6 +50,26 @@ test("apiRequest forwards idempotency headers unchanged", async () => {
   assert.equal(requestOptions.headers["Idempotency-Key"], "booking-command-123");
 });
 
+test("apiRequest accepts Headers instances for request metadata", async () => {
+  let requestOptions;
+  globalThis.fetch = async (_url, options) => {
+    requestOptions = options;
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+
+  await apiRequest("/providers/appointments", "access-token", {
+    method: "POST",
+    headers: new Headers({ "Idempotency-Key": "booking-command-456" }),
+    body: JSON.stringify({ doctor_id: 2 }),
+  });
+
+  assert.equal(requestOptions.headers["Idempotency-Key"], "booking-command-456");
+  assert.equal(requestOptions.headers.Authorization.startsWith("Bearer "), true);
+});
+
 test("apiRequest surfaces backend errors and uses a status fallback", async () => {
   globalThis.fetch = async () =>
     new Response(JSON.stringify({ detail: "Database unavailable" }), {
@@ -63,6 +83,24 @@ test("apiRequest surfaces backend errors and uses a status fallback", async () =
 
   globalThis.fetch = async () => new Response("unavailable", { status: 502 });
   await assert.rejects(apiRequest("/health", null), /Request failed \(502\)/);
+});
+
+test("apiRequest explains a network or CORS connection failure", async () => {
+  globalThis.fetch = async () => {
+    throw new TypeError("Failed to fetch");
+  };
+  await assert.rejects(
+    apiRequest("/providers/appointments", "access-token"),
+    /Could not reach the CareVoice API.*backend.*CORS/i,
+  );
+});
+
+test("apiRequest preserves aborted requests", async () => {
+  const abortError = new DOMException("Request aborted", "AbortError");
+  globalThis.fetch = async () => {
+    throw abortError;
+  };
+  await assert.rejects(apiRequest("/providers/doctors", null), (error) => error === abortError);
 });
 
 test("apiRequest accepts an empty 204 response", async () => {

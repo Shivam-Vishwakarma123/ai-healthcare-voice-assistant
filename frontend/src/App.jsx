@@ -53,6 +53,7 @@ export default function App() {
   const [language, setLanguage] = useState(() => storageGet("carevoice_language", "en"));
   const [page, setPage] = useState("Overview");
   const [patients, setPatients] = useState([]);
+  const [recentAppointment, setRecentAppointment] = useState(null);
   const [profile, setProfile] = useState(emptyProfile);
   const [accountLoading, setAccountLoading] = useState(Boolean(!isPasswordResetPath && storageGet("ahva_token")));
   const [busy, setBusy] = useState(false);
@@ -112,6 +113,7 @@ export default function App() {
     }
     setUser(null);
     setPatients([]);
+    setRecentAppointment(null);
   }, [isPasswordResetPath]);
 
   useEffect(() => {
@@ -211,7 +213,11 @@ export default function App() {
         ? { full_name: auth.full_name, email: auth.email, password: auth.password }
         : authMode === "bootstrap"
           ? auth
-          : { email: auth.email, password: auth.password };
+          : authMode === "login"
+            ? (auth.email.includes("@")
+              ? { email: auth.email, password: auth.password }
+              : { username: auth.email, password: auth.password })
+            : { email: auth.email, password: auth.password };
       const result = await apiRequest(path, "", {
         method: "POST",
         body: JSON.stringify(body),
@@ -381,9 +387,9 @@ export default function App() {
                 ? <DashboardPage user={user} patient={patients[0]} token={token} onNavigate={setPage} language={language} />
                 : <ProviderDashboardPage user={user} token={token} onUserUpdated={updateCurrentUser} language={language} />)}
               {page === "Provider dashboard" && <ProviderDashboardPage user={user} token={token} onUserUpdated={updateCurrentUser} language={language} />}
-              {page === "Administration" && isAdmin && <AdminManagement token={token} user={user} onUserUpdated={updateCurrentUser} language={language} />}
-              {page === "Find care" && <CareDirectoryPage token={token} onNavigate={setPage} language={language} canBook={user?.role === "patient"} />}
-              {page === "Appointments" && <AppointmentsPage token={token} language={language} user={user} />}
+              {page === "Administration" && isAdmin && <AdminManagement token={token} user={user} onUserUpdated={updateCurrentUser} onSessionInvalidated={signOut} language={language} />}
+              {page === "Find care" && <CareDirectoryPage token={token} onNavigate={setPage} onAppointmentBooked={(appointment) => { setRecentAppointment(appointment); setPage("Appointments"); }} language={language} canBook={user?.role === "patient"} />}
+              {page === "Appointments" && <AppointmentsPage token={token} language={language} user={user} recentAppointment={recentAppointment} />}
               {page === "Symptom check" && <TriagePage language={language} token={token} />}
               {page === "Assistant" && <><ScreenTitle title={isHindi ? "CareVoice सहायक" : "CareVoice assistant"} description={isHindi ? "सामान्य स्वास्थ्य जानकारी के लिए लिखें या बोलें।" : "Type or speak for general health information. This is not a diagnosis or a substitute for care."} /><VoiceAssistant token={token} language={language} /></>}
               {page === "Profile" && user?.role === "patient" && <ProfilePage profile={profile} setProfile={setProfile} patient={patients[0]} busy={busy} onSave={saveProfile} onDelete={deleteProfile} token={token} user={user} onUserUpdated={updateCurrentUser} language={language} />}
@@ -469,7 +475,7 @@ function AuthScreen({ mode, setMode, auth, setAuth, setError, setNotice, busy, e
             {error && <div className="cv-error" role="alert">{error}</div>}
             {notice && <div className="cv-success" role="status">{notice}</div>}
             {(isRegister || isBootstrap) && <label>{hi ? "पूरा नाम" : "Full name"}<input autoComplete="name" required minLength={2} maxLength={120} value={auth.full_name} onChange={(event) => setAuth({ ...auth, full_name: event.target.value })} placeholder={hi ? "आपका पूरा नाम" : "Your full name"} /></label>}
-            {!isResetConfirm && <label>{hi ? "ईमेल पता" : "Email address"}<input type="email" autoComplete="email" required maxLength={254} value={auth.email} onChange={(event) => setAuth({ ...auth, email: event.target.value })} placeholder="you@example.com" /></label>}
+            {!isResetConfirm && <label>{isLogin ? (hi ? "उपयोगकर्ता नाम या ईमेल" : "Username or email") : (hi ? "ईमेल पता" : "Email address")}<input type={isLogin ? "text" : "email"} autoComplete={isLogin ? "username" : "email"} required maxLength={254} value={auth.email} onChange={(event) => setAuth({ ...auth, email: event.target.value })} placeholder={isLogin ? "Username or email address" : "you@example.com"} /></label>}
             {isBootstrap && <label>{hi ? "सेटअप टोकन" : "Setup token"}<input type="password" autoComplete="off" required minLength={32} maxLength={256} value={auth.bootstrap_token} onChange={(event) => setAuth({ ...auth, bootstrap_token: event.target.value })} /></label>}
             {isResetConfirm && !resetToken && <p className="cv-error" role="alert">{hi ? "रीसेट लिंक में टोकन नहीं है। कृपया नया लिंक माँगें।" : "The reset link has no token. Please request a new link."}</p>}
             {(isLogin || isRegister || isResetConfirm || isBootstrap) && <label>{isResetConfirm ? (hi ? "नया पासवर्ड" : "New password") : (hi ? "पासवर्ड" : "Password")}<input type="password" autoComplete={isLogin ? "current-password" : "new-password"} required minLength={isBootstrap ? 12 : isRegister || isResetConfirm ? 10 : 1} maxLength={128} value={auth.password} onChange={(event) => setAuth({ ...auth, password: event.target.value })} placeholder={isLogin ? "Enter your password" : isBootstrap ? "12+ characters with upper/lowercase, number, and symbol" : (hi ? "कम से कम 10 अक्षर" : "At least 10 characters")} /></label>}

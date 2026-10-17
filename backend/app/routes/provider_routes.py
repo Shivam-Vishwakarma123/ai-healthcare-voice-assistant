@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 from datetime import date, datetime, timedelta, timezone
 from itertools import combinations
 from zoneinfo import ZoneInfo
@@ -50,6 +51,7 @@ from app.services.notification_service import notify_user
 
 router = APIRouter(prefix="/providers", tags=["Providers"])
 patient_user = require_roles("patient")
+logger = logging.getLogger(__name__)
 
 _SPECIALTY_KEYWORDS = {
     "general medicine": ["fever", "cold", "cough", "fatigue", "body pain"],
@@ -942,9 +944,11 @@ def create_appointment(
         record_audit(db, request, "appointment.create", actor=user, hospital_id=appointment.hospital_id, resource_type="appointment", resource_id=appointment.id)
         db.commit()
         db.refresh(appointment)
+        logger.info("Appointment booking completed.")
         _notify_appointment_patient(db, appointment, "appointment.booked")
     except IntegrityError as exc:
         db.rollback()
+        logger.warning("Appointment booking conflicted with an existing command or slot.")
         replay = _same_command(db, user, idempotency_key, "book", fingerprint)
         if replay:
             response.status_code = status.HTTP_200_OK
@@ -979,6 +983,7 @@ def confirm_appointment(
     record_audit(db, request, "appointment.confirm", actor=user, hospital_id=appointment.hospital_id, resource_type="appointment", resource_id=appointment.id)
     db.commit()
     db.refresh(appointment)
+    logger.info("Appointment confirmation completed.")
     _notify_appointment_patient(db, appointment, "appointment.confirmed")
     return _appointment_read(db, appointment)
 

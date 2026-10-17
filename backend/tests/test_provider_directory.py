@@ -13,6 +13,22 @@ from app.models.user import User
 from tests.auth_utils import make_session_token
 
 
+def test_appointment_booking_cors_preflight_allows_idempotency_header():
+    with TestClient(app) as client:
+        response = client.options(
+            "/api/v1/providers/appointments",
+            headers={
+                "Origin": "http://127.0.0.1:3000",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization,content-type,idempotency-key",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:3000"
+    assert "idempotency-key" in response.headers["access-control-allow-headers"].lower()
+
+
 def test_provider_directory_and_appointment_booking():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
