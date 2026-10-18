@@ -248,6 +248,27 @@ def test_cancel_releases_slot_and_records_audit_history_with_access_control():
             assert history.status_code == 200
             assert [event["event_type"] for event in history.json()] == ["booked", "cancelled"]
             assert history.json()[-1]["reason"] == "Patient requested cancellation"
+
+            fetch_appointment = client.get(
+                f"/api/v1/providers/appointments/{appointment_id}",
+                headers=_auth(tokens["patient"]),
+            )
+            assert fetch_appointment.status_code == 200
+            assert fetch_appointment.json()["id"] == appointment_id
+            assert fetch_appointment.json()["status"] == "cancelled"
+
+            denied_fetch = client.get(
+                f"/api/v1/providers/appointments/{appointment_id}",
+                headers=_auth(tokens["other_patient"]),
+            )
+            assert denied_fetch.status_code == 403
+
+            missing_fetch = client.get(
+                "/api/v1/providers/appointments/999999",
+                headers=_auth(tokens["patient"]),
+            )
+            assert missing_fetch.status_code == 404
+
             denied_history = client.get(
                 f"/api/v1/providers/appointments/{appointment_id}/history",
                 headers=_auth(tokens["other_patient"]),

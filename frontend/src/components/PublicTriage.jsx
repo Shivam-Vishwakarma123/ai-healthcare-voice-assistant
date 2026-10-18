@@ -31,33 +31,47 @@ export default function PublicTriage({ language = "en" }) {
     <section className="public-triage" aria-labelledby="public-triage-title">
       <span className="eyebrow">{hi ? "खाते की आवश्यकता नहीं" : "NO ACCOUNT REQUIRED"}</span>
       <h2 id="public-triage-title">{hi ? "तत्काल लक्षण जाँचें" : "Check urgent symptoms"}</h2>
-      <p>{hi ? "तत्काल, नियम-आधारित सुरक्षा मार्गदर्शन के लिए लक्षण हिंदी या अंग्रेज़ी में बताएँ।" : "Describe symptoms in English, Hindi, or Hinglish for immediate, rule-based safety guidance."}</p>
-      <form onSubmit={checkSymptoms}>
-        <label htmlFor="public-triage-symptoms">{hi ? "क्या हो रहा है?" : "What is happening?"}</label>
+      <p className="cv-triage-intro">{hi ? "तत्काल, नियम-आधारित सुरक्षा मार्गदर्शन के लिए लक्षण हिंदी या अंग्रेज़ी में बताएँ।" : "Describe symptoms in English, Hindi, or Hinglish for immediate, rule-based safety guidance."}</p>
+      <form onSubmit={checkSymptoms} className="cv-triage-form">
+        <label htmlFor="public-triage-symptoms" className="cv-triage-label">
+          {hi ? "क्या हो रहा है?" : "What symptoms are you experiencing?"}
+          <span className="cv-triage-hint">{hi ? "अपनी भाषा में सहजता से लिखें" : "Describe in your own words"}</span>
+        </label>
         <textarea
           id="public-triage-symptoms"
+          className="cv-triage-input"
           value={symptoms}
           onChange={(event) => setSymptoms(event.target.value)}
-          placeholder={hi ? "उदाहरण: सीने में दर्द और साँस लेने में दिक्कत" : "For example: seene mein dard aur saans lene mein dikkat"}
+          placeholder={hi ? "उदाहरण: सीने में भारीपन, चक्कर आना या साँस लेने में दिक्कत…" : "For example: chest pressure, sudden dizziness, difficulty breathing…"}
           minLength={2}
           maxLength={4000}
-          rows={3}
+          rows={4}
           required
         />
-        <button className="secondary wide" type="submit" disabled={busy || symptoms.trim().length < 2}>
-          {busy ? (hi ? "जाँच हो रही है…" : "Checking…") : (hi ? "सुरक्षा मार्गदर्शन पाएँ" : "Get safety guidance")}
+        <button className="cv-button cv-button-primary cv-full cv-triage-submit" type="submit" disabled={busy || symptoms.trim().length < 2}>
+          {busy ? (hi ? "जाँच हो रही है…" : "Evaluating safety…") : (hi ? "सुरक्षा मार्गदर्शन पाएँ →" : "Get safety guidance →")}
         </button>
       </form>
-      {error && <div className="notice error" role="alert">{error}</div>}
+      {error && <div className="notice error cv-triage-error" role="alert">{error}</div>}
       {result && (
-        <div className={`triage-result ${result.urgency === "emergency" ? "emergency" : ""}`} role={result.urgency === "emergency" ? "alert" : "status"}>
-          <b>{result.urgency === "emergency" ? (hi ? "अभी आपातकालीन सहायता लें" : "Seek emergency help now") : `${result.urgency} guidance`}</b>
-          <p>{result.summary}</p>
-          <p>{result.guidance}</p>
+        <div className={`triage-result ${result.urgency === "emergency" ? "emergency" : "routine"}`} role={result.urgency === "emergency" ? "alert" : "status"}>
+          <div className="cv-triage-result-header">
+            <span className="cv-triage-badge" aria-hidden="true">{result.urgency === "emergency" ? "🚨" : "ℹ️"}</span>
+            <strong>{result.urgency === "emergency" ? (hi ? "तत्काल आपातकालीन सहायता लें" : "Seek emergency care immediately") : (hi ? "सुरक्षा परिणाम" : `${result.urgency.toUpperCase()} guidance`)}</strong>
+          </div>
+          <p className="cv-triage-summary">{result.summary}</p>
+          <p className="cv-triage-guidance">{result.guidance}</p>
           {result.emergency_numbers.length > 0 && (
-            <p><b>{hi ? "आपातकालीन नंबर:" : "Emergency contacts:"}</b> {result.emergency_numbers.map((number, index) => (
-              <span key={`${number}-${index}`}>{index > 0 && " · "}<a href={`tel:${String(number).replace(/\D/g, "")}`}>{number}</a></span>
-            ))}</p>
+            <div className="cv-triage-emergency-callout">
+              <b>{hi ? "आपातकालीन नंबर पर तुरंत कॉल करें:" : "Call emergency helpline now:"}</b>
+              <div className="cv-emergency-pills">
+                {result.emergency_numbers.map((number, index) => (
+                  <a key={`${number}-${index}`} href={`tel:${String(number).replace(/\D/g, "")}`} className="cv-emergency-pill">
+                    📞 {number}
+                  </a>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       )}

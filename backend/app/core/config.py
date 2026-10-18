@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     razorpay_webhook_secret: str = ""
     razorpay_api_base_url: str = "https://api.razorpay.com/v1"
     payment_mode: str = "live"
+    appointment_refund_policy: str = "manual_review"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
 
     @model_validator(mode="after")
@@ -77,6 +78,16 @@ class Settings(BaseSettings):
         self.payment_mode = self.payment_mode.strip().lower()
         if self.payment_mode not in {"demo", "live"}:
             raise ValueError("PAYMENT_MODE must be demo or live.")
+        if (
+            self.app_env.strip().lower() in {"development", "test"}
+            and self.payment_mode == "live"
+            and self.razorpay_key_id
+            and not self.razorpay_key_id.startswith("rzp_test_")
+        ):
+            raise ValueError("Development and test environments must use Razorpay test keys.")
+        self.appointment_refund_policy = self.appointment_refund_policy.strip().lower()
+        if self.appointment_refund_policy not in {"manual_review", "no_refunds"}:
+            raise ValueError("APPOINTMENT_REFUND_POLICY must be manual_review or no_refunds.")
         return self
 
     @model_validator(mode="after")

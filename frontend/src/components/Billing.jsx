@@ -1,23 +1,41 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiRequest, formatMoney } from "../services/api";
+import Modal from "./Modal";
+import InvoiceReceiptModal from "./InvoiceReceiptModal";
+
+let razorpaySdkPromise;
 
 function loadRazorpay() {
-  if (window.Razorpay) return Promise.resolve();
-  return new Promise((resolve, reject) => {
+  if (typeof window.Razorpay === "function") return Promise.resolve();
+  if (razorpaySdkPromise) return razorpaySdkPromise;
+  razorpaySdkPromise = new Promise((resolve, reject) => {
     const script = document.createElement("script");
     script.src = "https://checkout.razorpay.com/v1/checkout.js";
     script.async = true;
-    script.onload = resolve;
+    script.onload = () => {
+      if (typeof window.Razorpay !== "function") {
+        reject(new Error("Razorpay Checkout loaded without its constructor. Reload the page and try again."));
+        return;
+      }
+      resolve();
+    };
     script.onerror = () => reject(new Error("Could not load Razorpay Checkout. Check your internet connection and try again."));
     document.head.appendChild(script);
+  }).catch((error) => {
+    razorpaySdkPromise = null;
+    throw error;
   });
+  return razorpaySdkPromise;
 }
 
-export default function Billing({ token, user, language = "en" }) {
+export default function Billing({ token, user, language = "en", target, onTargetHandled }) {
   const [invoices, setInvoices] = useState([]);
   const [payments, setPayments] = useState([]);
+  const [refunds, setRefunds] = useState([]);
   const [billableAppointments, setBillableAppointments] = useState([]);
-  const [enabled, setEnabled] = useState(false);
+  const [checkoutEnabled, setCheckoutEnabled] = useState(false);
+  const [providerCheckoutEnabled, setProviderCheckoutEnabled] = useState(false);
+  const [providerTestMode, setProviderTestMode] = useState(false);
   const [paymentMode, setPaymentMode] = useState("live");
   const [demoCheckout, setDemoCheckout] = useState(null);
   const [busyId, setBusyId] = useState(null);
@@ -26,6 +44,8 @@ export default function Billing({ token, user, language = "en" }) {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const handledTargetRef = useRef(null);
+  const [selectedReceipt, setSelectedReceipt] = useState(null);
   const [invoiceForm, setInvoiceForm] = useState({ patient_user_id: "", appointment_id: "", description: "", amount: "" });
   const hi = language === "hi";
   const isStaff = ["hospital_staff", "hospital_admin", "platform_admin"].includes(user?.role);
@@ -35,16 +55,20 @@ export default function Billing({ token, user, language = "en" }) {
     setLoaded(false);
     setError("");
     try {
-      const [rows, config, paymentRows, appointmentRows] = await Promise.all([
+      const [rows, config, paymentRows, refundRows, appointmentRows] = await Promise.all([
         apiRequest("/billing/invoices", token),
         apiRequest("/billing/config", token),
         apiRequest("/billing/payments", token),
+        apiRequest("/billing/refunds", token),
         isStaff ? apiRequest("/billing/billable-appointments", token) : Promise.resolve([]),
       ]);
       setInvoices(rows);
       setPayments(paymentRows);
+      setRefunds(refundRows);
       setBillableAppointments(appointmentRows);
-      setEnabled(config.online_payment_enabled);
+      setCheckoutEnabled(config.checkout_enabled ?? config.online_payment_enabled);
+      setProviderCheckoutEnabled(config.provider_checkout_enabled ?? config.online_payment_enabled);
+      setProviderTestMode(config.provider_test_mode === true);
       setPaymentMode(config.payment_mode);
       setLoaded(true);
     } finally {
@@ -93,7 +117,25 @@ export default function Billing({ token, user, language = "en" }) {
         setDemoCheckout(order);
         return;
       }
+      if (!order.key_id || !order.order_id?.startsWith("order_") || !Number.isInteger(order.amount_minor) || order.amount_minor <= 0 || !order.currency) {
+        console.error("Razorpay checkout order response is incomplete", {
+          hasKeyId: Boolean(order.key_id),
+          validOrderId: Boolean(order.order_id?.startsWith("order_")),
+          amountMinor: order.amount_minor,
+          currency: order.currency,
+        });
+        throw new Error("Razorpay returned incomplete checkout details. No payment was started; please contact support.");
+      }
+      console.info("Razorpay checkout order ready", {
+        orderId: order.order_id,
+        amountMinor: order.amount_minor,
+        currency: order.currency,
+      });
       await loadRazorpay();
+      console.info("Razorpay Checkout SDK loaded");
+      if (typeof window.Razorpay !== "function") {
+        throw new Error("Razorpay Checkout could not initialize. Reload the page and try again.");
+      }
       const checkout = new window.Razorpay({
         key: order.key_id,
         amount: order.amount_minor,
@@ -101,7 +143,10 @@ export default function Billing({ token, user, language = "en" }) {
         name: "CareVoice Health",
         description: order.description,
         order_id: order.order_id,
-        prefill: { name: user.full_name, email: user.email },
+        // Note: "method" is NOT a valid top-level Razorpay option.
+        // Payment methods available depend on Razorpay account checkout settings.
+        // Cards can be enabled in Dashboard → Settings → Checkout → Payment Methods.
+        prefill: { name: user.full_name, email: user.email, ...(user.phone_number ? { contact: user.phone_number } : {}) },
         theme: { color: "#167b6b" },
         handler: async (response) => {
           try {
@@ -117,6 +162,7 @@ export default function Billing({ token, user, language = "en" }) {
             setNotice(hi ? "भुगतान सत्यापित हुआ। इनवॉइस का भुगतान हो गया है।" : "Payment verified. Your invoice is paid.");
             await load();
           } catch (reason) {
+            console.error("Razorpay payment verification failed", { message: reason.message });
             setError(reason.message);
           } finally {
             setBusyId(null);
@@ -124,16 +170,44 @@ export default function Billing({ token, user, language = "en" }) {
         },
         modal: { ondismiss: () => setBusyId(null) },
       });
+      if (!checkout || typeof checkout.open !== "function" || typeof checkout.on !== "function") {
+        throw new Error("Razorpay Checkout could not initialize. Reload the page and try again.");
+      }
       checkout.on("payment.failed", (event) => {
+        console.warn("Razorpay reported a payment failure", {
+          code: event.error?.code,
+          reason: event.error?.reason,
+          description: event.error?.description,
+        });
         setError(event.error?.description || "Payment was not completed. Your invoice remains unpaid.");
         setBusyId(null);
       });
       checkout.open();
+      console.info("Razorpay Checkout opened", { orderId: order.order_id });
     } catch (reason) {
+      console.error("Razorpay checkout could not be started", { message: reason.message });
       setError(reason.message);
       setBusyId(null);
     }
   }
+
+  useEffect(() => {
+    if (!target?.invoiceId || !loaded || loading) return;
+    const targetKey = `${target.action}:${target.invoiceId}`;
+    if (handledTargetRef.current === targetKey) return;
+    handledTargetRef.current = targetKey;
+    const invoice = invoices.find((item) => item.id === target.invoiceId);
+    if (target.action === "pay" && invoice?.status === "unpaid") {
+      payInvoice(invoice);
+    } else if (target.action === "receipt") {
+      document.getElementById(`invoice-${target.invoiceId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (invoice) {
+        const payment = payments.find((item) => item.invoice_id === invoice.id);
+        setSelectedReceipt({ invoice, payment });
+      }
+    }
+    onTargetHandled?.();
+  }, [target, loaded, loading, invoices]);
 
   async function completeDemoPayment(outcome) {
     if (!demoCheckout) return;
@@ -155,6 +229,28 @@ export default function Billing({ token, user, language = "en" }) {
       await load();
     } catch (reason) {
       setError(reason.message || "Demo payment could not be completed.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function requestRefund(payment) {
+    const reason = window.prompt("Record the administrator-approved refund reason:");
+    if (!reason || reason.trim().length < 3) return;
+    setBusyId(`refund-${payment.id}`);
+    setError("");
+    setNotice("");
+    try {
+      const key = globalThis.crypto?.randomUUID?.() || `refund-${payment.id}-${Date.now()}`;
+      await apiRequest("/billing/refunds", token, {
+        method: "POST",
+        headers: { "Idempotency-Key": key },
+        body: JSON.stringify({ payment_id: payment.id, amount_minor: payment.amount_minor, reason: reason.trim() }),
+      });
+      setNotice("Refund request submitted. Its status remains pending until Razorpay confirms it.");
+      await load();
+    } catch (reason) {
+      setError(reason.message || "Refund request could not be submitted.");
     } finally {
       setBusyId(null);
     }
@@ -195,39 +291,141 @@ export default function Billing({ token, user, language = "en" }) {
           <button className="primary" type="submit" disabled={creatingInvoice}>{creatingInvoice ? (hi ? "बन रहा है…" : "Creating…") : (hi ? "इनवॉइस बनाएँ" : "Create invoice")}</button>
       </form>}
       <section className="card">
-          <div className="card-head"><div><span className="eyebrow">{hi ? "भुगतान इतिहास" : "PAYMENT HISTORY"}</span><h3>{hi ? "इनवॉइस" : "Invoices"}</h3></div><button type="button" className="primary" onClick={() => load().catch((reason) => setError(reason.message || "Billing information could not be loaded."))} disabled={loading}>{hi ? "रीफ़्रेश करें" : "Refresh"}</button>{loaded && (enabled ? <span className="pill">{hi ? "ऑनलाइन भुगतान सक्षम" : "Online payments enabled"}</span> : <span className="pill muted-pill">{hi ? "भुगतान गेटवे सेटअप आवश्यक" : "Gateway setup required"}</span>)}</div>
-          {loaded && <p className="muted">{paymentMode === "demo" ? "DEMO MODE — transactions are simulations, not real payments." : enabled ? "Live payment mode. Transactions are verified with the configured provider." : "Online payment is not configured."}</p>}
+          <div className="card-head"><div><span className="eyebrow">{hi ? "भुगतान इतिहास" : "PAYMENT HISTORY"}</span><h3>{hi ? "इनवॉइस" : "Invoices"}</h3></div><button type="button" className="primary" onClick={() => load().catch((reason) => setError(reason.message || "Billing information could not be loaded."))} disabled={loading}>{hi ? "रीफ़्रेश करें" : "Refresh"}</button>{loaded && (paymentMode === "demo" ? <span className="pill muted-pill">{hi ? "केवल डेमो चेकआउट" : "Demo checkout only"}</span> : providerCheckoutEnabled ? <span className="pill">{providerTestMode ? (hi ? "Razorpay टेस्ट मोड तैयार" : "Razorpay Test Mode ready") : (hi ? "गेटवे चेकआउट तैयार" : "Gateway checkout ready")}</span> : <span className="pill muted-pill">{hi ? "भुगतान गेटवे सेटअप आवश्यक" : "Gateway setup required"}</span>)}</div>
+          {loaded && paymentMode === "demo" && <div className="gateway-note" role="note">{hi ? "डेमो मोड कार्ड भुगतान नहीं खोलता। Razorpay का टेस्ट कार्ड चेकआउट उपयोग करने के लिए सर्वर पर PAYMENT_MODE=live और Razorpay Test Mode की कुंजियाँ सेट करें।" : "Demo mode does not open card checkout. To use Razorpay's test card checkout, set PAYMENT_MODE=live and configure Razorpay Test Mode keys on the server."}</div>}
+          {loaded && paymentMode === "live" && providerCheckoutEnabled && <p className="muted">{providerTestMode ? (hi ? "यह Razorpay Test Mode है। सुरक्षित होस्टेड चेकआउट में कार्ड विकल्प उपलब्ध होने चाहिए जब कार्ड आपके टेस्ट खाते की चेकआउट सेटिंग में सक्षम हो। कोई वास्तविक राशि नहीं ली जाती।" : "Razorpay Test Mode is active. The secure hosted checkout offers Card when Cards are enabled in your test account's Checkout settings. No real payment is charged.") : (hi ? "भुगतान Razorpay के सुरक्षित होस्टेड चेकआउट में होंगे। कार्ड उपलब्धता Razorpay खाते की चेकआउट सेटिंग पर निर्भर करती है; कार्ड या बैंक विवरण CareVoice में सेव नहीं होते।" : "Payment opens Razorpay's secure hosted checkout. Card availability follows the Razorpay account's checkout settings; CareVoice does not store card or bank details.")}</p>}
+          {loaded && paymentMode === "live" && !providerCheckoutEnabled && <p className="muted">{hi ? "Razorpay चेकआउट कॉन्फ़िगर नहीं है। सर्वर की .env फ़ाइल में Test Mode की RAZORPAY_KEY_ID और RAZORPAY_KEY_SECRET सेट करें।" : "Razorpay checkout is not configured. Set Test Mode RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in the server .env file."}</p>}
           {loading ? <p role="status">{hi ? "इनवॉइस लोड हो रहे हैं…" : "Loading invoices…"}</p> : !loaded ? null : !invoices.length ? <div className="empty-row"><span className="empty-symbol">₹</span><div><b>{hi ? "अभी कोई इनवॉइस नहीं" : "No invoices yet"}</b><p>{hi ? "क्लिनिक द्वारा जारी इनवॉइस यहाँ दिखेंगे।" : "Invoices issued by your clinic will show here."}</p></div></div> :
-          <div className="invoice-list">{invoices.map((invoice) => <article className="invoice-row" key={invoice.id}>
+          <div className="invoice-list">{invoices.map((invoice) => {
+            const payment = payments.find((item) => item.invoice_id === invoice.id && item.status === "paid") || payments.find((item) => item.invoice_id === invoice.id);
+            const simulatedPayment = payment?.is_demo === true;
+            return <article className="invoice-row" id={`invoice-${invoice.id}`} tabIndex={-1} key={invoice.id}>
               <div><b>{invoice.invoice_number}</b><p>{invoice.description} · {new Date(invoice.created_at).toLocaleDateString(hi ? "hi-IN" : "en-IN")}</p></div>
-            <strong>{formatMoney(invoice.amount_minor, invoice.currency)}</strong>
-              <span className={`invoice-status ${invoice.status}`}>{invoice.status === "paid" ? (hi ? "भुगतान हुआ" : "Paid") : (hi ? "बकाया" : "Unpaid")}</span>
-              {invoice.status === "unpaid" && <button className="primary" type="button" onClick={() => payInvoice(invoice)} disabled={busyId !== null || !enabled}>{busyId === invoice.id ? (hi ? "खुल रहा है…" : "Opening…") : paymentMode === "demo" ? (hi ? "डेमो भुगतान" : "Demo payment") : (hi ? "अभी भुगतान करें" : "Pay now")}</button>}
-          </article>)}</div>}
-          {loaded && !enabled && invoices.some((invoice) => invoice.status === "unpaid") && <p className="muted gateway-note">{hi ? "ऑनलाइन भुगतान अभी उपलब्ध नहीं है। अपने क्लिनिक से संपर्क करें; व्यवस्थापक को Razorpay कुंजियाँ कॉन्फ़िगर करनी होंगी।" : "Online payment is temporarily unavailable. Contact your clinic; an administrator must configure Razorpay test/live keys."}</p>}
-          {loaded && paymentMode === "live" && enabled && <p className="muted gateway-note">{hi ? "भुगतान Razorpay द्वारा संसाधित होते हैं। CareVoice कार्ड या बैंक विवरण संग्रहीत नहीं करता।" : "Payments are processed by Razorpay. CareVoice does not store card or bank details."}</p>}
+              <strong>{formatMoney(invoice.amount_minor, invoice.currency)}</strong>
+              <span className={`invoice-status ${invoice.status}`}>{invoice.status === "paid" ? simulatedPayment ? (hi ? "डेमो · वास्तविक भुगतान नहीं" : "DEMO · not a real payment") : (hi ? "भुगतान हुआ" : "Paid") : invoice.status === "unpaid" ? (hi ? "बकाया" : "Unpaid") : invoice.status}</span>
+              <div className="cv-card-actions">
+                {invoice.status === "paid" && (
+                  <button
+                    className="cv-button cv-button-quiet"
+                    type="button"
+                    onClick={() => setSelectedReceipt({ invoice, payment })}
+                  >
+                    {hi ? "रसीद देखें" : "View receipt"}
+                  </button>
+                )}
+                {invoice.status === "unpaid" && (
+                  <button
+                    className="cv-button cv-button-primary"
+                    type="button"
+                    onClick={() => payInvoice(invoice)}
+                    disabled={busyId !== null || !checkoutEnabled}
+                  >
+                    {busyId === invoice.id ? (hi ? "खुल रहा है…" : "Opening…") : paymentMode === "demo" ? (hi ? "डेमो भुगतान" : "Demo payment") : (hi ? "अभी भुगतान करें" : "Pay now")}
+                  </button>
+                )}
+              </div>
+            </article>;
+          })}</div>}
+          {loaded && paymentMode === "live" && !providerCheckoutEnabled && invoices.some((invoice) => invoice.status === "unpaid") && <p className="muted gateway-note">{hi ? "ऑनलाइन भुगतान अभी उपलब्ध नहीं है। व्यवस्थापक को Razorpay Test Mode कुंजियाँ कॉन्फ़िगर करनी होंगी।" : "Online payment is temporarily unavailable. An administrator must configure Razorpay Test Mode keys."}</p>}
       </section>
       <section className="card">
         <div className="card-head"><div><span className="eyebrow">{hi ? "लेनदेन" : "TRANSACTIONS"}</span><h3>{hi ? "भुगतान इतिहास" : "Payment history"}</h3></div></div>
         {payments.length ? <div className="invoice-list">{payments.map((payment) => <article className="invoice-row" key={payment.id}>
-          <div><b>{payment.invoice_number}</b><p>{payment.transaction_id} · {new Date(payment.created_at).toLocaleString()}</p></div>
+          <div><b>{payment.invoice_number}</b><p>{payment.appointment_id ? `${hi ? "अपॉइंटमेंट" : "Appointment"} #${payment.appointment_id} · ` : ""}{payment.transaction_id} · {payment.paid_at ? (hi ? "भुगतान" : "Paid") : (hi ? "प्रयास" : "Attempt")}: {new Date(payment.paid_at || payment.created_at).toLocaleString(hi ? "hi-IN" : "en-IN")}</p>{payment.doctor_name && <small>{payment.doctor_name}{payment.hospital_name ? ` · ${payment.hospital_name}` : ""}{payment.scheduled_for ? ` · ${new Date(payment.scheduled_for).toLocaleString(hi ? "hi-IN" : "en-IN")}` : ""}</small>}</div>
           <strong>{formatMoney(payment.amount_minor, payment.currency)}</strong>
           <span className={`invoice-status ${payment.status}`}>{payment.is_demo ? "DEMO · " : ""}{payment.status}</span>
-        </article>)}</div> : <p className="muted">{loading ? "Loading payment history…" : "No payment attempts recorded yet."}</p>}
-      </section>
-      {demoCheckout && <div className="cv-dialog-backdrop" role="presentation">
-        <section className="cv-dialog cv-demo-checkout" role="dialog" aria-modal="true" aria-labelledby="demo-checkout-title" aria-describedby="demo-checkout-description">
-          <span className="eyebrow">DEMO / NOT A REAL PAYMENT</span>
-          <h2 id="demo-checkout-title">Demo Payment</h2>
-          <p id="demo-checkout-description">Demo mode — no real money will be charged. This simulation does not contact a payment provider and does not ask for card or banking details.</p>
-          <p><strong>{demoCheckout.invoice_number}</strong> · {formatMoney(demoCheckout.amount_minor, demoCheckout.currency)}</p>
-          <div className="cv-form-row">
-            <button className="cv-button cv-button-primary" type="button" disabled={busyId === demoCheckout.order_id} onClick={() => completeDemoPayment("success")}>Simulate success</button>
-            <button className="cv-button cv-button-secondary" type="button" disabled={busyId === demoCheckout.order_id} onClick={() => completeDemoPayment("failed")}>Simulate failure</button>
-            <button className="cv-button cv-button-quiet" type="button" disabled={busyId === demoCheckout.order_id} onClick={() => completeDemoPayment("cancelled")}>Cancel demo checkout</button>
+          <div className="cv-card-actions">
+            {payment.status === "paid" && (
+              <button
+                className="cv-button cv-button-quiet"
+                type="button"
+                onClick={() => {
+                  const inv = invoices.find((item) => item.id === payment.invoice_id) || {
+                    invoice_number: payment.invoice_number,
+                    amount_minor: payment.amount_minor,
+                    currency: payment.currency,
+                    status: payment.status,
+                    paid_at: payment.paid_at,
+                    created_at: payment.created_at,
+                  };
+                  setSelectedReceipt({ invoice: inv, payment });
+                }}
+              >
+                {hi ? "रसीद देखें" : "View receipt"}
+              </button>
+            )}
+            {!["hospital_staff", "doctor", "patient"].includes(user?.role) && payment.status === "paid" && (!payment.appointment_id || payment.appointment_status === "cancelled") && (
+              <button
+                className="cv-button cv-button-primary"
+                type="button"
+                disabled={busyId !== null}
+                onClick={() => requestRefund(payment)}
+              >
+                {busyId === `refund-${payment.id}` ? "Submitting…" : "Request approved refund"}
+              </button>
+            )}
           </div>
-        </section>
-      </div>}
+        </article>)}</div> : <p className="muted">{loading ? "Loading payment history…" : "No payment attempts recorded yet."}</p>}
+        {refunds.map((refund) => <p className="muted" key={refund.id}>Refund {refund.provider_refund_id || `#${refund.id}`} · {formatMoney(refund.amount_minor, refund.currency)} · {refund.status}</p>)}
+      </section>
+
+      <InvoiceReceiptModal
+        isOpen={Boolean(selectedReceipt)}
+        onClose={() => setSelectedReceipt(null)}
+        invoice={selectedReceipt?.invoice}
+        payment={selectedReceipt?.payment}
+        language={language}
+      />
+
+      <Modal
+        isOpen={Boolean(demoCheckout)}
+        onClose={() => completeDemoPayment("cancelled")}
+        title={hi ? "डेमो भुगतान" : "Demo Payment"}
+        size="medium"
+        language={language}
+      >
+        {demoCheckout && (
+          <div className="cv-modal-receipt-content">
+            <div className="cv-demo-badge" role="status">
+              DEMO / NOT A REAL PAYMENT
+            </div>
+            <p>
+              {hi
+                ? "डेमो मोड — कोई वास्तविक राशि नहीं ली जाएगी। यह सिमुलेशन भुगतान प्रदाता से संपर्क नहीं करता है और कार्ड या बैंकिंग विवरण नहीं मांगता है।"
+                : "Demo mode — no real money will be charged. This simulation does not contact a payment provider and does not ask for card or banking details."}
+            </p>
+            <p>
+              <strong>{demoCheckout.invoice_number}</strong> · {formatMoney(demoCheckout.amount_minor, demoCheckout.currency)}
+            </p>
+            <div className="cv-card-actions">
+              <button
+                className="cv-button cv-button-primary"
+                type="button"
+                disabled={busyId === demoCheckout.order_id}
+                onClick={() => completeDemoPayment("success")}
+              >
+                {hi ? "सफल सिमुलेशन" : "Simulate success"}
+              </button>
+              <button
+                className="cv-button cv-button-secondary"
+                type="button"
+                disabled={busyId === demoCheckout.order_id}
+                onClick={() => completeDemoPayment("failed")}
+              >
+                {hi ? "विफल सिमुलेशन" : "Simulate failure"}
+              </button>
+              <button
+                className="cv-button cv-button-quiet"
+                type="button"
+                disabled={busyId === demoCheckout.order_id}
+                onClick={() => completeDemoPayment("cancelled")}
+              >
+                {hi ? "रद्द करें" : "Cancel demo checkout"}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </>
   );
 }

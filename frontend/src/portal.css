@@ -1,10 +1,10 @@
 .brand {
-  color: #18463a;
+  color: var(--cv-text-primary);
   text-decoration: none;
 }
 
 .auth-brand {
-  color: #fff;
+  color: var(--cv-accent-fg);
 }
 
 .app-shell {
@@ -26,7 +26,7 @@
 .mobile-signout {
   border: 0;
   background: transparent;
-  color: #71877d;
+  color: var(--cv-text-muted);
 }
 
 .mobile-signout {
@@ -45,7 +45,7 @@
 .metric-action:hover,
 .quick-actions button:hover,
 .nav-item:hover {
-  border-color: #b9daca;
+  border-color: var(--cv-border-control);
   transform: translateY(-1px);
 }
 
@@ -64,22 +64,22 @@
 
 .integration-card p {
   max-width: 580px;
-  color: var(--muted);
+  color: var(--cv-text-muted);
   font-size: 13px;
   line-height: 1.75;
 }
 
 .muted-pill {
-  background: #f1f3f1;
-  color: #718078;
+  background: var(--cv-surface-muted);
+  color: var(--cv-text-muted);
 }
 
 .danger-button {
-  border: 1px solid #f1d5d0;
+  border: 1px solid var(--cv-danger-border);
   border-radius: 10px;
   padding: 12px 16px;
-  background: #fff6f4;
-  color: #a13e33;
+  background: var(--cv-danger-surface);
+  color: var(--cv-danger-text);
   font-size: 12px;
   font-weight: 700;
 }
@@ -100,7 +100,7 @@
 }
 
 .chat-empty {
-  color: var(--muted);
+  color: var(--cv-text-muted);
   font-size: 12px;
   line-height: 1.6;
 }
@@ -109,22 +109,22 @@
   max-width: 88%;
   padding: 13px 15px;
   border-radius: 13px;
-  background: #f1f7f2;
+  background: var(--cv-surface-tint);
 }
 
 .chat-message.user {
   justify-self: end;
-  background: #e5f2eb;
+  background: var(--cv-surface-tint);
 }
 
 .chat-message b {
-  color: #26715e;
+  color: var(--cv-accent-text);
   font-size: 11px;
 }
 
 .chat-message p {
   margin: 7px 0 0;
-  color: #38594b;
+  color: var(--cv-text-secondary);
   font-size: 13px;
   line-height: 1.65;
   white-space: pre-wrap;
@@ -134,7 +134,7 @@
 .chat-citations {
   margin-top: 12px;
   padding-top: 10px;
-  border-top: 1px solid #dce8df;
+  border-top: 1px solid var(--cv-border-control);
 }
 
 .chat-citations ul {
@@ -144,19 +144,19 @@
 
 .chat-citations li {
   margin: 5px 0;
-  color: #526c5e;
+  color: var(--cv-text-body);
   font-size: 11px;
 }
 
 .chat-citations a {
-  color: #26715e;
+  color: var(--cv-accent-text);
   font-weight: 700;
 }
 
 .chat-citations small {
   display: block;
   margin-top: 2px;
-  color: var(--muted);
+  color: var(--cv-text-muted);
   font-size: 10px;
 }
 
@@ -164,31 +164,31 @@
   margin-top: 9px;
   border: 0;
   background: transparent;
-  color: #26715e;
+  color: var(--cv-accent-text);
   font-size: 11px;
   font-weight: 700;
 }
 
 .chat-form {
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--cv-border);
   padding-top: 16px;
 }
 
 .chat-form textarea {
   width: 100%;
   resize: vertical;
-  border: 1px solid #dfe9e1;
+  border: 1px solid var(--cv-border-control);
   border-radius: 10px;
   padding: 12px 14px;
-  background: #fbfdfb;
-  color: var(--ink);
+  background: var(--cv-surface-soft);
+  color: var(--cv-text-primary);
   outline: none;
   font: inherit;
   font-size: 13px;
 }
 
 .chat-form textarea:focus {
-  border-color: #429b80;
+  border-color: var(--cv-accent-text);
 }
 
 .chat-actions {
@@ -242,8 +242,22 @@
   grid-template-columns: minmax(140px, 1fr) auto auto auto;
   align-items: center;
   gap: 16px;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--cv-border);
   padding: 17px 0;
+}
+
+.invoice-row .cv-card-actions {
+  margin-top: 0;
+  width: auto;
+  justify-content: flex-end;
+}
+
+@media (max-width: 767px) {
+  .invoice-row .cv-card-actions {
+    grid-column: 1 / -1;
+    width: 100%;
+    margin-top: 8px;
+  }
 }
 
 .invoice-row b,
@@ -253,23 +267,23 @@
 
 .invoice-row p {
   margin: 5px 0 0;
-  color: var(--muted);
+  color: var(--cv-text-muted);
   font-size: 11px;
 }
 
 .invoice-status {
   border-radius: 20px;
   padding: 6px 10px;
-  background: #fff3e4;
-  color: #946122;
+  background: var(--cv-warning-surface);
+  color: var(--cv-warning-text);
   font-size: 10px;
   font-weight: 700;
   text-transform: capitalize;
 }
 
 .invoice-status.paid {
-  background: #e7f5eb;
-  color: #318367;
+  background: var(--cv-success-surface);
+  color: var(--cv-success-text);
 }
 
 .gateway-note {
@@ -299,58 +313,70 @@
 }
 
 .public-triage {
-  width: min(430px, 88%);
-  padding: 20px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: #fff;
-  box-shadow: 0 8px 24px rgb(23 59 51 / 5%);
+  width: 100%;
+  max-width: 580px;
+  padding: clamp(22px, 3.5vw, 32px);
+  border: 1px solid var(--cv-border);
+  border-radius: 18px;
+  background: var(--cv-surface);
+  box-shadow: var(--cv-shadow);
 }
 
 .public-triage h2 {
   margin: 8px 0;
-  font-size: 19px;
+  font-size: 21px;
+  color: var(--cv-text-primary);
+  letter-spacing: -0.3px;
 }
 
 .public-triage > p,
 .triage-result p {
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--cv-text-secondary);
+  font-size: 13px;
   line-height: 1.6;
 }
 
 .public-triage label {
   display: block;
-  margin: 12px 0 6px;
-  font-size: 12px;
+  margin: 14px 0 6px;
+  font-size: 13px;
   font-weight: 700;
+  color: var(--cv-text-primary);
 }
 
 .public-triage textarea {
   width: 100%;
   resize: vertical;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 11px;
+  min-height: 105px;
+  border: 1.5px solid var(--cv-border-control);
+  border-radius: 12px;
+  padding: 13px 15px;
+  background: var(--cv-input-bg);
+  color: var(--cv-text-primary);
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
+  line-height: 1.55;
+  transition: border-color .15s ease, box-shadow .15s ease;
 }
 
 .public-triage textarea:focus {
-  outline: 2px solid #b9daca;
-  border-color: var(--green);
+  outline: none;
+  border-color: var(--cv-accent);
+  box-shadow: 0 0 0 3px var(--cv-surface-tint);
 }
 
 .triage-result {
-  margin-top: 14px;
-  padding: 12px;
-  border-radius: 10px;
-  background: #f1f6f3;
+  margin-top: 16px;
+  padding: 16px 18px;
+  border-radius: 13px;
+  border: 1px solid var(--cv-border);
+  background: var(--cv-surface-tint);
 }
 
 .triage-result.emergency {
-  color: #8c2118;
-  background: #fff0ed;
+  border-color: var(--cv-danger-border);
+  color: var(--cv-danger-text);
+  background: var(--cv-danger-surface);
 }
 
 .triage-result p {
@@ -359,8 +385,13 @@
 }
 
 .public-triage .triage-disclaimer {
+  margin-top: 16px;
   margin-bottom: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--cv-border-soft);
+  color: var(--cv-text-muted);
   font-size: 11px;
+  line-height: 1.55;
 }
 
 @media (max-width: 900px) {

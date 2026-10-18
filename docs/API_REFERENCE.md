@@ -67,23 +67,26 @@ The directory and appointment endpoints require a valid signed-in account. Mutat
 | `PATCH /providers/appointments/{appointment_id}/reschedule` | Patient or authorized provider/admin with access | `scheduled_for,consultation_type,reason`; idempotency header | Updated appointment, event and slot lock; conflicts 409 | `AppointmentsPage` |
 | `GET /providers/appointments/{appointment_id}/history` | Scoped appointment participant/provider/admin | — | `AppointmentEventRead[]` | `AppointmentsPage` |
 
-`AppointmentRead` contains `id,patient_user_id,doctor_id,hospital_id,scheduled_for,duration_minutes,consultation_type,status,notes,created_at` plus display names/specialty. Datetimes must include a timezone. Scheduling uses 30-minute blocks and database uniqueness in `appointment_slot_locks`; published availability is not a reservation.
+`AppointmentRead` contains `id,patient_user_id,doctor_id,hospital_id,scheduled_for,duration_minutes,consultation_type,status,notes,created_at,fee_minor,invoice_id,invoice_status,payment_status,payment_transaction_id,payment_is_demo` plus display names/specialty. Datetimes must include a timezone. Scheduling uses 30-minute blocks and database uniqueness in `appointment_slot_locks`; published availability is not a reservation.
 
 ## Billing and payments
 
 | Method + path | Access | Request | Response / behavior | Frontend caller |
 | --- | --- | --- | --- | --- |
-| `GET /billing/config` | Signed-in | — | `{payment_mode,online_payment_enabled,demo_payment_enabled}` | `Billing` |
+| `GET /billing/config` | Signed-in | — | `{payment_mode,online_payment_enabled,provider_checkout_enabled,provider_test_mode,demo_payment_enabled,checkout_enabled}` | Separates Razorpay-hosted checkout from the local simulation; demo mode never claims card/online checkout is enabled |
 | `GET /billing/invoices` | Signed-in; rows filtered by role/owner/hospital | — | Invoice array `{id,invoice_number,description,amount_minor,currency,status,appointment_id,created_at,paid_at}` | `Billing` |
-| `GET /billing/payments` | Signed-in; rows scoped similarly | — | Array with `id,invoice_id,invoice_number,transaction_id,status,amount_minor,currency,is_demo,created_at,updated_at` | `Billing` |
+| `GET /billing/payments` | Signed-in; rows scoped similarly | — | Array with payment and invoice fields plus `paid_at,doctor_name,hospital_name,scheduled_for,appointment_status` when linked | `Billing` |
 | `GET /billing/billable-appointments` | HS, HA, PA | — | Eligible appointment, patient, doctor, and stored fee details | `Billing` invoice form |
 | `POST /billing/invoices` | HS, HA, PA with hospital scope | `patient_user_id,description,amount_minor? ,appointment_id?,hospital_id?` | 201 invoice; appointment invoice amount uses doctor fee in DB and duplicate appointment invoice rejected | `Billing` |
+| `POST /billing/appointments/{appointment_id}/invoice` | Owning patient | No amount accepted | Creates or returns one unpaid INR invoice using the clinician's server-stored fee for an upcoming scheduled/confirmed appointment; no payment order is created until checkout | `AppointmentsPage` |
 | `POST /billing/checkout` | Invoice-owning patient | `{invoice_id}` | `CheckoutOrder`: `order_id,key_id?,amount_minor,currency,invoice_number,description,mode` | `Billing` |
 | `POST /billing/demo/complete` | Invoice-owning patient | `{order_id,outcome:"success"|"failed"|"cancelled"}` | Simulated invoice/payment result; cannot complete live order, replay settled attempt, or pay another user's invoice | `Billing` |
 | `POST /billing/verify` | Invoice-owning patient | `invoice_id,razorpay_order_id,razorpay_payment_id,razorpay_signature` | Invoice only after valid HMAC and server-side provider state/amount/currency verification | `Billing` Razorpay handler |
-| `POST /billing/webhooks/razorpay` | Public webhook; signature and event ID required | Raw body + `X-Razorpay-Signature`, `X-Razorpay-Event-Id` | 204 for accepted/replayed event; invalid signature/payload or unsafe conflict returns 4xx | Razorpay server, not React |
+| `POST /billing/webhooks/razorpay` | Public webhook; signature and event ID required | Raw body + `X-Razorpay-Signature`, `X-Razorpay-Event-Id` | Accepts `payment.captured`, `payment.failed`, `refund.processed`, and `refund.failed`; 204 for accepted/replayed event; invalid signature/payload or unsafe conflict returns 4xx | Razorpay server, not React |
+| `GET /billing/refunds` | Signed in; owner/hospital scoped | — | Refund records with provider reference, amount, status, and reason | Billing |
+| `POST /billing/refunds` | Hospital Admin for own hospital or Platform Admin | `Idempotency-Key` + `{payment_id,amount_minor,reason}` | 202 refund request; confirmed status arrives from provider response/webhook; only captured payments qualify and appointment invoices require cancellation | Billing administration |
 
-All amounts are integer INR paise. In demo mode the browser offers simulation buttons and the backend writes clearly tagged local records; no real money changes hands and no card/banking details are requested. Live checkout is conditional on backend Razorpay keys. See [billing flow](./END_TO_END_FLOWS.md#workflow-d-billing-and-demo-payments).
+All amounts are integer INR paise. In demo mode the browser offers simulation buttons and the backend writes clearly tagged local records; no real money changes hands and no card/banking details are requested. Live checkout is conditional on backend Razorpay keys. Cancellation does not imply refund; the clinic administrator reviews eligibility because no approved policy is configured. See [billing flow](./END_TO_END_FLOWS.md#workflow-d-billing-and-demo-payments).
 
 ## AI, triage, and speech
 

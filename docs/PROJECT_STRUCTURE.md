@@ -99,7 +99,7 @@ Refer to [the frontend guide](./FRONTEND_GUIDE.md) for each page's calls, state,
 | `backend/app/services/` | Audit, notifications, LLM, speech-to-text, embeddings, RAG, triage, patient, and payment-provider integration. | Reuse the domain adapter/service where it exists; route organization varies by domain. |
 | `backend/app/cli.py` | Interactive provisioning of hospital staff accounts. | Development/operations tool; use a secure terminal and avoid scripting a real password. |
 | `backend/app/seed_demo.py` | Rerunnable fictional local demo dataset setup. | Development only. It is not an application migration or a reason to reset the database. |
-| `backend/migrations/` | Alembic environment/template and ordered schema revisions `0001` through `0011`. | Essential to evolve PostgreSQL safely. Do not replace with `create_all`. |
+| `backend/migrations/` | Alembic environment/template and ordered schema revisions `0001` through `0014`. | Essential to evolve PostgreSQL safely. Do not replace with `create_all`. |
 | `backend/scripts/` | `evaluate_datasets.py`, `evaluate_models.py`, and `ingest_public_health.py`. | Optional operator/development tasks; inspect flags before invoking. |
 | `backend/tests/` | Isolated API/database tests for auth, role boundaries, profiles, appointments, admin, billing, AI, triage, config, and demo seeding. | Essential safety net. Reuse fixtures and synthetic data patterns. |
 | `backend/requirements.txt`, `alembic.ini`, `Dockerfile` | Python dependencies, Alembic script location, backend image/start command. | Essential runtime/tooling files. |

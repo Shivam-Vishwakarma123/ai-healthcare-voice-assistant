@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import PublicTriage from "./PublicTriage";
 import VoiceAssistant from "./VoiceAssistant";
+import ProviderDetailModal from "./ProviderDetailModal";
+import AppointmentHistoryModal from "./AppointmentHistoryModal";
+import AppointmentRescheduleModal from "./AppointmentRescheduleModal";
 import { apiRequest, formatMoney } from "../services/api";
 import { createIdempotencyKey, formatAppointmentDatePart, formatAppointmentDateTime, getISTDate } from "../services/appointments";
+import { getAppointmentPaymentAction, getAppointmentPaymentState } from "../services/appointmentPayments";
 import NotificationContactForm from "./NotificationContactForm";
 
 export function ScreenTitle({ eyebrow = "CAREVOICE PORTAL", title, description, action }) {
@@ -163,21 +167,104 @@ export function TriagePage({ language = "en", token }) {
   );
 }
 
-export function NotificationsPage({ language = "en" }) {
+export function NotificationsPage({ token, user, onUserUpdated, language = "en" }) {
+  const [notifications, setNotifications] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const hi = language === "hi";
+
+  async function loadNotifications() {
+    setLoading(true);
+    setError("");
+    try {
+      const response = await apiRequest("/patients/notifications", token);
+      setNotifications(Array.isArray(response?.items) ? response.items : []);
+    } catch (err) {
+      setError(err?.message || (hi ? "सूचनाएँ लोड नहीं हो सकीं।" : "Could not load notifications."));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (token) {
+      loadNotifications();
+    } else {
+      setLoading(false);
+    }
+  }, [token]);
+
   return (
     <>
-      <ScreenTitle title={hi ? "सूचनाएँ" : "Notifications"} description={hi ? "आपकी केयर टीम से अपडेट और रिमाइंडर।" : "Updates and reminders from your care team."} />
+      <ScreenTitle
+        title={hi ? "सूचनाएँ" : "Notifications"}
+        description={hi ? "आपकी देखभाल, अपॉइंटमेंट और बिलिंग से जुड़े वास्तविक समय के अपडेट।" : "Real-time updates, reminders, and activity receipts for your care."}
+        action={
+          <button
+            type="button"
+            className="cv-button cv-button-secondary"
+            onClick={loadNotifications}
+            disabled={loading}
+          >
+            {loading ? (hi ? "लोड हो रहा है…" : "Refreshing…") : (hi ? "ताज़ा करें" : "Refresh")}
+          </button>
+        }
+      />
+
       <section className="cv-card">
-        <EmptyState
-          icon="♧"
-          title={hi ? "सूचनाएँ कनेक्ट नहीं हैं" : "Notifications are not connected"}
-          description={hi ? "इस संस्करण में सूचनाओं की API नहीं है, इसलिए अपॉइंटमेंट रिमाइंडर या केयर टीम के संदेश नहीं दिखाए जा सकते। बुकिंग की जानकारी के लिए अपॉइंटमेंट पृष्ठ देखें।" : "This version does not yet have a notifications API, so it cannot show appointment reminders or care-team messages. Check your appointments page for current booking information."}
-        />
+        <div className="cv-card-heading">
+          <h2>{hi ? "हाल की सूचनाएँ" : "Recent notices"}</h2>
+          <span className="cv-count">{notifications.length}</span>
+        </div>
+
+        {loading ? (
+          <LoadingState label={hi ? "सूचनाएँ लोड हो रही हैं…" : "Loading notifications…"} />
+        ) : error ? (
+          <div className="cv-provider-inline-error" role="alert">
+            <p>{error}</p>
+            <button className="cv-button cv-button-quiet" type="button" onClick={loadNotifications}>
+              {hi ? "फिर कोशिश करें" : "Retry"}
+            </button>
+          </div>
+        ) : notifications.length === 0 ? (
+          <EmptyState
+            icon="♧"
+            title={hi ? "कोई नई सूचना नहीं है" : "No notifications yet"}
+            description={hi ? "जब आप अपॉइंटमेंट बुक करेंगे, समय बदलेंगे या भुगतान करेंगे, तो यहाँ संदेश दिखाई देंगे।" : "Notices will appear here when you book appointments, reschedule, or complete payments."}
+          />
+        ) : (
+          <div className="cv-invoice-list">
+            {notifications.map((item) => (
+              <div key={item.id} className="cv-invoice-row">
+                <div>
+                  <b>{hi ? item.title_hi : item.title}</b>
+                  <p>{hi ? item.message_hi : item.message}</p>
+                  <small style={{ color: "var(--cv-text-muted)", fontSize: "11px" }}>
+                    {new Date(item.created_at).toLocaleString(hi ? "hi-IN" : "en-IN", { timeZone: "Asia/Kolkata" })} IST
+                  </small>
+                </div>
+                <span className="cv-status" style={{ textTransform: "uppercase" }}>
+                  {item.channel}
+                </span>
+                <span className={`cv-status ${item.status === "failed" ? "cv-status-cancelled" : ""}`}>
+                  {item.status}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
+
+      <NotificationContactForm
+        token={token}
+        user={user}
+        onUpdated={onUserUpdated}
+        language={language}
+      />
     </>
   );
 }
+
 
 export function DashboardPage({ user, patient, token, onNavigate, language = "en" }) {
   const [data, setData] = useState({ appointments: [], doctors: [], hospitals: [] });
@@ -571,10 +658,7 @@ export function CareDirectoryPage({ token, onNavigate, onAppointmentBooked, lang
   const [loading, setLoading] = useState(true);
   const [directoryError, setDirectoryError] = useState("");
   const [bookingError, setBookingError] = useState("");
-  const [expandedProfileKey, setExpandedProfileKey] = useState(null);
-  const [profileDetails, setProfileDetails] = useState({});
-  const [profileLoadingKey, setProfileLoadingKey] = useState(null);
-  const [profileErrors, setProfileErrors] = useState({});
+  const [activeModalProfile, setActiveModalProfile] = useState(null); // { type: "doctors" | "hospitals", id: string | number }
   const [query, setQuery] = useState("");
   const [selectedDoctor, setSelectedDoctor] = useState(null);
   const [scheduledFor, setScheduledFor] = useState("");
@@ -809,11 +893,8 @@ export function CareDirectoryPage({ token, onNavigate, onAppointmentBooked, lang
           <button
             className="cv-button cv-button-quiet"
             type="button"
-            aria-expanded={expandedProfileKey === `doctors:${item.doctor_id}`}
-            aria-controls={`provider-details-doctors-${item.doctor_id}`}
-            onClick={() => showProfile("doctors", { id: item.doctor_id })}
-          >{expandedProfileKey === `doctors:${item.doctor_id}` ? (hi ? "कम दिखाएँ" : "Hide details") : (hi ? "प्रोफ़ाइल देखें" : "View profile")}</button>
-          {renderProfileDetails("doctors", item.doctor_id)}
+            onClick={() => setActiveModalProfile({ type: "doctors", id: item.doctor_id })}
+          >{hi ? "प्रोफ़ाइल देखें" : "View profile"}</button>
         </article>)}</div>
       </section>}
       {loading ? <LoadingState label={hi ? "केयर डायरेक्टरी लोड हो रही है…" : "Loading the care directory…"} /> : (
@@ -828,17 +909,16 @@ export function CareDirectoryPage({ token, onNavigate, onAppointmentBooked, lang
                 <p className="cv-location">{doctor.hospital_name || (hi ? "स्वतंत्र प्रदाता" : "Independent provider")}</p>
                 <div className="cv-doctor-meta"><span>{doctor.languages?.join(", ") || (hi ? "भाषाएँ सूचीबद्ध नहीं" : "Languages not listed")}</span><strong>{formatMoney(doctor.fee_minor)}</strong></div>
                 <p className="cv-subtle">{doctor.consultation_types?.map((item) => item.replaceAll("_", " ")).join(" · ")}</p>
-                <button
-                  className="cv-button cv-button-quiet cv-full"
-                  type="button"
-                  aria-expanded={expandedProfileKey === `doctors:${doctor.id}`}
-                  aria-controls={`provider-details-doctors-${doctor.id}`}
-                  onClick={() => showProfile("doctors", doctor)}
-                >{expandedProfileKey === `doctors:${doctor.id}` ? (hi ? "कम दिखाएँ" : "Hide details") : (hi ? "प्रोफ़ाइल देखें" : "View profile")}</button>
-                {renderProfileDetails("doctors", doctor.id)}
-                {canBook && <button ref={bookingTriggerRef} className="cv-button cv-button-secondary cv-full" disabled={!doctor.is_active || !doctor.schedules?.some((item) => item.is_active)} onClick={() => { bookingTriggerRef.current = document.activeElement; setSelectedDoctor(doctor); setScheduledFor(""); setConsultationType(doctor.consultation_types?.[0] || "in_person"); setBookingError(""); setNotice(""); }}>
-                  {!doctor.is_active ? (hi ? "अनुपलब्ध" : "Unavailable") : !doctor.schedules?.some((item) => item.is_active) ? (hi ? "समय-सारणी उपलब्ध नहीं" : "No published schedule") : (hi ? "अपॉइंटमेंट बुक करें" : "Book appointment")}
-                </button>}
+                <div className="cv-card-actions">
+                  <button
+                    className="cv-button cv-button-quiet"
+                    type="button"
+                    onClick={() => setActiveModalProfile({ type: "doctors", id: doctor.id })}
+                  >{hi ? "प्रोफ़ाइल देखें" : "View profile"}</button>
+                  {canBook && <button ref={bookingTriggerRef} className="cv-button cv-button-primary" disabled={!doctor.is_active || !doctor.schedules?.some((item) => item.is_active)} onClick={() => { bookingTriggerRef.current = document.activeElement; setSelectedDoctor(doctor); setScheduledFor(""); setConsultationType(doctor.consultation_types?.[0] || "in_person"); setBookingError(""); setNotice(""); }}>
+                    {!doctor.is_active ? (hi ? "अनुपलब्ध" : "Unavailable") : !doctor.schedules?.some((item) => item.is_active) ? (hi ? "समय-सारणी नहीं" : "No schedule") : (hi ? "बुक करें" : "Book visit")}
+                  </button>}
+                </div>
               </article>
             ))}</div> : <EmptyState title={hi ? "कोई डॉक्टर नहीं मिला" : "No doctors found"} description={hi ? "दूसरा नाम या विशेषज्ञता खोजें।" : "No verified providers match this search."} />}
           </section>}
@@ -850,14 +930,13 @@ export function CareDirectoryPage({ token, onNavigate, onAppointmentBooked, lang
                 <div><div className="cv-doctor-name"><h3>{hospital.name}</h3><span className={`cv-verification ${hospital.verified ? "" : "unverified"}`}>{hospital.verified ? (hi ? "सत्यापित" : "Verified") : (hi ? "असत्यापित" : "Not verified")}</span></div>
                   <p className="cv-location">{hospital.city}, {hospital.state}</p><p className="cv-specialty">{hospital.departments}</p>
                   {hospital.description && <p className="cv-subtle">{hospital.description}</p>}
-                  <button
-                    className="cv-button cv-button-quiet"
-                    type="button"
-                    aria-expanded={expandedProfileKey === `hospitals:${hospital.id}`}
-                    aria-controls={`provider-details-hospitals-${hospital.id}`}
-                    onClick={() => showProfile("hospitals", hospital)}
-                  >{expandedProfileKey === `hospitals:${hospital.id}` ? (hi ? "कम दिखाएँ" : "Hide details") : (hi ? "अस्पताल विवरण" : "View hospital")}</button>
-                  {renderProfileDetails("hospitals", hospital.id)}
+                  <div className="cv-card-actions">
+                    <button
+                      className="cv-button cv-button-quiet"
+                      type="button"
+                      onClick={() => setActiveModalProfile({ type: "hospitals", id: hospital.id })}
+                    >{hi ? "अस्पताल विवरण" : "View hospital"}</button>
+                  </div>
                 </div>
               </article>
             ))}</div> : <EmptyState title={hi ? "अभी कोई अस्पताल सूचीबद्ध नहीं" : "No hospitals listed"} description={hi ? "क्लिनिक ने अभी कोई अस्पताल रिकॉर्ड उपलब्ध नहीं कराया है।" : "The clinic has not provided any hospital records yet."} />}
@@ -881,6 +960,7 @@ export function CareDirectoryPage({ token, onNavigate, onAppointmentBooked, lang
             <span className="eyebrow">{hi ? "अपॉइंटमेंट" : "APPOINTMENT"}</span>
             <h2 id="cv-book-title">{hi ? "अपॉइंटमेंट बुक करें" : "Book a visit"}</h2>
             <p id="cv-book-description" className="cv-subtle">{selectedDoctor.full_name} · {selectedDoctor.specialty}</p>
+            <p className="cv-subtle">{selectedDoctor.hospital_name || (hi ? "स्वतंत्र प्रदाता" : "Independent provider")} · {hi ? "परामर्श शुल्क" : "Consultation fee"}: <strong>{formatMoney(selectedDoctor.fee_minor)}</strong>. {hi ? "अभी अग्रिम भुगतान आवश्यक नहीं है; क्लिनिक बाद में इनवॉइस जारी कर सकता है।" : "No advance payment is required for booking; the clinic may issue an invoice afterward."}</p>
             {selectedDoctor.schedules?.length ? <div className="cv-subtle">{selectedDoctor.schedules.filter((item) => item.is_active).map((item) => <p key={item.id}>{["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][item.day_of_week]} · {item.starts_at.slice(0, 5)}–{item.ends_at.slice(0, 5)} ({item.timezone})</p>)}</div> : <p className="cv-subtle">{hi ? "डॉक्टर की समय-सारणी उपलब्ध नहीं है।" : "No published schedule is available."}</p>}
             {bookingError && <InlineError message={bookingError} />}
             <form className="cv-form" onSubmit={bookVisit}>
@@ -893,24 +973,33 @@ export function CareDirectoryPage({ token, onNavigate, onAppointmentBooked, lang
           </section>
         </div>
       )}
+      <ProviderDetailModal
+        isOpen={Boolean(activeModalProfile)}
+        onClose={() => setActiveModalProfile(null)}
+        type={activeModalProfile?.type}
+        profileId={activeModalProfile?.id}
+        token={token}
+        language={language}
+      />
     </>
   );
 }
 
-export function AppointmentsPage({ token, language = "en", user, recentAppointment }) {
+export function AppointmentsPage({ token, language = "en", user, recentAppointment, onNavigate }) {
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [cancellingId, setCancellingId] = useState(null);
   const [confirmingId, setConfirmingId] = useState(null);
-  const [reschedulingId, setReschedulingId] = useState(null);
+  const [selectedRescheduleAppointment, setSelectedRescheduleAppointment] = useState(null);
   const [rescheduleTime, setRescheduleTime] = useState("");
   const [rescheduleType, setRescheduleType] = useState("in_person");
   const [rescheduleReason, setRescheduleReason] = useState("");
   const [rescheduleBusy, setRescheduleBusy] = useState(false);
-  const [historyId, setHistoryId] = useState(null);
+  const [selectedHistoryAppointment, setSelectedHistoryAppointment] = useState(null);
   const [historyById, setHistoryById] = useState({});
   const [historyLoadingId, setHistoryLoadingId] = useState(null);
+  const [paymentStartId, setPaymentStartId] = useState(null);
   const rescheduleCommandRef = useRef(null);
   const hi = language === "hi";
 
@@ -925,6 +1014,23 @@ export function AppointmentsPage({ token, language = "en", user, recentAppointme
       setLoading(false);
     }
   }
+  async function startAppointmentPayment(appointment) {
+    if (paymentStartId !== null) return;
+    setPaymentStartId(appointment.id);
+    setError("");
+    try {
+      let invoiceId = appointment.invoice_id;
+      if (!invoiceId) {
+        const invoice = await apiRequest(`/billing/appointments/${appointment.id}/invoice`, token, { method: "POST" });
+        invoiceId = invoice.id;
+      }
+      onNavigate?.("Billing", { invoiceId, action: appointment.invoice_status === "paid" ? "receipt" : "pay" });
+    } catch (reason) {
+      setError(reason?.message || (hi ? "भुगतान इनवॉइस नहीं बनाया जा सका।" : "The consultation invoice could not be prepared."));
+    } finally {
+      setPaymentStartId(null);
+    }
+  }
   useEffect(() => { loadAppointments(); }, [token]);
   useEffect(() => {
     if (!recentAppointment) return;
@@ -935,7 +1041,7 @@ export function AppointmentsPage({ token, language = "en", user, recentAppointme
   }, [recentAppointment]);
 
   async function cancelAppointment(appointment) {
-    if (!window.confirm(hi ? "क्या आप यह अपॉइंटमेंट रद्द करना चाहते हैं?" : "Cancel this appointment?")) return;
+    if (!window.confirm(hi ? "क्या आप यह अपॉइंटमेंट रद्द करना चाहते हैं? भुगतान अपने आप वापस नहीं होगा; भुगतान किए गए अपॉइंटमेंट के रिफंड की समीक्षा क्लिनिक एडमिन करेगा।" : "Cancel this appointment? Cancellation does not automatically refund a payment. A clinic administrator must review any refund for a paid appointment.")) return;
     setCancellingId(appointment.id);
     setError("");
     try {
@@ -962,13 +1068,13 @@ export function AppointmentsPage({ token, language = "en", user, recentAppointme
     }
   }
 
-  async function loadAppointmentHistory(appointmentId) {
-    setHistoryLoadingId(appointmentId);
+  async function loadAppointmentHistory(appointment) {
+    setSelectedHistoryAppointment(appointment);
+    setHistoryLoadingId(appointment.id);
     setError("");
     try {
-      const events = await apiRequest(`/providers/appointments/${appointmentId}/history`, token);
-      setHistoryById((current) => ({ ...current, [appointmentId]: events }));
-      setHistoryId(appointmentId);
+      const events = await apiRequest(`/providers/appointments/${appointment.id}/history`, token);
+      setHistoryById((current) => ({ ...current, [appointment.id]: events }));
     } catch (reason) {
       setError(reason?.message || (hi ? "इतिहास लोड नहीं हो सका।" : "Appointment history could not be loaded."));
     } finally {
@@ -998,10 +1104,9 @@ export function AppointmentsPage({ token, language = "en", user, recentAppointme
       });
       setAppointments((current) => current.map((item) => item.id === updated.id ? updated : item));
       rescheduleCommandRef.current = null;
-      setReschedulingId(null);
+      setSelectedRescheduleAppointment(null);
       setRescheduleTime("");
       setRescheduleReason("");
-      await loadAppointmentHistory(updated.id);
     } catch (reason) {
       setError(reason?.message || (hi ? "अपॉइंटमेंट का समय नहीं बदल सका।" : "The appointment could not be rescheduled."));
     } finally {
@@ -1015,34 +1120,32 @@ export function AppointmentsPage({ token, language = "en", user, recentAppointme
   const canConfirm = ["doctor", "hospital_staff", "hospital_admin", "platform_admin"].includes(user?.role);
 
   function listItems(rows, emptyTitle, emptyDescription) {
-    return rows.length ? <div className="cv-appointment-list">{rows.map((appointment) => (
+    return rows.length ? <div className="cv-appointment-list">{rows.map((appointment) => {
+      const paymentState = getAppointmentPaymentState(appointment);
+      const paymentAction = getAppointmentPaymentAction(paymentState);
+      return (
       <article className="cv-appointment-row" key={appointment.id}>
         <span className="cv-date-chip"><b>{formatAppointmentDatePart(appointment.scheduled_for, "day", hi ? "hi-IN" : "en-IN")}</b><small>{formatAppointmentDatePart(appointment.scheduled_for, "month", hi ? "hi-IN" : "en-IN")}</small></span>
         <div className="cv-appointment-details"><h3>{appointment.doctor_name || (hi ? "चिकित्सक" : "Clinician")}</h3><p>{appointment.specialty || (hi ? "विशेषज्ञता सूचीबद्ध नहीं" : "Specialty not listed")} · {appointment.hospital_name || (hi ? "अस्पताल सूचीबद्ध नहीं" : "Location not listed")}</p><time dateTime={appointment.scheduled_for}>{formatAppointmentDateTime(appointment.scheduled_for, hi ? "hi-IN" : "en-IN")} IST</time></div>
         <span className={`cv-status cv-status-${appointment.status}`}>{appointment.status}</span>
-        {appointment.status === "scheduled" && canConfirm && <button className="cv-button cv-button-quiet" disabled={confirmingId === appointment.id} onClick={() => confirmAppointment(appointment)}>{confirmingId === appointment.id ? (hi ? "पुष्टि हो रही है…" : "Confirming…") : (hi ? "पुष्टि करें" : "Confirm")}</button>}
-        {["scheduled", "confirmed"].includes(appointment.status) && new Date(appointment.scheduled_for) >= new Date() && <button className="cv-button cv-button-quiet" disabled={rescheduleBusy} onClick={() => { setReschedulingId(reschedulingId === appointment.id ? null : appointment.id); setRescheduleTime(""); setRescheduleType(appointment.consultation_type); setError(""); }}>{hi ? "समय बदलें" : "Reschedule"}</button>}
-        {["scheduled", "confirmed"].includes(appointment.status) && new Date(appointment.scheduled_for) >= new Date() && <button className="cv-button cv-button-quiet" disabled={cancellingId === appointment.id} onClick={() => cancelAppointment(appointment)}>{cancellingId === appointment.id ? (hi ? "रद्द हो रहा है…" : "Cancelling…") : (hi ? "रद्द करें" : "Cancel")}</button>}
-        <button className="cv-button cv-button-quiet" disabled={historyLoadingId === appointment.id} onClick={() => historyId === appointment.id ? setHistoryId(null) : loadAppointmentHistory(appointment.id)}>{historyLoadingId === appointment.id ? (hi ? "इतिहास…" : "Loading history…") : (historyId === appointment.id ? (hi ? "इतिहास छिपाएँ" : "Hide history") : (hi ? "इतिहास" : "History"))}</button>
-        {reschedulingId === appointment.id && (
-          <form className="cv-form cv-appointment-reschedule" onSubmit={(event) => rescheduleAppointment(event, appointment)}>
-            <label>{hi ? "परामर्श का प्रकार" : "Consultation type"}<select value={rescheduleType} onChange={(event) => { setRescheduleType(event.target.value); setRescheduleTime(""); }}>{["in_person", "online", "phone"].map((type) => <option key={type} value={type}>{type.replaceAll("_", " ")}</option>)}</select></label>
-            <AppointmentSlotPicker key={`${appointment.id}-${rescheduleType}`} token={token} doctorId={appointment.doctor_id} consultationType={rescheduleType} value={rescheduleTime} onChange={setRescheduleTime} language={language} />
-            <label>{hi ? "कारण (वैकल्पिक)" : "Reason (optional)"}<input maxLength={500} value={rescheduleReason} onChange={(event) => setRescheduleReason(event.target.value)} /></label>
-            <button className="cv-button cv-button-primary" disabled={!rescheduleTime || rescheduleBusy}>{rescheduleBusy ? (hi ? "बदल रहे हैं…" : "Rescheduling…") : (hi ? "नया समय पुष्टि करें" : "Confirm new time")}</button>
-          </form>
-        )}
-        {historyId === appointment.id && <div className="cv-appointment-history" aria-label={hi ? "अपॉइंटमेंट इतिहास" : "Appointment event history"}>
-          {(historyById[appointment.id] || []).map((event) => <p key={event.id}><strong>{event.event_type.replaceAll("_", " ")}</strong> · {formatAppointmentDateTime(event.created_at, hi ? "hi-IN" : "en-IN")} IST{event.reason ? ` · ${event.reason}` : ""}</p>)}
-          {!historyById[appointment.id]?.length && <p className="cv-subtle">{hi ? "कोई इतिहास उपलब्ध नहीं है।" : "No history is available."}</p>}
+        {user?.role === "patient" && <div className="cv-appointment-payment" aria-label={hi ? "भुगतान स्थिति" : "Payment status"}>
+          <span>{hi ? "परामर्श शुल्क" : "Consultation fee"}: {formatMoney(appointment.fee_minor)}</span>
+          {paymentState === "paid" ? <><span className="cv-status cv-status-paid">{appointment.payment_is_demo ? (hi ? "डेमो भुगतान · वास्तविक भुगतान नहीं" : "DEMO paid · not a real payment") : (hi ? "भुगतान हुआ" : "Paid")}</span><button className="cv-button cv-button-quiet" type="button" onClick={() => onNavigate?.("Billing", { invoiceId: appointment.invoice_id, action: "receipt" })}>{hi ? "रसीद देखें" : "View receipt"}</button></> : ["refunded", "partially_refunded"].includes(paymentState) ? <><span className="cv-status">{paymentState === "refunded" ? (hi ? "रिफंड हुआ" : "Refunded") : (hi ? "आंशिक रिफंड" : "Partially refunded")}</span><button className="cv-button cv-button-quiet" type="button" onClick={() => onNavigate?.("Billing", { invoiceId: appointment.invoice_id, action: "receipt" })}>{hi ? "विवरण देखें" : "View details"}</button></> : paymentState === "invoice_cancelled" ? <span className="cv-subtle">{hi ? "इनवॉइस रद्द" : "Invoice cancelled"}</span> : paymentAction ? <><span className="cv-subtle">{paymentState === "pending" ? (hi ? "भुगतान लंबित" : "Payment pending") : paymentState === "failed" ? (hi ? "भुगतान विफल" : "Payment failed") : paymentState === "cancelled" ? (hi ? "भुगतान रद्द" : "Payment cancelled") : (hi ? "भुगतान बाकी" : "Payment due")}</span><button className={`cv-button ${paymentAction === "pay" ? "cv-button-primary" : "cv-button-quiet"}`} type="button" disabled={paymentAction === "check_status" ? loading : paymentStartId !== null} onClick={() => paymentAction === "check_status" ? loadAppointments() : startAppointmentPayment(appointment)}>{paymentAction === "check_status" ? (loading ? (hi ? "जाँच रहे हैं…" : "Checking…") : (hi ? "भुगतान स्थिति जाँचें" : "Check payment status")) : paymentStartId === appointment.id ? (hi ? "तैयार हो रहा है…" : "Preparing…") : paymentAction === "retry" ? (hi ? "फिर भुगतान करें" : "Retry payment") : (hi ? "अभी भुगतान करें" : "Pay now")}</button></> : <span className="cv-subtle">{paymentState === "not_due" ? (appointment.payment_block_reason === "past" ? (hi ? "बीते हुए अपॉइंटमेंट के लिए भुगतान उपलब्ध नहीं है" : "Payment unavailable for a past appointment") : appointment.payment_block_reason === "cancelled" ? (hi ? "रद्द अपॉइंटमेंट के लिए भुगतान उपलब्ध नहीं है" : "Payment unavailable for a cancelled appointment") : (hi ? "इस अपॉइंटमेंट के लिए नया भुगतान उपलब्ध नहीं है" : "New payment is unavailable for this appointment")) : (hi ? "क्लिनिक का इनवॉइस अभी जारी नहीं हुआ" : "Clinic invoice not issued yet")}</span>}
         </div>}
+        <div className="cv-appointment-actions">
+          {appointment.status === "scheduled" && canConfirm && <button className="cv-button cv-button-quiet" disabled={confirmingId === appointment.id} onClick={() => confirmAppointment(appointment)}>{confirmingId === appointment.id ? (hi ? "पुष्टि हो रही है…" : "Confirming…") : (hi ? "पुष्टि करें" : "Confirm")}</button>}
+          {["scheduled", "confirmed"].includes(appointment.status) && new Date(appointment.scheduled_for) >= new Date() && <button className="cv-button cv-button-quiet" disabled={rescheduleBusy} onClick={() => { setSelectedRescheduleAppointment(appointment); setRescheduleTime(""); setRescheduleType(appointment.consultation_type); setError(""); }}>{hi ? "समय बदलें" : "Reschedule"}</button>}
+          {["scheduled", "confirmed"].includes(appointment.status) && new Date(appointment.scheduled_for) >= new Date() && <button className="cv-button cv-button-quiet" disabled={cancellingId === appointment.id} onClick={() => cancelAppointment(appointment)}>{cancellingId === appointment.id ? (hi ? "रद्द हो रहा है…" : "Cancelling…") : (hi ? "रद्द करें" : "Cancel")}</button>}
+          <button className="cv-button cv-button-quiet" disabled={historyLoadingId === appointment.id} onClick={() => loadAppointmentHistory(appointment)}>{historyLoadingId === appointment.id ? (hi ? "इतिहास…" : "Loading history…") : (hi ? "इतिहास" : "History")}</button>
+        </div>
       </article>
-    ))}</div> : <EmptyState icon="▦" title={emptyTitle} description={emptyDescription} />;
+    );
+    })}</div> : <EmptyState icon="▦" title={emptyTitle} description={emptyDescription} />;
   }
 
   return (
     <>
-      <ScreenTitle title={hi ? "अपॉइंटमेंट" : "Appointments"} description={hi ? "IST में मुलाक़ातें देखें, बदलें और उनका इतिहास जाँचें।" : "View, manage, and review appointments. All appointment times are shown in IST."} />
+      <ScreenTitle title={hi ? "अपॉइंटमेंट" : "Appointments"} description={hi ? "IST में मुलाक़ातें देखें, बदलें और उनका इतिहास जाँचें।" : "View, manage, and review appointments. All appointment times are shown in IST."} action={<button className="cv-button cv-button-quiet" type="button" onClick={loadAppointments} disabled={loading}>{hi ? "स्थिति रीफ़्रेश करें" : "Refresh status"}</button>} />
       {error && <InlineError message={error} onRetry={loadAppointments} />}
       {loading ? <LoadingState label={hi ? "अपॉइंटमेंट लोड हो रहे हैं…" : "Loading appointments…"} /> : error && appointments.length === 0 ? null : (
         <>
@@ -1050,6 +1153,34 @@ export function AppointmentsPage({ token, language = "en", user, recentAppointme
           <section className="cv-card"><div className="cv-card-heading"><div><span className="eyebrow">{hi ? "पिछली मुलाक़ातें" : "PAST CARE"}</span><h2>{hi ? "अपॉइंटमेंट इतिहास" : "Appointment history"}</h2></div><span className="cv-count">{history.length}</span></div>{listItems(history, hi ? "अभी कोई इतिहास नहीं" : "No appointment history", hi ? "आपके पुराने या रद्द अपॉइंटमेंट यहाँ दिखेंगे।" : "Past and cancelled appointments will appear here.")}</section>
         </>
       )}
+      <AppointmentHistoryModal
+        isOpen={Boolean(selectedHistoryAppointment)}
+        onClose={() => setSelectedHistoryAppointment(null)}
+        appointment={selectedHistoryAppointment}
+        history={selectedHistoryAppointment ? (historyById[selectedHistoryAppointment.id] || []) : []}
+        loading={Boolean(selectedHistoryAppointment && historyLoadingId === selectedHistoryAppointment.id)}
+        language={language}
+      />
+      <AppointmentRescheduleModal
+        isOpen={Boolean(selectedRescheduleAppointment)}
+        onClose={() => {
+          setSelectedRescheduleAppointment(null);
+          setRescheduleTime("");
+          setRescheduleReason("");
+        }}
+        appointment={selectedRescheduleAppointment}
+        token={token}
+        rescheduleType={rescheduleType}
+        setRescheduleType={setRescheduleType}
+        rescheduleTime={rescheduleTime}
+        setRescheduleTime={setRescheduleTime}
+        rescheduleReason={rescheduleReason}
+        setRescheduleReason={setRescheduleReason}
+        rescheduleBusy={rescheduleBusy}
+        onSubmit={rescheduleAppointment}
+        SlotPickerComponent={AppointmentSlotPicker}
+        language={language}
+      />
     </>
   );
 }

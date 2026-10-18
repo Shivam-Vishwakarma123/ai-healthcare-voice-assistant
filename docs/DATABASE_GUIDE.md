@@ -54,6 +54,7 @@ No explicit many-to-many table or ORM mapping appears in the current schema; ass
 | `appointment_events` | Appointment history/audit: actor, event type, previous/new status and times, reason, timestamp. | PK; appointment FK `CASCADE`, actor FK `SET NULL`, appointment index. Written on booking and status/time changes. |
 | `invoices` | Owner/hospital/optional appointment, unique invoice number, description, `amount_minor`, currency, status, timestamps. | PK; user FK `CASCADE`, hospital/appointment FKs `SET NULL`; unique appointment and invoice number; owner/hospital/appointment indexes. Billing/admin routes. |
 | `payments` | Payment attempt: invoice, unique provider order ID, optional unique provider payment ID, status, safe failure code/description, timestamps. | PK; invoice FK `CASCADE`; invoice index. Can have multiple attempts for an invoice. Billing routes/service. |
+| `payment_refunds` | Admin-reviewed full/partial refund request, local idempotency key, provider refund reference, amount, reason and status. No card credentials are stored. | Payment/user FKs; unique idempotency and provider refund IDs. Added by `0013_payment_refunds`; `0014_invoice_refund_status` widens status fields for refund states. |
 | `payment_webhook_events` | Provider webhook replay record: unique provider event ID, type, payload SHA-256, optional payment link, result, receive time. | PK; payment FK `SET NULL`; unique event ID and payment index. Billing webhook. |
 | `auth_sessions` | Revocable access-token session: UUID-like string ID, user, expiry, revoked/created times. | PK `id`; user FK `CASCADE`; user/expiry indexes. Auth security dependency. |
 | `password_reset_tokens` | Hashed one-time reset token, user, expiry, use/creation times. | PK; user FK `CASCADE`; unique token hash; user/expiry indexes. Auth routes only store digest, not raw reset token. |
@@ -92,7 +93,7 @@ For example, booking starts in `CareDirectoryPage`, sends a timezone-aware `sche
 
 ## Migrations and safe schema evolution
 
-`backend/migrations/env.py` points Alembic at `Base.metadata` and configured `DATABASE_URL`. The ordered chain currently runs from `0001_portal_billing` to `0011_appointment_invoices`. The backend container runs `alembic upgrade head` before Uvicorn. Models do not auto-create/alter live schema.
+`backend/migrations/env.py` points Alembic at `Base.metadata` and configured `DATABASE_URL`. The ordered chain currently runs from `0001_portal_billing` to `0014_invoice_refund_status`. The backend container runs `alembic upgrade head` before Uvicorn. Models do not auto-create/alter live schema.
 
 For a new field/table:
 

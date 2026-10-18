@@ -290,8 +290,12 @@ export default function AdminManagement({
             {data.appointments.length ? <div className="cv-admin-table-wrap"><table className="cv-admin-table"><thead><tr><th>Appointment</th><th>Clinician</th><th>Time</th><th>Status</th><th>Action</th></tr></thead><tbody>
               {data.appointments.map((appointment) => <tr key={appointment.id}>
                 <td>#{appointment.id}</td><td>{appointment.doctor_name}</td><td>{new Intl.DateTimeFormat(hi ? "hi-IN" : "en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" }).format(new Date(appointment.scheduled_for))} IST</td><td>{appointment.status}</td>
-                <td>{appointment.status === "scheduled" && <button className="cv-button cv-button-quiet" disabled={busyId === `appointment-${appointment.id}`} onClick={() => updateAppointment(appointment, "confirm")}>Confirm</button>}
-                  {["scheduled", "confirmed"].includes(appointment.status) && <button className="cv-button cv-button-quiet" disabled={busyId === `appointment-${appointment.id}`} onClick={() => updateAppointment(appointment, "cancel")}>Cancel</button>}</td>
+                <td>
+                  <div className="cv-admin-row-actions">
+                    {appointment.status === "scheduled" && <button className="cv-button cv-button-quiet" disabled={busyId === `appointment-${appointment.id}`} onClick={() => updateAppointment(appointment, "confirm")}>Confirm</button>}
+                    {["scheduled", "confirmed"].includes(appointment.status) && <button className="cv-button cv-button-quiet" disabled={busyId === `appointment-${appointment.id}`} onClick={() => updateAppointment(appointment, "cancel")}>Cancel</button>}
+                  </div>
+                </td>
               </tr>)}
             </tbody></table></div> : <p className="cv-subtle">No appointments in this scope.</p>}
           </AdminSection>

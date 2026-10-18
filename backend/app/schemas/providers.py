@@ -249,4 +249,12 @@ class AppointmentRead(BaseModel):
     doctor_name: str | None = None
     hospital_name: str | None = None
     specialty: str | None = None
+    fee_minor: int = 0
+    invoice_id: int | None = None
+    invoice_status: str | None = None
+    payment_status: str | None = None
+    payment_transaction_id: str | None = None
+    payment_is_demo: bool = False
+    can_start_payment: bool = False
+    payment_block_reason: str | None = None
     model_config = ConfigDict(from_attributes=True)

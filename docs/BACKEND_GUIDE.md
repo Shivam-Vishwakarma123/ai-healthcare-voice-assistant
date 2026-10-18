@@ -102,7 +102,7 @@ These are implementation/deployment boundaries, not a complete vulnerability ass
 
 ## Migrations and testing
 
-Alembic's configuration is `backend/alembic.ini`; `backend/migrations/env.py` loads `app.models` metadata and configured database URL. The backend container runs `alembic upgrade head` before Uvicorn. Current revisions are `0001_portal_billing` through `0011_appointment_invoices`. Add and review a migration for model changes; runtime startup does not call `Base.metadata.create_all`.
+Alembic's configuration is `backend/alembic.ini`; `backend/migrations/env.py` loads `app.models` metadata and configured database URL. The backend container runs `alembic upgrade head` before Uvicorn. Current revisions are `0001_portal_billing` through `0014_invoice_refund_status`. Add and review a migration for model changes; runtime startup does not call `Base.metadata.create_all`.
 
 Tests are under `backend/tests/`. Database workflows usually use isolated SQLite fixtures; provider HTTP calls are mocked. Run:
 

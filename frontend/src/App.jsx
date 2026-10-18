@@ -15,6 +15,7 @@ import {
 } from "./components/PortalScreens";
 import PublicTriage from "./components/PublicTriage";
 import { apiRequest, readCachedUser } from "./services/api";
+import { applyTheme, persistThemePreference, readThemePreference } from "./services/theme";
 import "./App.css";
 import "./portal.css";
 import "./healthcare.css";
@@ -51,12 +52,15 @@ export default function App() {
   const [token, setToken] = useState(() => isPasswordResetPath ? "" : storageGet("ahva_token"));
   const [user, setUser] = useState(readCachedUser);
   const [language, setLanguage] = useState(() => storageGet("carevoice_language", "en"));
+  const [theme, setTheme] = useState(readThemePreference);
   const [page, setPage] = useState("Overview");
   const [patients, setPatients] = useState([]);
   const [recentAppointment, setRecentAppointment] = useState(null);
+  const [billingRequest, setBillingRequest] = useState(null);
   const [profile, setProfile] = useState(emptyProfile);
   const [accountLoading, setAccountLoading] = useState(Boolean(!isPasswordResetPath && storageGet("ahva_token")));
   const [busy, setBusy] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [authMode, setAuthMode] = useState(() => (
@@ -71,6 +75,24 @@ export default function App() {
     bootstrap_token: "",
     reset_token: new URLSearchParams(window.location.search).get("token") || "",
   });
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => applyTheme(theme, document.documentElement, media);
+    apply();
+    if (theme !== "system") return undefined;
+    media.addEventListener?.("change", apply);
+    return () => media.removeEventListener?.("change", apply);
+  }, [theme]);
+
+  useEffect(() => {
+    document.documentElement.lang = language === "hi" ? "hi" : "en";
+  }, [language]);
+
+  function changeTheme(nextTheme) {
+    setTheme(nextTheme);
+    if (!persistThemePreference(nextTheme)) setError("The theme preference could not be saved in this browser.");
+  }
 
   useEffect(() => {
     let active = true;
@@ -145,7 +167,7 @@ export default function App() {
       } catch (reason) {
         if (!active) return;
         if (reason.status === 401 || reason.status === 403) {
-          signOut();
+          clearLocalSession();
         } else {
           setError(reason.message || "Your account could not be loaded. Please try again.");
         }
@@ -166,6 +188,33 @@ export default function App() {
     }
   }
 
+  useEffect(() => {
+    document.body.classList.toggle("cv-menu-open", mobileMenuOpen);
+    return () => document.body.classList.remove("cv-menu-open");
+  }, [mobileMenuOpen]);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return undefined;
+    const onKeyDown = (event) => { if (event.key === "Escape") setMobileMenuOpen(false); };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [mobileMenuOpen]);
+
+  function toggleMobileMenu() {
+    setMobileMenuOpen(prev => !prev);
+  }
+
+  function closeMobileMenu() {
+    setMobileMenuOpen(false);
+  }
+
+  const handleNavClick = (pageId) => {
+    setPage(pageId);
+    setMobileMenuOpen(false);
+    setError("");
+    setNotice("");
+  };
+
   function updateCurrentUser(account) {
     setUser(account);
     try {
@@ -175,22 +224,12 @@ export default function App() {
     }
   }
 
-  async function signOut() {
-    let logoutError = "";
-    if (token) {
-      try {
-        await apiRequest("/auth/logout", token, { method: "POST" });
-      } catch (reason) {
-        if (reason.status !== 401) {
-          logoutError = reason.message || "The server session could not be revoked.";
-        }
-      }
-    }
+  function clearLocalSession(errorMessage = "") {
     try {
       window.localStorage.removeItem("ahva_token");
       window.localStorage.removeItem("ahva_user");
     } catch {
-      logoutError = "Could not clear saved session details from this browser.";
+      // ignore storage access errors
     }
     setToken("");
     setUser(null);
@@ -198,8 +237,20 @@ export default function App() {
     setPage("Overview");
     setAuthMode("landing");
     if (window.location.pathname !== "/") window.history.replaceState({}, "", "/");
-    setError(logoutError);
+    if (errorMessage) setError(errorMessage);
     setNotice("");
+  }
+
+  async function signOut() {
+    const currentToken = token;
+    clearLocalSession();
+    if (currentToken) {
+      try {
+        await apiRequest("/auth/logout", currentToken, { method: "POST" });
+      } catch {
+        // ignore network or 401 errors on logout
+      }
+    }
   }
 
   async function submitAuth(event) {
@@ -314,7 +365,17 @@ export default function App() {
     }
   }
 
-  if (!token) {
+  if (!token || !user) {
+    if (token && accountLoading) {
+      return (
+        <div className="cv-app-shell cv-loading-screen" role="status">
+          <div className="cv-account-loading">
+            <span className="cv-spinner" aria-hidden="true" />
+            <p>{language === "hi" ? "सत्र लोड हो रहा है…" : "Loading session…"}</p>
+          </div>
+        </div>
+      );
+    }
     return (
       <AuthScreen
         mode={authMode}
@@ -327,6 +388,8 @@ export default function App() {
         notice={notice}
         language={language}
         setLanguage={changeLanguage}
+        theme={theme}
+        setTheme={changeTheme}
         bootstrapStatus={bootstrapStatus}
         setMode={changeAuthMode}
         onSubmit={submitAuth}
@@ -349,14 +412,30 @@ export default function App() {
 
   return (
     <div className="cv-app-shell">
-      <aside className="cv-sidebar">
-        <a className="cv-brand" href="#home" onClick={(event) => { event.preventDefault(); setPage(homePage); }}>
-          <span className="cv-brand-mark" aria-hidden="true">✚</span><span>CareVoice<small>HEALTH</small></span>
-        </a>
+      {mobileMenuOpen && (
+        <div className="cv-menu-backdrop" onClick={closeMobileMenu} role="presentation" aria-hidden="true" />
+      )}
+      <aside id="cv-sidebar" className={`cv-sidebar ${mobileMenuOpen ? "open" : ""}`} role="navigation" aria-label={isHindi ? "मुख्य नेविगेशन" : "Main navigation"}>
+        <div className="cv-sidebar-head">
+          <a className="cv-brand" href="#home" onClick={(event) => { event.preventDefault(); handleNavClick(homePage); }}>
+            <span className="cv-brand-mark" aria-hidden="true">✚</span>
+            <span>CareVoice<small>HEALTH</small></span>
+          </a>
+          <button
+            type="button"
+            className="cv-sidebar-close"
+            onClick={closeMobileMenu}
+            aria-label={isHindi ? "बंद करें" : "Close menu"}
+          >×</button>
+        </div>
+        <div className="cv-sidebar-mobile-controls">
+          <LanguageToggle language={language} setLanguage={changeLanguage} />
+          <ThemeSelector theme={theme} setTheme={changeTheme} language={language} />
+        </div>
         <div className="cv-nav-label">{isHindi ? "आपका कार्यक्षेत्र" : "YOUR WORKSPACE"}</div>
         <nav className="cv-navigation" aria-label={isHindi ? "मुख्य नेविगेशन" : "Main navigation"}>
           {visibleNavigation.map((item) => (
-            <button key={item.id} className={`cv-nav-item ${page === item.id ? "active" : ""}`} aria-current={page === item.id ? "page" : undefined} onClick={() => { setPage(item.id); setError(""); setNotice(""); }}>
+            <button key={item.id} className={`cv-nav-item ${page === item.id ? "active" : ""}`} aria-current={page === item.id ? "page" : undefined} onClick={() => handleNavClick(item.id)}>
               <span aria-hidden="true">{item.icon}</span><span>{isHindi ? item.hi : item.en}</span>
             </button>
           ))}
@@ -371,9 +450,28 @@ export default function App() {
 
       <main className="cv-main">
         <header className="cv-topbar">
-          <div className="cv-breadcrumb"><span>{isHindi ? "कार्यस्थान" : "Workspace"}</span><b aria-hidden="true">/</b><strong>{pageLabel}</strong></div>
+          <div className="cv-topbar-left">
+            <button
+              type="button"
+              className="cv-hamburger"
+              onClick={toggleMobileMenu}
+              aria-expanded={mobileMenuOpen}
+              aria-controls="cv-sidebar"
+              aria-label={isHindi ? "मेनू खोलें" : "Open menu"}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                <path d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+            <a className="cv-mobile-brand" href="#home" onClick={(event) => { event.preventDefault(); handleNavClick(homePage); }}>
+              <span className="cv-brand-mark" aria-hidden="true">✚</span>
+              <span>CareVoice<small>HEALTH</small></span>
+            </a>
+            <div className="cv-breadcrumb"><span>{isHindi ? "कार्यस्थान" : "Workspace"}</span><b aria-hidden="true">/</b><strong>{pageLabel}</strong></div>
+          </div>
           <div className="cv-topbar-actions">
             <LanguageToggle language={language} setLanguage={changeLanguage} />
+            <ThemeSelector theme={theme} setTheme={changeTheme} language={language} />
             <span className="cv-session-status"><i aria-hidden="true" />{isHindi ? "सुरक्षित सत्र" : "Signed-in session"}</span>
             <button className="cv-mobile-signout" onClick={signOut}>{isHindi ? "बाहर जाएँ" : "Sign out"}</button>
           </div>
@@ -389,12 +487,12 @@ export default function App() {
               {page === "Provider dashboard" && <ProviderDashboardPage user={user} token={token} onUserUpdated={updateCurrentUser} language={language} />}
               {page === "Administration" && isAdmin && <AdminManagement token={token} user={user} onUserUpdated={updateCurrentUser} onSessionInvalidated={signOut} language={language} />}
               {page === "Find care" && <CareDirectoryPage token={token} onNavigate={setPage} onAppointmentBooked={(appointment) => { setRecentAppointment(appointment); setPage("Appointments"); }} language={language} canBook={user?.role === "patient"} />}
-              {page === "Appointments" && <AppointmentsPage token={token} language={language} user={user} recentAppointment={recentAppointment} />}
+              {page === "Appointments" && <AppointmentsPage token={token} language={language} user={user} recentAppointment={recentAppointment} onNavigate={(nextPage, request) => { if (nextPage === "Billing") setBillingRequest(request || null); setPage(nextPage); }} />}
               {page === "Symptom check" && <TriagePage language={language} token={token} />}
               {page === "Assistant" && <><ScreenTitle title={isHindi ? "CareVoice सहायक" : "CareVoice assistant"} description={isHindi ? "सामान्य स्वास्थ्य जानकारी के लिए लिखें या बोलें।" : "Type or speak for general health information. This is not a diagnosis or a substitute for care."} /><VoiceAssistant token={token} language={language} /></>}
               {page === "Profile" && user?.role === "patient" && <ProfilePage profile={profile} setProfile={setProfile} patient={patients[0]} busy={busy} onSave={saveProfile} onDelete={deleteProfile} token={token} user={user} onUserUpdated={updateCurrentUser} language={language} />}
-              {page === "Notifications" && <NotificationsPage language={language} />}
-              {page === "Billing" && canAccessBilling && <Billing token={token} user={user} language={language} />}
+              {page === "Notifications" && <NotificationsPage token={token} user={user} onUserUpdated={updateCurrentUser} language={language} />}
+              {page === "Billing" && canAccessBilling && <Billing token={token} user={user} language={language} target={billingRequest} onTargetHandled={() => setBillingRequest(null)} />}
               {page === "Medical records" && <UnavailablePage title={isHindi ? "मेडिकल रिकॉर्ड" : "Medical records"} description={isHindi ? "क्लिनिक से साझा किए गए दस्तावेज़ यहाँ दिखाई देंगे।" : "Documents shared by your clinic would appear here."} />}
             </>
           )}
@@ -404,7 +502,7 @@ export default function App() {
   );
 }
 
-function AuthScreen({ mode, setMode, auth, setAuth, setError, setNotice, busy, error, notice, language, setLanguage, bootstrapStatus, onSubmit, onResetRequest, onResetConfirm, resetToken }) {
+function AuthScreen({ mode, setMode, auth, setAuth, setError, setNotice, busy, error, notice, language, setLanguage, theme, setTheme, bootstrapStatus, onSubmit, onResetRequest, onResetConfirm, resetToken }) {
   const hi = language === "hi";
   const isLogin = mode === "login";
   const isRegister = mode === "register";
@@ -416,11 +514,13 @@ function AuthScreen({ mode, setMode, auth, setAuth, setError, setNotice, busy, e
     <main className="cv-public-shell">
       <header className="cv-public-header">
         <a className="cv-brand" href="#home" onClick={(event) => { event.preventDefault(); setMode("landing"); }}>
-          <span className="cv-brand-mark" aria-hidden="true">✚</span><span>CareVoice<small>HEALTH</small></span>
+          <span className="cv-brand-mark" aria-hidden="true">✚</span>
+          <span>CareVoice<small>HEALTH</small></span>
         </a>
         <nav className="cv-public-nav" aria-label={hi ? "मुख्य मेनू" : "Main menu"}>
           {mode === "landing" && <><a href="#care">{hi ? "देखभाल सेवाएँ" : "Care services"}</a><a href="#safety">{hi ? "सुरक्षा पहले" : "Safety first"}</a></>}
           <LanguageToggle language={language} setLanguage={setLanguage} />
+          <ThemeSelector theme={theme} setTheme={setTheme} language={language} />
           <button className="cv-button cv-button-quiet" onClick={() => setMode("login")}>{hi ? "साइन इन" : "Sign in"}</button>
           <button className="cv-button cv-button-primary" onClick={() => setMode("register")}>{hi ? "खाता बनाएँ" : "Create account"}</button>
           {bootstrapStatus.reason !== "complete" && <button className="cv-button cv-button-quiet" onClick={() => setMode("bootstrap")}>{hi ? "प्रारंभिक व्यवस्थापक सेटअप" : "Initial administrator setup"}</button>}
@@ -497,6 +597,24 @@ function LanguageToggle({ language, setLanguage }) {
       <button type="button" aria-pressed={language === "en"} onClick={() => setLanguage("en")}>EN</button>
       <button type="button" aria-pressed={language === "hi"} onClick={() => setLanguage("hi")}>हि</button>
     </div>
+  );
+}
+
+function ThemeSelector({ theme, setTheme, language }) {
+  const hi = language === "hi";
+  return (
+    <label className="cv-theme-selector">
+      <span className="cv-sr-only">{hi ? "रंग थीम" : "Color theme"}</span>
+      <select
+        aria-label={hi ? "रंग थीम" : "Color theme"}
+        value={theme}
+        onChange={(event) => setTheme(event.target.value)}
+      >
+        <option value="system">{hi ? "🌓 सिस्टम (स्वतः)" : "🌓 System (auto)"}</option>
+        <option value="light">{hi ? "☀️ लाइट मोड" : "☀️ Light mode"}</option>
+        <option value="dark">{hi ? "🌙 डार्क मोड" : "🌙 Dark mode"}</option>
+      </select>
+    </label>
   );
 }
 

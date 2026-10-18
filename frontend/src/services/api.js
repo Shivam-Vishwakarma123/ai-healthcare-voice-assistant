@@ -2,7 +2,17 @@ const API_BASE = (import.meta.env?.VITE_API_BASE_URL || "http://localhost:8000/a
 
 function normalizeHeaders(headers) {
   if (!headers) return {};
-  if (headers instanceof Headers) return Object.fromEntries(headers.entries());
+  // Headers normalizes names to lowercase; restore conventional casing so callers
+  // that inspect the fetch options (and the existing Idempotency-Key contract)
+  // see the same key they supplied. HTTP itself treats header names case-insensitively.
+  if (headers instanceof Headers) {
+    return Object.fromEntries(
+      [...headers.entries()].map(([name, value]) => [
+        name.split("-").map((part) => part ? `${part[0].toUpperCase()}${part.slice(1)}` : part).join("-"),
+        value,
+      ]),
+    );
+  }
   if (Array.isArray(headers)) return Object.fromEntries(headers);
   if (typeof headers === "object") return { ...headers };
   return {};

@@ -1,27 +1,30 @@
 import hashlib
 import hmac
 import json
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth.security import get_current_user
 from app.core.config import settings
 from app.core.database import get_db
-from app.models.billing import Invoice, Payment, PaymentWebhookEvent
+from app.models.billing import Invoice, Payment, PaymentWebhookEvent, Refund
 from app.models.providers import Appointment, Doctor, Hospital
 from app.models.user import User
 from app.services.audit_service import record_audit
+from app.services.appointment_payment_eligibility import appointment_payment_block_reason
 from app.services.notification_service import notify_user
 from app.services.payment_service import PaymentProviderError, PaymentService, RazorpayPaymentService
 
 router = APIRouter(prefix="/billing", tags=["Billing"])
+logger = logging.getLogger(__name__)
 
 
 def _payment_service() -> PaymentService:
@@ -106,6 +109,25 @@ class DemoPaymentResult(BaseModel):
     demo: Literal[True] = True
 
 
+class RefundCreate(BaseModel):
+    payment_id: int = Field(gt=0)
+    amount_minor: int = Field(gt=0, le=100_000_000)
+    reason: str = Field(min_length=3, max_length=500)
+
+
+class RefundRead(BaseModel):
+    id: int
+    payment_id: int
+    provider_refund_id: str | None
+    amount_minor: int
+    currency: str
+    status: str
+    reason: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 def _checkout_order(invoice: Invoice, payment: Payment) -> CheckoutOrder:
     return CheckoutOrder(
         order_id=payment.provider_order_id,
@@ -131,11 +153,18 @@ def _require_staff(user: User) -> None:
 
 @router.get("/config")
 def billing_config(_: User = Depends(get_current_user)):
-    enabled = settings.payment_mode == "demo" or bool(settings.razorpay_key_id and settings.razorpay_key_secret)
+    provider_checkout_enabled = (
+        settings.payment_mode == "live"
+        and bool(settings.razorpay_key_id and settings.razorpay_key_secret)
+    )
+    demo_payment_enabled = settings.payment_mode == "demo"
     return {
         "payment_mode": settings.payment_mode,
-        "online_payment_enabled": enabled,
-        "demo_payment_enabled": settings.payment_mode == "demo",
+        "online_payment_enabled": provider_checkout_enabled,
+        "provider_checkout_enabled": provider_checkout_enabled,
+        "provider_test_mode": provider_checkout_enabled and settings.razorpay_key_id.startswith("rzp_test_"),
+        "demo_payment_enabled": demo_payment_enabled,
+        "checkout_enabled": provider_checkout_enabled or demo_payment_enabled,
     }
 
 
@@ -156,7 +185,13 @@ def list_invoices(request: Request, db: Session = Depends(get_db), user: User = 
 
 @router.get("/payments")
 def list_payments(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    query = select(Payment, Invoice).join(Invoice, Invoice.id == Payment.invoice_id)
+    query = (
+        select(Payment, Invoice, Appointment, Doctor, Hospital)
+        .join(Invoice, Invoice.id == Payment.invoice_id)
+        .outerjoin(Appointment, Appointment.id == Invoice.appointment_id)
+        .outerjoin(Doctor, Doctor.id == Appointment.doctor_id)
+        .outerjoin(Hospital, Hospital.id == Appointment.hospital_id)
+    )
     if user.role == "patient":
         query = query.where(Invoice.owner_user_id == user.id)
     elif user.role in {"hospital_staff", "hospital_admin"}:
@@ -168,16 +203,116 @@ def list_payments(db: Session = Depends(get_db), user: User = Depends(get_curren
             "id": payment.id,
             "invoice_id": invoice.id,
             "invoice_number": invoice.invoice_number,
+            "appointment_id": invoice.appointment_id,
+            "appointment_status": appointment.status if appointment else None,
+            "doctor_name": doctor.full_name if doctor else None,
+            "hospital_name": hospital.name if hospital else None,
+            "scheduled_for": _as_utc(appointment.scheduled_for) if appointment else None,
             "transaction_id": payment.provider_payment_id or payment.provider_order_id,
             "status": payment.status,
             "amount_minor": invoice.amount_minor,
             "currency": invoice.currency,
+            "paid_at": invoice.paid_at,
             "is_demo": payment.provider_order_id.startswith("demo_"),
             "created_at": payment.created_at,
             "updated_at": payment.updated_at,
         }
-        for payment, invoice in db.execute(query.order_by(Payment.created_at.desc(), Payment.id.desc())).all()
+        for payment, invoice, appointment, doctor, hospital in db.execute(query.order_by(Payment.created_at.desc(), Payment.id.desc())).all()
     ]
+
+
+@router.get("/refunds", response_model=list[RefundRead])
+def list_refunds(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    query = select(Refund, Payment, Invoice).join(Payment, Payment.id == Refund.payment_id).join(Invoice, Invoice.id == Payment.invoice_id)
+    if user.role == "patient":
+        query = query.where(Invoice.owner_user_id == user.id)
+    elif user.role in {"hospital_staff", "hospital_admin"}:
+        query = query.where(Invoice.hospital_id == user.hospital_id)
+    elif user.role != "platform_admin":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Your account cannot access refund history.")
+    return [refund for refund, _, _ in db.execute(query.order_by(Refund.created_at.desc(), Refund.id.desc())).all()]
+
+
+@router.post("/refunds", response_model=RefundRead, status_code=status.HTTP_202_ACCEPTED)
+async def create_refund(
+    payload: RefundCreate,
+    request: Request,
+    idempotency_key: str = Header(alias="Idempotency-Key", min_length=16, max_length=128, pattern="^[A-Za-z0-9._:-]+$"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if user.role not in {"hospital_admin", "platform_admin"}:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Hospital or platform administrator approval is required for refunds.")
+    if settings.payment_mode != "live":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Provider refunds are unavailable in demo mode.")
+    if settings.appointment_refund_policy == "no_refunds":
+        raise HTTPException(status.HTTP_409_CONFLICT, "The configured cancellation policy does not allow refunds.")
+    existing = db.scalar(select(Refund).where(Refund.idempotency_key == idempotency_key))
+    payment_id = existing.payment_id if existing is not None else payload.payment_id
+    payment = db.scalar(select(Payment).where(Payment.id == payment_id).with_for_update())
+    if payment is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Payment not found.")
+    invoice = db.scalar(select(Invoice).where(Invoice.id == payment.invoice_id).with_for_update())
+    if invoice is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found.")
+    if user.role == "hospital_admin" and user.hospital_id != invoice.hospital_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "You can only refund payments for your hospital.")
+    if existing is not None:
+        if existing.payment_id != payload.payment_id or existing.amount_minor != payload.amount_minor:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Idempotency key was reused for a different refund request.")
+        return existing
+    if payment.status != "paid" or not payment.provider_payment_id:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Only a provider-confirmed captured payment can be refunded.")
+    if invoice.appointment_id is not None:
+        appointment = db.get(Appointment, invoice.appointment_id)
+        if appointment is None or appointment.status != "cancelled":
+            raise HTTPException(status.HTTP_409_CONFLICT, "Cancel the linked appointment before requesting a refund.")
+    total_processed = db.scalar(select(func.coalesce(func.sum(Refund.amount_minor), 0)).where(Refund.payment_id == payment.id, Refund.status == "processed")) or 0
+    total_pending = db.scalar(select(func.coalesce(func.sum(Refund.amount_minor), 0)).where(Refund.payment_id == payment.id, Refund.status.in_(["pending", "processing"]))) or 0
+    if payload.amount_minor > invoice.amount_minor - total_processed - total_pending:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Refund exceeds the remaining refundable balance.")
+    refund = Refund(
+        payment_id=payment.id,
+        requested_by_user_id=user.id,
+        idempotency_key=idempotency_key,
+        amount_minor=payload.amount_minor,
+        currency=invoice.currency,
+        status="processing",
+        reason=payload.reason.strip(),
+    )
+    db.add(refund)
+    try:
+        db.flush()
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        existing = db.scalar(select(Refund).where(Refund.idempotency_key == idempotency_key))
+        if existing is not None:
+            return existing
+        raise HTTPException(status.HTTP_409_CONFLICT, "A refund is already being processed for this request.") from exc
+    try:
+        provider_refund = await _payment_service().create_refund(
+            payment_id=payment.provider_payment_id,
+            amount_minor=refund.amount_minor,
+            reason=refund.reason,
+        )
+    except PaymentProviderError as exc:
+        # The call may have timed out after provider acceptance. Keep processing
+        # and require webhook/reconciliation; never blindly submit a second refund.
+        record_audit(db, request, "billing.refund_submission_uncertain", actor=user, hospital_id=invoice.hospital_id, resource_type="refund", resource_id=refund.id)
+        db.commit()
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Refund outcome is pending provider reconciliation; do not submit another request.") from exc
+    refund.provider_refund_id = provider_refund["id"]
+    provider_status = provider_refund.get("status")
+    refund.status = "processed" if provider_status == "processed" else "pending"
+    if refund.status == "processed":
+        processed_total = db.scalar(select(func.coalesce(func.sum(Refund.amount_minor), 0)).where(Refund.payment_id == payment.id, Refund.status == "processed")) or 0
+        payment.status = "refunded" if processed_total >= invoice.amount_minor else "partially_refunded"
+        invoice.status = payment.status
+    record_audit(db, request, "billing.refund_submitted", actor=user, hospital_id=invoice.hospital_id, resource_type="refund", resource_id=refund.id)
+    db.commit()
+    db.refresh(refund)
+    return refund
 
 
 @router.get("/billable-appointments")
@@ -273,6 +408,63 @@ def create_invoice(payload: InvoiceCreate, request: Request, db: Session = Depen
     return invoice
 
 
+@router.post("/appointments/{appointment_id}/invoice", response_model=InvoiceRead)
+def create_patient_appointment_invoice(
+    appointment_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Create or retrieve the patient-requested consultation invoice for an upcoming visit."""
+    if user.role != "patient":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the appointment's patient can request its invoice.")
+    appointment = db.scalar(
+        select(Appointment)
+        .where(Appointment.id == appointment_id, Appointment.patient_user_id == user.id)
+        .with_for_update()
+    )
+    if appointment is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found.")
+    invoice = db.scalar(select(Invoice).where(Invoice.appointment_id == appointment.id).with_for_update())
+    if invoice is not None:
+        return invoice
+    doctor = db.get(Doctor, appointment.doctor_id)
+    if doctor is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "The clinician for this appointment is unavailable.")
+    block_reason = appointment_payment_block_reason(appointment, doctor.fee_minor)
+    if block_reason == "past":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Past appointments cannot start a new consultation payment.")
+    if block_reason == "cancelled":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Cancelled appointments cannot start a new consultation payment.")
+    if block_reason:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This appointment is not eligible for payment.")
+    if doctor.fee_minor <= 0:
+        raise HTTPException(status.HTTP_409_CONFLICT, "The clinician has no billable consultation fee.")
+    invoice = Invoice(
+        owner_user_id=user.id,
+        hospital_id=appointment.hospital_id,
+        appointment_id=appointment.id,
+        invoice_number=f"CV-{datetime.now(timezone.utc):%Y%m%d}-{uuid.uuid4().hex[:8].upper()}",
+        description=f"Consultation with {doctor.full_name}",
+        amount_minor=doctor.fee_minor,
+        currency="INR",
+        status="unpaid",
+    )
+    db.add(invoice)
+    try:
+        db.flush()
+        record_audit(db, request, "billing.patient_appointment_invoice", actor=user, hospital_id=appointment.hospital_id, resource_type="invoice", resource_id=invoice.id)
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        invoice = db.scalar(select(Invoice).where(Invoice.appointment_id == appointment.id))
+        if invoice is not None:
+            return invoice
+        raise HTTPException(status.HTTP_409_CONFLICT, "The consultation invoice could not be created safely.") from exc
+    db.refresh(invoice)
+    return invoice
+
+
 @router.post("/checkout", response_model=CheckoutOrder)
 async def create_checkout(payload: CheckoutCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     if user.role != "patient":
@@ -285,8 +477,23 @@ async def create_checkout(payload: CheckoutCreate, request: Request, db: Session
     if invoice is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found.")
     if invoice.status != "unpaid":
-        raise HTTPException(status.HTTP_409_CONFLICT, "This invoice is already paid.")
+        raise HTTPException(status.HTTP_409_CONFLICT, "This invoice is not payable in its current status.")
+    if invoice.appointment_id is not None:
+        appointment = db.scalar(
+            select(Appointment).where(Appointment.id == invoice.appointment_id).with_for_update()
+        )
+        doctor = db.get(Doctor, appointment.doctor_id) if appointment is not None else None
+        block_reason = appointment_payment_block_reason(
+            appointment, doctor.fee_minor if doctor else 0
+        ) if appointment is not None else "not_upcoming"
+        if block_reason == "past":
+            raise HTTPException(status.HTTP_409_CONFLICT, "Past appointments cannot start a new consultation payment.")
+        if block_reason == "cancelled":
+            raise HTTPException(status.HTTP_409_CONFLICT, "Cancelled appointments cannot start a new consultation payment.")
+        if block_reason:
+            raise HTTPException(status.HTTP_409_CONFLICT, "This appointment is not eligible for payment.")
     if settings.payment_mode != "demo" and (not settings.razorpay_key_id or not settings.razorpay_key_secret):
+        logger.warning("Razorpay checkout requested while provider credentials are missing.")
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "Online payments are not configured. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in .env.",
@@ -337,6 +544,7 @@ async def create_checkout(payload: CheckoutCreate, request: Request, db: Session
             currency=invoice.currency,
         )
     except PaymentProviderError as exc:
+        logger.warning("Razorpay checkout order creation failed: %s", exc)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
 
     payment = Payment(invoice_id=invoice.id, provider_order_id=order_id, status="created")
@@ -470,7 +678,7 @@ async def verify_checkout(payload: CheckoutVerify, request: Request, db: Session
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Checkout order not found.")
     if payment.provider_order_id.startswith("demo_"):
         raise HTTPException(status.HTTP_409_CONFLICT, "Demo attempts must use the demo completion endpoint.")
-    if payment.status == "paid":
+    if payment.status in {"paid", "partially_refunded", "refunded"}:
         if payment.provider_payment_id == payload.razorpay_payment_id:
             return invoice
         raise HTTPException(status.HTTP_409_CONFLICT, "This order was already verified with another payment.")
@@ -482,11 +690,13 @@ async def verify_checkout(payload: CheckoutVerify, request: Request, db: Session
         hashlib.sha256,
     ).hexdigest()
     if not hmac.compare_digest(expected, payload.razorpay_signature):
+        logger.warning("Razorpay payment signature verification failed for invoice_id=%s.", invoice.id)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Payment signature is invalid.")
 
     try:
         captured_payment = await _payment_service().fetch_payment(payload.razorpay_payment_id)
     except PaymentProviderError as exc:
+        logger.warning("Razorpay payment status verification failed for invoice_id=%s: %s", invoice.id, exc)
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     if (
         captured_payment.get("order_id") != payload.razorpay_order_id
@@ -557,7 +767,46 @@ async def razorpay_webhook(
     payment = None
     invoice = None
     result = "ignored"
-    if event_type in {"payment.captured", "payment.failed"}:
+    if event_type in {"refund.processed", "refund.failed"}:
+        try:
+            refund_data = event["payload"]["refund"]["entity"]
+            provider_refund_id = refund_data["id"]
+            provider_payment_id = refund_data["payment_id"]
+            refund_status = refund_data["status"]
+            refund_amount = refund_data["amount"]
+        except (KeyError, TypeError) as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Razorpay refund event payload.") from exc
+        refund = db.scalar(select(Refund).where(Refund.provider_refund_id == provider_refund_id).with_for_update())
+        if refund is None:
+            payment = db.scalar(select(Payment).where(Payment.provider_payment_id == provider_payment_id).with_for_update())
+            candidates = list(db.scalars(select(Refund).where(
+                Refund.payment_id == payment.id if payment else False,
+                Refund.status == "processing",
+                Refund.amount_minor == refund_amount,
+            ).with_for_update()).all())
+            if len(candidates) == 1:
+                refund = candidates[0]
+                refund.provider_refund_id = provider_refund_id
+        if refund is not None:
+            payment = db.scalar(select(Payment).where(Payment.id == refund.payment_id).with_for_update())
+            if payment is None or payment.provider_payment_id != provider_payment_id or refund_amount != refund.amount_minor:
+                raise HTTPException(status.HTTP_409_CONFLICT, "Refund event does not match its payment.")
+            if event_type == "refund.processed" and refund_status == "processed":
+                refund.status = "processed"
+            elif event_type == "refund.failed" and refund_status == "failed":
+                refund.status = "failed"
+            else:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Refund webhook status does not match its event.")
+            result = refund.status
+            invoice = db.get(Invoice, payment.invoice_id)
+            if invoice is not None and refund.status == "processed":
+                processed_total = db.scalar(select(func.coalesce(func.sum(Refund.amount_minor), 0)).where(Refund.payment_id == payment.id, Refund.status == "processed")) or 0
+                payment.status = "refunded" if processed_total >= invoice.amount_minor else "partially_refunded"
+                invoice.status = payment.status
+                record_audit(db, request, "billing.refund_processed", hospital_id=invoice.hospital_id, resource_type="refund", resource_id=refund.id)
+        else:
+            result = "unmatched"
+    elif event_type in {"payment.captured", "payment.failed"}:
         try:
             payment_data = event["payload"]["payment"]["entity"]
             order_id = payment_data["order_id"]
@@ -598,7 +847,7 @@ async def razorpay_webhook(
                     result = "failed"
                 else:
                     result = "already_paid"
-            elif payment.status == "paid":
+            elif payment.status in {"paid", "partially_refunded", "refunded"}:
                 if payment.provider_payment_id != payment_id:
                     raise HTTPException(status.HTTP_409_CONFLICT, "Order was already captured with another payment.")
                 result = "already_applied"

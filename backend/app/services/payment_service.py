@@ -1,6 +1,9 @@
+import logging
 from typing import Any, Protocol
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 class PaymentProviderError(Exception):
@@ -18,6 +21,8 @@ class PaymentService(Protocol):
     ) -> str: ...
 
     async def fetch_payment(self, payment_id: str) -> dict[str, Any]: ...
+
+    async def create_refund(self, *, payment_id: str, amount_minor: int, reason: str) -> dict[str, Any]: ...
 
 
 class RazorpayPaymentService:
@@ -61,10 +66,12 @@ class RazorpayPaymentService:
                 raise PaymentProviderError("Razorpay returned invalid or mismatched order details.")
             return order_id
         except httpx.HTTPStatusError as exc:
+            logger.warning("Razorpay order API rejected request (status=%s).", exc.response.status_code)
             raise PaymentProviderError("Razorpay could not create a checkout order.") from exc
         except PaymentProviderError:
             raise
         except (httpx.RequestError, ValueError, KeyError, TypeError) as exc:
+            logger.warning("Razorpay order request failed (kind=%s).", type(exc).__name__)
             raise PaymentProviderError("Could not create a Razorpay checkout order.") from exc
 
     async def fetch_payment(self, payment_id: str) -> dict[str, Any]:
@@ -80,8 +87,38 @@ class RazorpayPaymentService:
                 raise PaymentProviderError("Razorpay returned an invalid payment response.")
             return payment
         except httpx.HTTPStatusError as exc:
+            logger.warning("Razorpay payment lookup failed (status=%s).", exc.response.status_code)
             raise PaymentProviderError("Razorpay could not confirm the payment.") from exc
         except PaymentProviderError:
             raise
         except (httpx.RequestError, ValueError) as exc:
+            logger.warning("Razorpay payment lookup failed (kind=%s).", type(exc).__name__)
             raise PaymentProviderError("Could not confirm payment with Razorpay.") from exc
+
+    async def create_refund(self, *, payment_id: str, amount_minor: int, reason: str) -> dict[str, Any]:
+        try:
+            async with httpx.AsyncClient(
+                auth=(self.key_id, self.key_secret),
+                timeout=httpx.Timeout(15.0, connect=5.0),
+            ) as client:
+                response = await client.post(
+                    f"{self.api_base_url}/payments/{payment_id}/refund",
+                    json={"amount": amount_minor, "notes": {"reason": reason[:200]}},
+                )
+                response.raise_for_status()
+                refund = response.json()
+            if (
+                not isinstance(refund, dict)
+                or not isinstance(refund.get("id"), str)
+                or refund.get("payment_id") != payment_id
+                or type(refund.get("amount")) is not int
+                or refund.get("amount") != amount_minor
+            ):
+                raise PaymentProviderError("Razorpay returned invalid or mismatched refund details.")
+            return refund
+        except httpx.HTTPStatusError as exc:
+            raise PaymentProviderError("Razorpay could not create the refund.") from exc
+        except PaymentProviderError:
+            raise
+        except (httpx.RequestError, ValueError, KeyError, TypeError) as exc:
+            raise PaymentProviderError("Could not create a Razorpay refund.") from exc

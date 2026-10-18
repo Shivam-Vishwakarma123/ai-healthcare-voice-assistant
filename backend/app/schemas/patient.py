@@ -57,3 +57,24 @@ class PatientRead(BaseModel):
     gender: Gender
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+class PatientNotificationRead(BaseModel):
+    id: int
+    event_type: str
+    channel: str
+    status: str
+    created_at: datetime
+    title: str
+    title_hi: str
+    message: str
+    message_hi: str
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PatientNotificationPage(BaseModel):
+    items: list[PatientNotificationRead]
+    total: int
+    limit: int
+    offset: int
+

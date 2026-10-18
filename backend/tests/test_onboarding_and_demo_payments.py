@@ -228,8 +228,11 @@ def test_demo_payment_modes_use_only_valid_attempts_and_settle_once(db_sessions,
     with TestClient(app) as client:
         assert client.get("/api/v1/billing/config", headers=_headers(tokens["patient"])).json() == {
             "payment_mode": "demo",
-            "online_payment_enabled": True,
+            "online_payment_enabled": False,
+            "provider_checkout_enabled": False,
+            "provider_test_mode": False,
             "demo_payment_enabled": True,
+            "checkout_enabled": True,
         }
         assert client.post(
             "/api/v1/billing/checkout",

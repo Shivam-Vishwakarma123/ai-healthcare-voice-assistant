@@ -10,7 +10,7 @@ from app.models.providers import (
     Hospital,
 )
 from app.models.user import User
-from app.models.billing import Invoice, Payment, PaymentWebhookEvent
+from app.models.billing import Invoice, Payment, PaymentWebhookEvent, Refund
 from app.models.knowledge import KnowledgeChunk, KnowledgeDocument
 from app.models.security import AdminBootstrapState, AuditLog, AuthSession, NotificationDelivery, PasswordResetToken
 
@@ -34,5 +34,6 @@ __all__ = [
     "PasswordResetToken",
     "Payment",
     "PaymentWebhookEvent",
+    "Refund",
     "User",
 ]

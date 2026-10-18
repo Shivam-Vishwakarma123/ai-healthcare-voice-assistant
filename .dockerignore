@@ -1,0 +1,12 @@
+.git
+.gitignore
+.env
+.pytest_cache
+node_modules
+**/__pycache__
+**/*.pyc
+frontend/dist
+frontend/.vite
+postgres_data
+ollama_data
+pgadmin_data

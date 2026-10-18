@@ -23,6 +23,7 @@ from app.models.providers import (
     DoctorSchedule,
     Hospital,
 )
+from app.models.billing import Invoice, Payment
 from app.models.user import User
 from app.schemas.providers import (
     AppointmentCreate,
@@ -47,6 +48,7 @@ from app.schemas.providers import (
     VerificationUpdate,
 )
 from app.services.audit_service import record_audit
+from app.services.appointment_payment_eligibility import appointment_payment_block_reason
 from app.services.notification_service import notify_user
 
 router = APIRouter(prefix="/providers", tags=["Providers"])
@@ -724,6 +726,10 @@ def _fits_published_schedule(start: datetime, doctor: Doctor, consultation_type:
 def _appointment_read(db: Session, appointment: Appointment) -> AppointmentRead:
     doctor = db.get(Doctor, appointment.doctor_id)
     hospital = db.get(Hospital, appointment.hospital_id) if appointment.hospital_id else None
+    invoice = db.scalar(select(Invoice).where(Invoice.appointment_id == appointment.id))
+    payment = db.scalar(
+        select(Payment).where(Payment.invoice_id == invoice.id).order_by(Payment.created_at.desc(), Payment.id.desc()).limit(1)
+    ) if invoice else None
     return AppointmentRead(
         id=appointment.id,
         patient_user_id=appointment.patient_user_id,
@@ -738,6 +744,18 @@ def _appointment_read(db: Session, appointment: Appointment) -> AppointmentRead:
         doctor_name=doctor.full_name if doctor else None,
         hospital_name=hospital.name if hospital else None,
         specialty=doctor.specialty if doctor else None,
+        fee_minor=doctor.fee_minor if doctor else 0,
+        invoice_id=invoice.id if invoice else None,
+        invoice_status=invoice.status if invoice else None,
+        payment_status=payment.status if payment else None,
+        payment_transaction_id=(payment.provider_payment_id or payment.provider_order_id) if payment else None,
+        payment_is_demo=payment.provider_order_id.startswith("demo_") if payment else False,
+        can_start_payment=appointment_payment_block_reason(
+            appointment, doctor.fee_minor if doctor else 0
+        ) is None,
+        payment_block_reason=appointment_payment_block_reason(
+            appointment, doctor.fee_minor if doctor else 0
+        ),
     )
 
 
@@ -852,7 +870,7 @@ def list_appointments(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    query = select(Appointment, Doctor, Hospital).join(Doctor, Doctor.id == Appointment.doctor_id).join(Hospital, Hospital.id == Appointment.hospital_id, isouter=True)
+    query = select(Appointment, Doctor, Hospital, Invoice).join(Doctor, Doctor.id == Appointment.doctor_id).join(Hospital, Hospital.id == Appointment.hospital_id, isouter=True).outerjoin(Invoice, Invoice.appointment_id == Appointment.id)
     if user.role == "patient":
         query = query.where(Appointment.patient_user_id == user.id)
     elif user.role == "doctor":
@@ -862,6 +880,13 @@ def list_appointments(
     elif user.role != "platform_admin":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Your account cannot access appointments.")
     rows = db.execute(query.order_by(Appointment.scheduled_for.desc())).all()
+    invoice_ids = [invoice.id for _, _, _, invoice in rows if invoice is not None]
+    latest_payments: dict[int, Payment] = {}
+    if invoice_ids:
+        for payment in db.scalars(
+            select(Payment).where(Payment.invoice_id.in_(invoice_ids)).order_by(Payment.created_at.desc(), Payment.id.desc())
+        ).all():
+            latest_payments.setdefault(payment.invoice_id, payment)
     record_audit(db, request, "appointment.list", actor=user, details={"count": len(rows)})
     db.commit()
     return [
@@ -879,8 +904,16 @@ def list_appointments(
             doctor_name=doctor.full_name,
             hospital_name=hospital.name if hospital else None,
             specialty=doctor.specialty,
+            fee_minor=doctor.fee_minor,
+            invoice_id=invoice.id if invoice else None,
+            invoice_status=invoice.status if invoice else None,
+            payment_status=latest_payments[invoice.id].status if invoice and invoice.id in latest_payments else None,
+            payment_transaction_id=(latest_payments[invoice.id].provider_payment_id or latest_payments[invoice.id].provider_order_id) if invoice and invoice.id in latest_payments else None,
+            payment_is_demo=latest_payments[invoice.id].provider_order_id.startswith("demo_") if invoice and invoice.id in latest_payments else False,
+            can_start_payment=appointment_payment_block_reason(appointment, doctor.fee_minor) is None,
+            payment_block_reason=appointment_payment_block_reason(appointment, doctor.fee_minor),
         )
-        for appointment, doctor, hospital in rows
+        for appointment, doctor, hospital, invoice in rows
     ]
 
 
@@ -957,6 +990,16 @@ def create_appointment(
     return _appointment_read(db, appointment)
 
 
+@router.get("/appointments/{appointment_id}", response_model=AppointmentRead)
+def get_appointment(
+    appointment_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    appointment = _appointment_access(db, appointment_id, user)
+    return _appointment_read(db, appointment)
+
+
 @router.post("/appointments/{appointment_id}/confirm", response_model=AppointmentRead)
 def confirm_appointment(
     appointment_id: int,
@@ -1003,6 +1046,12 @@ def cancel_appointment(
         raise HTTPException(status.HTTP_409_CONFLICT, "Past appointments cannot be cancelled.")
     previous_status = appointment.status
     appointment.status = "cancelled"
+    invoice = db.scalar(select(Invoice).where(Invoice.appointment_id == appointment.id).with_for_update())
+    if invoice is not None and invoice.status == "unpaid":
+        invoice.status = "cancelled"
+        pending_payments = db.scalars(select(Payment).where(Payment.invoice_id == invoice.id, Payment.status == "created").with_for_update()).all()
+        for payment in pending_payments:
+            payment.status = "cancelled"
     _release_appointment_slots(db, appointment)
     db.add(
         AppointmentEvent(
