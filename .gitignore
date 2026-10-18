@@ -5,3 +5,10 @@ __pycache__/
 .venv/
 node_modules/
 dist/
+.vscode/
+.idea/
+.coverage
+coverage/
+htmlcov/
+*.log
+.DS_Store

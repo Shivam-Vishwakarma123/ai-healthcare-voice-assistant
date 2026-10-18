@@ -6,11 +6,11 @@ from itertools import combinations
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Query, Request, Response, status
-from sqlalchemy import String, and_, delete, func, or_, select
+from sqlalchemy import String, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from app.auth.security import get_current_user, require_roles
+from app.auth.security import _as_utc, get_current_user, require_roles
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.providers import (
@@ -635,12 +635,6 @@ SLOT_BUCKET_SECONDS = APPOINTMENT_MINUTES * 60
 def _request_fingerprint(operation: str, values: dict) -> str:
     data = json.dumps({"operation": operation, **values}, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(data.encode("utf-8")).hexdigest()
-
-
-def _as_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
 
 
 def _notify_appointment_patient(db: Session, appointment: Appointment, event_type: str) -> None:

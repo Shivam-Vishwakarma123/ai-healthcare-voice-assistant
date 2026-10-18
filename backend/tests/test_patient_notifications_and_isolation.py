@@ -8,7 +8,6 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base, get_db
 from app.main import app
-from app.models.billing import Invoice
 from app.models.providers import Appointment, Doctor, Hospital
 from app.models.security import NotificationDelivery
 from app.models.user import User

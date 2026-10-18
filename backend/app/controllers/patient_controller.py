@@ -1,4 +1,4 @@
-from fastapi import HTTPException, status
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from app.core.exceptions import DuplicateResourceError, ResourceNotFoundError
 from app.schemas.patient import PatientCreate, PatientRead, PatientUpdate

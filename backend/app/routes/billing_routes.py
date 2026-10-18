@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth.security import get_current_user
+from app.auth.security import _as_utc, get_current_user
 from app.core.config import settings
 from app.core.database import get_db
 from app.models.billing import Invoice, Payment, PaymentWebhookEvent, Refund
@@ -138,12 +138,6 @@ def _checkout_order(invoice: Invoice, payment: Payment) -> CheckoutOrder:
         description=invoice.description,
         mode=settings.payment_mode,
     )
-
-
-def _as_utc(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
 
 
 def _require_staff(user: User) -> None:
@@ -705,6 +699,16 @@ async def verify_checkout(payload: CheckoutVerify, request: Request, db: Session
         or captured_payment.get("currency") != invoice.currency
     ):
         raise HTTPException(status.HTTP_409_CONFLICT, "Payment details do not match this invoice.")
+    if captured_payment.get("status") == "authorized":
+        try:
+            captured_payment = await _payment_service().capture_payment(
+                payment_id=payload.razorpay_payment_id,
+                amount_minor=invoice.amount_minor,
+                currency=invoice.currency,
+            )
+        except PaymentProviderError as exc:
+            logger.warning("Razorpay payment auto-capture failed for invoice_id=%s: %s", invoice.id, exc)
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     if captured_payment.get("status") != "captured":
         raise HTTPException(status.HTTP_409_CONFLICT, "Payment has not been captured yet.")
     if invoice.status == "paid":
@@ -744,9 +748,6 @@ async def razorpay_webhook(
     expected = hmac.new(settings.razorpay_webhook_secret.encode(), body, hashlib.sha256).hexdigest()
     if not signature or not hmac.compare_digest(expected, signature):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Webhook signature is invalid.")
-    if not event_id or len(event_id) > 100:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "A valid Razorpay event ID is required.")
-
     payload_hash = hashlib.sha256(body).hexdigest()
     try:
         event = json.loads(body)
@@ -755,8 +756,12 @@ async def razorpay_webhook(
     if not isinstance(event, dict) or not isinstance(event.get("event"), str):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Razorpay webhook payload.")
 
+    resolved_event_id = event_id or (event.get("id") if isinstance(event.get("id"), str) else None)
+    if not resolved_event_id or len(resolved_event_id) > 100:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "A valid Razorpay event ID is required.")
+
     existing_event = db.scalar(
-        select(PaymentWebhookEvent).where(PaymentWebhookEvent.provider_event_id == event_id)
+        select(PaymentWebhookEvent).where(PaymentWebhookEvent.provider_event_id == resolved_event_id)
     )
     if existing_event is not None:
         if not hmac.compare_digest(existing_event.payload_sha256, payload_hash):
@@ -806,21 +811,28 @@ async def razorpay_webhook(
                 record_audit(db, request, "billing.refund_processed", hospital_id=invoice.hospital_id, resource_type="refund", resource_id=refund.id)
         else:
             result = "unmatched"
-    elif event_type in {"payment.captured", "payment.failed"}:
+    elif event_type in {"payment.captured", "payment.failed", "order.paid"}:
         try:
-            payment_data = event["payload"]["payment"]["entity"]
-            order_id = payment_data["order_id"]
-            payment_id = payment_data["id"]
-            amount_minor = payment_data["amount"]
-            currency = payment_data["currency"]
+            payment_data = event.get("payload", {}).get("payment", {}).get("entity")
+            order_data = event.get("payload", {}).get("order", {}).get("entity")
+            if payment_data:
+                order_id = payment_data.get("order_id") or (order_data.get("id") if order_data else None)
+                payment_id = payment_data.get("id")
+                amount_minor = payment_data.get("amount")
+                currency = payment_data.get("currency")
+            elif order_data and event_type == "order.paid":
+                order_id = order_data.get("id")
+                payment_id = None
+                amount_minor = order_data.get("amount")
+                currency = order_data.get("currency")
+            else:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Razorpay payment event payload.")
         except (KeyError, TypeError) as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid Razorpay payment event payload.") from exc
         if (
             not isinstance(order_id, str)
             or not order_id
-            or not isinstance(payment_id, str)
-            or not payment_id
-            or len(payment_id) > 80
+            or (payment_id is not None and (not isinstance(payment_id, str) or not payment_id or len(payment_id) > 80))
             or type(amount_minor) is not int
             or not isinstance(currency, str)
         ):
@@ -841,19 +853,22 @@ async def razorpay_webhook(
             elif event_type == "payment.failed":
                 if payment.status != "paid":
                     payment.status = "failed"
-                    payment.provider_payment_id = payment_id
-                    payment.failure_code = str(payment_data.get("error_code") or "")[:80] or None
-                    payment.failure_description = str(payment_data.get("error_description") or "")[:2000] or None
+                    if payment_id:
+                        payment.provider_payment_id = payment_id
+                    error_info = payment_data or {}
+                    payment.failure_code = str(error_info.get("error_code") or "")[:80] or None
+                    payment.failure_description = str(error_info.get("error_description") or "")[:2000] or None
                     result = "failed"
                 else:
                     result = "already_paid"
             elif payment.status in {"paid", "partially_refunded", "refunded"}:
-                if payment.provider_payment_id != payment_id:
+                if payment_id and payment.provider_payment_id and payment.provider_payment_id != payment_id:
                     raise HTTPException(status.HTTP_409_CONFLICT, "Order was already captured with another payment.")
                 result = "already_applied"
             else:
                 payment.status = "paid"
-                payment.provider_payment_id = payment_id
+                if payment_id:
+                    payment.provider_payment_id = payment_id
                 payment.failure_code = None
                 payment.failure_description = None
                 if invoice.status != "paid":
@@ -881,7 +896,7 @@ async def razorpay_webhook(
 
     db.add(
         PaymentWebhookEvent(
-            provider_event_id=event_id,
+            provider_event_id=resolved_event_id,
             event_type=event_type[:80],
             payload_sha256=payload_hash,
             payment_id=payment.id if payment else None,
@@ -893,11 +908,15 @@ async def razorpay_webhook(
     except IntegrityError as exc:
         db.rollback()
         duplicate = db.scalar(
-            select(PaymentWebhookEvent).where(PaymentWebhookEvent.provider_event_id == event_id)
+            select(PaymentWebhookEvent).where(PaymentWebhookEvent.provider_event_id == resolved_event_id)
         )
         if duplicate is not None and hmac.compare_digest(duplicate.payload_sha256, payload_hash):
             return None
         raise HTTPException(status.HTTP_409_CONFLICT, "Razorpay webhook could not be applied safely.") from exc
+    except Exception as exc:
+        db.rollback()
+        logger.error("Failed to commit Razorpay webhook event: %s", type(exc).__name__)
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Failed to persist webhook event.") from exc
     if result == "captured" and invoice is not None:
         invoice_owner = db.get(User, invoice.owner_user_id)
         if invoice_owner is not None:

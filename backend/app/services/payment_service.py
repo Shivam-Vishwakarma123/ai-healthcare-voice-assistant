@@ -22,6 +22,8 @@ class PaymentService(Protocol):
 
     async def fetch_payment(self, payment_id: str) -> dict[str, Any]: ...
 
+    async def capture_payment(self, *, payment_id: str, amount_minor: int, currency: str) -> dict[str, Any]: ...
+
     async def create_refund(self, *, payment_id: str, amount_minor: int, reason: str) -> dict[str, Any]: ...
 
 
@@ -50,6 +52,7 @@ class RazorpayPaymentService:
                         "amount": amount_minor,
                         "currency": currency,
                         "receipt": invoice_number,
+                        "payment_capture": 1,
                         "notes": {"invoice_id": str(invoice_id)},
                     },
                 )
@@ -94,6 +97,30 @@ class RazorpayPaymentService:
         except (httpx.RequestError, ValueError) as exc:
             logger.warning("Razorpay payment lookup failed (kind=%s).", type(exc).__name__)
             raise PaymentProviderError("Could not confirm payment with Razorpay.") from exc
+
+    async def capture_payment(self, *, payment_id: str, amount_minor: int, currency: str = "INR") -> dict[str, Any]:
+        try:
+            async with httpx.AsyncClient(
+                auth=(self.key_id, self.key_secret),
+                timeout=httpx.Timeout(15.0, connect=5.0),
+            ) as client:
+                response = await client.post(
+                    f"{self.api_base_url}/payments/{payment_id}/capture",
+                    json={"amount": amount_minor, "currency": currency},
+                )
+                response.raise_for_status()
+                payment = response.json()
+            if not isinstance(payment, dict):
+                raise PaymentProviderError("Razorpay returned an invalid capture response.")
+            return payment
+        except httpx.HTTPStatusError as exc:
+            logger.warning("Razorpay payment capture failed (status=%s).", exc.response.status_code)
+            raise PaymentProviderError("Razorpay could not capture the payment.") from exc
+        except PaymentProviderError:
+            raise
+        except (httpx.RequestError, ValueError) as exc:
+            logger.warning("Razorpay payment capture failed (kind=%s).", type(exc).__name__)
+            raise PaymentProviderError("Could not capture payment with Razorpay.") from exc
 
     async def create_refund(self, *, payment_id: str, amount_minor: int, reason: str) -> dict[str, Any]:
         try:

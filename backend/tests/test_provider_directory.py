@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base, get_db
 from app.main import app
-from app.models.providers import Appointment, Doctor, DoctorSchedule, Hospital
+from app.models.providers import Doctor, DoctorSchedule, Hospital
 from app.models.user import User
 from tests.auth_utils import make_session_token
 

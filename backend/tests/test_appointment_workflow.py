@@ -4,7 +4,6 @@ from threading import Barrier
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -15,7 +14,6 @@ from app.core.database import Base, get_db
 from app.main import app
 from app.models.providers import (
     Appointment,
-    AppointmentEvent,
     AppointmentSlotLock,
     Doctor,
     DoctorSchedule,

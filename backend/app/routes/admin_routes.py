@@ -4,6 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.core.email_validation import normalize_email
+from app.core.validators import (
+    strip_full_name as normalize_full_name,
+    validate_password_confirmation,
+    validate_strong_password as check_strong_password,
+)
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -53,10 +58,7 @@ class AccountCreate(BaseModel):
     @field_validator("full_name")
     @classmethod
     def strip_full_name(cls, value: str) -> str:
-        value = value.strip()
-        if len(value) < 2:
-            raise ValueError("Full name must contain at least 2 non-space characters.")
-        return value
+        return normalize_full_name(value)
 
     @field_validator("email")
     @classmethod
@@ -66,22 +68,12 @@ class AccountCreate(BaseModel):
     @field_validator("password")
     @classmethod
     def validate_strong_password(cls, value: str) -> str:
-        if (
-            not any(char.islower() for char in value)
-            or not any(char.isupper() for char in value)
-            or not any(char.isdigit() for char in value)
-            or not any(not char.isalnum() for char in value)
-        ):
-            raise ValueError("Password must include lowercase, uppercase, numeric, and special characters.")
-        return value
+        return check_strong_password(value)
 
     @field_validator("password_confirmation")
     @classmethod
     def validate_confirmation(cls, value: str, info) -> str:
-        password = info.data.get("password")
-        if password is not None and value != password:
-            raise ValueError("Password confirmation does not match.")
-        return value
+        return validate_password_confirmation(info.data.get("password"), value)
 
     @model_validator(mode="after")
     def validate_doctor_link(self):

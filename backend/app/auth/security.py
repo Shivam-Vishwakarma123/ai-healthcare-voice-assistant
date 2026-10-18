@@ -126,7 +126,10 @@ def require_roles(*roles: str):
     return dependency
 
 
-def _as_utc(value: datetime) -> datetime:
+def as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+_as_utc = as_utc

@@ -4,6 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.email_validation import normalize_email
+from app.core.validators import strip_full_name as normalize_full_name
 
 Gender = Literal["female", "male", "other", "prefer_not_to_say"]
 
@@ -16,10 +17,7 @@ class PatientCreate(BaseModel):
     @field_validator("full_name")
     @classmethod
     def strip_full_name(cls, value: str) -> str:
-        value = value.strip()
-        if len(value) < 2:
-            raise ValueError("Full name must contain at least 2 non-space characters.")
-        return value
+        return normalize_full_name(value)
 
     @field_validator("email")
     @classmethod
@@ -37,10 +35,7 @@ class PatientUpdate(BaseModel):
     def strip_full_name(cls, value: str | None) -> str | None:
         if value is None:
             return None
-        value = value.strip()
-        if len(value) < 2:
-            raise ValueError("Full name must contain at least 2 non-space characters.")
-        return value
+        return normalize_full_name(value)
 
     @field_validator("email")
     @classmethod
