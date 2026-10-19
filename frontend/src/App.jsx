@@ -14,6 +14,7 @@ import {
   UnavailablePage,
 } from "./components/PortalScreens";
 import PublicTriage from "./components/PublicTriage";
+import { useToast } from "./components/ToastProvider";
 import { apiRequest, readCachedUser } from "./services/api";
 import { applyTheme, persistThemePreference, readThemePreference } from "./services/theme";
 import "./App.css";
@@ -47,6 +48,7 @@ function storageGet(key, fallback = "") {
 }
 
 export default function App() {
+  const toast = useToast();
   const isPasswordResetPath = window.location.pathname === "/reset-password";
   const isAdminSetupPath = window.location.pathname === "/setup/administrator";
   const [token, setToken] = useState(() => isPasswordResetPath ? "" : storageGet("ahva_token"));
@@ -75,6 +77,18 @@ export default function App() {
     bootstrap_token: "",
     reset_token: new URLSearchParams(window.location.search).get("token") || "",
   });
+
+  useEffect(() => {
+    if (!error) return;
+    toast(error, "error");
+    setError("");
+  }, [error, toast]);
+
+  useEffect(() => {
+    if (!notice) return;
+    toast(notice, "success");
+    setNotice("");
+  }, [notice, toast]);
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
@@ -477,8 +491,6 @@ export default function App() {
           </div>
         </header>
         <div className="cv-content">
-          {error && <div className="cv-global-notice cv-error" role="alert"><span>{error}</span><button onClick={() => setError("")} aria-label={isHindi ? "त्रुटि हटाएँ" : "Dismiss error"}>×</button></div>}
-          {notice && <div className="cv-global-notice cv-success" role="status"><span>{notice}</span><button onClick={() => setNotice("")} aria-label={isHindi ? "सूचना हटाएँ" : "Dismiss message"}>×</button></div>}
           {accountLoading ? <div className="cv-account-loading" role="status"><span className="cv-spinner" />{isHindi ? "आपका खाता लोड हो रहा है…" : "Loading your account…"}</div> : (
             <>
               {page === "Overview" && (user?.role === "patient"

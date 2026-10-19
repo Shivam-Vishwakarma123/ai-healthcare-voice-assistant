@@ -8,9 +8,9 @@ The CareVoice application has **complete Razorpay integration code** already imp
 ✅ Frontend Razorpay Checkout SDK integration  
 ✅ Appointment payment eligibility logic  
 ✅ Database models for invoices, payments, refunds  
-✅ Comprehensive automated tests (all passing)
+Automated payment tests exist in the repository; run results depend on the current local backend test environment.
 
-**Current Status:** The code is production-ready but **requires Razorpay Test Mode credentials** to enable the actual checkout flow.
+**Current status:** `PAYMENT_MODE=live` selects the Razorpay provider; it does not select Razorpay Live Mode. Development must use Test Mode API keys (`rzp_test_…`). Credential presence alone does not prove that Razorpay accepts them.
 
 ---
 
@@ -47,8 +47,8 @@ Backend creates Razorpay order via API
 Frontend loads Razorpay Checkout SDK
     ↓
 Frontend opens Razorpay-hosted checkout modal
-    → Patient enters card details on Razorpay's secure page
-    → Razorpay handles 3DS/OTP authentication
+    → Patient selects an account-enabled payment method on hosted Checkout
+    → Razorpay handles card or supported UPI authentication
     ↓
 Razorpay calls success handler with:
     - razorpay_order_id
@@ -102,6 +102,8 @@ PAYMENT_MODE=live
 RAZORPAY_KEY_ID=rzp_test_YourActualKeyID
 RAZORPAY_KEY_SECRET=YourActualKeySecret
 RAZORPAY_WEBHOOK_SECRET=
+# Optional: set the ID of a saved UPI-enabled Dashboard configuration.
+RAZORPAY_CHECKOUT_CONFIG_ID=
 ```
 
 ⚠️ **Security Notes:**
@@ -109,14 +111,27 @@ RAZORPAY_WEBHOOK_SECRET=
 - Only `RAZORPAY_KEY_ID` is sent to the frontend (it's public)
 - `RAZORPAY_KEY_SECRET` stays server-side only
 - `RAZORPAY_WEBHOOK_SECRET` is optional (only needed if you configure webhooks)
+- `RAZORPAY_CHECKOUT_CONFIG_ID` is optional and non-secret; use it when a custom config is not the account default.
 
-### Step 3: Enable Cards in Razorpay Checkout Settings
+### Step 3: Enable UPI on the Razorpay account, then select it in Test Mode
 
-1. Go to **Settings → Checkout → Payment Methods** (https://dashboard.razorpay.com/app/checkout)
-2. Ensure **Cards** is enabled under **Test Mode** payment methods
-3. If disabled, toggle it on and save
+The Razorpay Standard Checkout integration does not restrict payment to cards. CareVoice passes a documented `config.display` block listing UPI, Cards, Netbanking, and Wallet. This only asks Checkout to display those methods; Razorpay filters the list against the methods enabled for the merchant account.
 
-This is why the card option might not appear even with valid credentials.
+**Verified on 19 October 2026:** In this account's Test Mode Dashboard, the default Standard payment configuration and the custom-configuration editor expose Cards, Netbanking, and Wallets only. UPI is not among the available methods, and the hosted ₹850 Test Mode checkout likewise showed only Cards, Netbanking, and Wallet. This confirms the current blocker is account-side UPI availability, not a card-only frontend option. Do not expect a Test Mode Checkout display setting to activate UPI when the account does not expose it.
+
+Razorpay documents that payment-method activation is managed separately from Checkout display configuration, through **Account & Settings → Payment Methods** in **Live Mode**. To request UPI activation:
+
+1. In the Razorpay Dashboard, switch the Dashboard view to **Live Mode**. This is only to reach the merchant's activation settings; keep the application's development credentials as `rzp_test_*` and do not initiate a live payment.
+2. Open **Account & Settings → Payment Methods** and find **UPI**. If it is missing or not activated, request it from that page. Complete any requested website/app and GSTIN information and submit the request.
+3. Wait until Razorpay shows the UPI method as **Activated**. Razorpay states requests go through partner-bank onboarding and can take around 10 working days, varying by method and bank.
+4. Switch the Dashboard back to **Test Mode**. Under **Account & Settings → Checkout Settings → Payment Configuration**, select or create a configuration that includes UPI and keep Cards, Netbanking, and Wallets enabled. Save it as the Test Mode default, or pass its ID using the backend-only `RAZORPAY_CHECKOUT_CONFIG_ID` below.
+5. Reopen a fresh eligible checkout and confirm UPI is visible before attempting the official test UPI flow.
+
+Razorpay's Dashboard docs say Payment Configuration can arrange or hide methods available to the account, but cannot activate a method. The Payment Methods activation page is available only in Live Mode. See [Razorpay Payment Configuration](https://razorpay.com/docs/payments/dashboard/account-settings/payment-configuration) and [Razorpay Payment Methods activation](https://razorpay.com/docs/payments/dashboard/account-settings/payment-methods). Razorpay states UPI Collect is deprecated from 28 February 2026 for most businesses; use the supported UPI Intent/QR flow where available. The official [Test UPI details](https://razorpay.com/docs/payments/payments/test-upi-details/) document `success@razorpay` and `failure@razorpay`, and warn that cancellation in that test flow can result in a successful payment; do not use it to test cancellation.
+
+If you create a custom Dashboard configuration but do not make it the account default, copy its Configuration ID into the backend-only `RAZORPAY_CHECKOUT_CONFIG_ID` setting. The backend passes this documented ID when it creates Razorpay orders. Do not put it in a `VITE_` variable; restart the backend after changing it.
+
+If UPI is not available to select in the Test Mode configuration editor or remains absent in hosted Checkout, the merchant must first request/complete UPI activation under the Dashboard's Live Mode **Account & Settings → Payment Methods** page. A config ID, frontend option, or order parameter cannot activate a method by itself.
 
 ### Step 4: Restart Backend Service
 
@@ -128,7 +143,7 @@ docker compose restart backend
 docker compose logs backend | tail -20
 ```
 
-The backend validates configuration on startup. If credentials are invalid, you'll see an error in the logs.
+The backend only checks the Test Mode key prefix in development; it does not authenticate keys at startup. A Test Mode key prefix does not prove that the key pair is valid or active. The authenticated Razorpay API probe in this environment could not reach Razorpay because outbound connectivity failed.
 
 ### Step 5: Restart Frontend (Optional)
 
@@ -161,7 +176,7 @@ Expected response with valid credentials:
 }
 ```
 
-If `provider_checkout_enabled` is `false`, credentials are missing or invalid.
+If `provider_checkout_enabled` is `false`, the backend is in demo mode or one/both API credentials are missing. A `true` response indicates configured values, not that Razorpay has authenticated them.
 
 ---
 
@@ -195,17 +210,16 @@ You can sign in as:
 3. **Pay for appointment:**
    - Go to **Appointments**
    - Click **Pay Now** on an upcoming appointment
-   - Razorpay Checkout should open
+   - Razorpay-hosted Checkout should open if the API credentials are accepted and Razorpay is reachable
 
 ### Test Card Details (Razorpay Test Mode)
 
-Use these official test cards in Razorpay Test Mode:
+Use the current official lists and instructions:
 
-| Card Number | CVV | Expiry | Result |
-|-------------|-----|--------|--------|
-| `4111 1111 1111 1111` | Any 3 digits | Any future date | Success |
-| `4100 2800 0000 1007` | Any 3 digits | Any future date | Success (recommended by Razorpay docs) |
-| `4000 0000 0000 0002` | Any 3 digits | Any future date | Card declined |
+| Reference | What it covers |
+|-----------|----------------|
+| [Official test card list](https://razorpay.com/docs/payments/payments/test-card-details/) | Card choices and mock bank authentication |
+| [Official test UPI details](https://razorpay.com/docs/payments/payments/test-upi-details) | Test UPI flows and their limitations |
 
 **Important:** Test cards only work with `rzp_test_*` keys in Test Mode.
 
@@ -213,9 +227,9 @@ Use these official test cards in Razorpay Test Mode:
 
 1. Click **Pay Now** → Razorpay Checkout modal opens
 2. See payment details: doctor name, appointment date, amount
-3. **Payment methods available:** Cards, UPI (test mode), Netbanking (test)
-4. Select **Card** → Enter test card details
-5. Razorpay shows mock bank authentication page → Click **Success**
+3. The app requests UPI, Cards, Netbanking, and Wallet; the methods actually shown depend on account Test Mode settings and supported checkout flows.
+4. Select **Card** if it is shown and use details from the official Razorpay test-card page above.
+5. Follow the mock bank authentication instructions on that official page.
 6. Checkout closes → Frontend verifies payment with backend
 7. See "Payment verified. Your invoice is paid." success message
 8. Appointment shows as **Paid** with transaction reference
@@ -242,7 +256,7 @@ The backend enforces strict eligibility rules in `appointment_payment_eligibilit
 
 ### Problem: "Pay Now" opens demo simulator instead of Razorpay
 
-**Cause:** `PAYMENT_MODE=demo` in `.env`
+**Cause:** `PAYMENT_MODE=demo` in `.env` selects the simulator. In this application, `PAYMENT_MODE=live` selects the Razorpay provider; pair it only with an `rzp_test_…` Key ID for development.
 
 **Fix:**
 ```bash
@@ -259,19 +273,30 @@ docker compose restart backend
 
 **Fix:**
 1. Check `.env` has `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`
-2. Verify Key ID starts with `rzp_test_` (for development)
-3. Restart backend: `docker compose restart backend`
+2. Verify the Test Mode Key ID starts with `rzp_test_` and both credentials are from the same account.
+3. Confirm the server can reach Razorpay and restart backend: `docker compose restart backend`
+
+### Problem: Razorpay Checkout opens but UPI is missing
+
+**Verified cause for the current account:** The Test Mode default configuration lists Cards, Netbanking, and Wallets, and UPI is absent from both the Dashboard custom-configuration editor and the actual hosted checkout. The frontend already requests UPI using the documented Standard Checkout display config. This means the current blocker is the merchant account's UPI method availability; changing frontend UI cannot enable it.
+
+**Fix:**
+1. In the Razorpay Dashboard, switch to **Live Mode** and open **Account & Settings → Payment Methods**.
+2. Request UPI activation and complete the required business website/app and GSTIN details. Razorpay's method activation is subject to partner-bank onboarding; wait for the status to become **Activated**.
+3. Switch the Dashboard back to **Test Mode**. Include UPI in the active Test Mode Checkout Payment Configuration while preserving Cards, Netbanking, and Wallets.
+4. If using a non-default custom configuration, set its ID in backend `.env` as `RAZORPAY_CHECKOUT_CONFIG_ID=<configuration_id>` and restart the backend. Never expose secrets or this setting through `VITE_` variables.
+5. Open a new checkout and verify UPI is present. Only then use the official [Test UPI IDs](https://razorpay.com/docs/payments/payments/test-upi-details/).
+
+Razorpay's Payment Configuration editor only controls display for methods already available to the account. Its separate Payment Methods activation page is Live Mode only. See [Payment Configuration](https://razorpay.com/docs/payments/dashboard/account-settings/payment-configuration) and [Payment Methods activation](https://razorpay.com/docs/payments/dashboard/account-settings/payment-methods).
 
 ### Problem: Razorpay Checkout opens but no Card option
 
 **Cause:** Cards not enabled in Razorpay Dashboard
 
 **Fix:**
-1. Go to https://dashboard.razorpay.com/app/checkout
-2. Switch to **Test Mode**
-3. Navigate to **Payment Methods**
-4. Enable **Cards**
-5. Try payment again (no restart needed)
+1. Open **Account & Settings → Checkout Settings → Payment Configuration** in Test Mode and ensure the configuration does not hide Cards.
+2. For account-level method enablement, use the Dashboard's **Live Mode → Account & Settings → Payment Methods** page and request activation if necessary.
+3. Try again after confirming Razorpay Test Mode credentials and connectivity.
 
 ### Problem: "Past appointments cannot start a new consultation payment"
 
@@ -322,8 +347,11 @@ print(f'Is future: {apt.scheduled_for > datetime.now(timezone.utc)}')
 
 **Fix:**
 1. Verify you're in Test Mode (check dashboard top-left)
-2. Use official test card: `4111 1111 1111 1111`
-3. Ensure Key ID starts with `rzp_test_`
+2. Use a card from Razorpay’s current official test-card page linked above.
+3. Ensure the Test Mode Key ID starts with `rzp_test_` and both keys are from the same Test Mode account.
+4. Check Cards in the Test Mode Checkout configuration. For UPI activation, use Live Mode → Account & Settings → Payment Methods; Test Mode's Payment Configuration does not activate account methods.
+
+For UPI, confirm the account is activated for UPI and no Checkout configuration hides it. UPI Collect is deprecated for most businesses as of 28 February 2026, so manual VPA entry may not be available. The verified local Test Mode checkout showed Cards, Netbanking, and Wallet; UPI was absent from the account's available configuration options. Request UPI account activation as described above, then verify a fresh Test Mode checkout.
 
 ---
 
@@ -336,7 +364,7 @@ Webhooks provide asynchronous payment confirmations and are recommended for prod
 1. Go to **Settings → Webhooks** (https://dashboard.razorpay.com/app/webhooks)
 2. Click **Create Webhook**
 3. **Webhook URL:** `https://YOUR_PUBLIC_DOMAIN/api/v1/billing/webhooks/razorpay`
-   - For local testing: Use ngrok or similar tunnel
+   - For local testing: Use a securely configured HTTPS tunnel and its current public URL; Razorpay cannot reach `localhost`.
    - Example: `https://abc123.ngrok.io/api/v1/billing/webhooks/razorpay`
 4. **Secret:** Generate a random secret (or use `openssl rand -hex 32`)
 5. **Events:** Subscribe to:
@@ -349,7 +377,7 @@ Webhooks provide asynchronous payment confirmations and are recommended for prod
 ### Update .env
 
 ```bash
-RAZORPAY_WEBHOOK_SECRET=whsec_YourWebhookSecret
+RAZORPAY_WEBHOOK_SECRET=your_dashboard_webhook_secret
 ```
 
 Restart backend:
@@ -585,7 +613,7 @@ Before deploying to production with real payments:
    - Configure refund policy (`APPOINTMENT_REFUND_POLICY`)
 
 6. **Testing**
-   - Test complete payment flow with Live Mode test cards
+   - Test complete payment flow with Razorpay Test Mode cards only
    - Verify webhook delivery
    - Test refund flow
    - Load test checkout endpoint
@@ -595,7 +623,8 @@ Before deploying to production with real payments:
 ## Support and Resources
 
 - **Razorpay Documentation:** https://razorpay.com/docs/
-- **Test Card Details:** https://razorpay.com/docs/payments/payments/test-card-upi-details/
+- **Test Card Details:** https://razorpay.com/docs/payments/payments/test-card-details/
+- **Test UPI Details:** https://razorpay.com/docs/payments/payments/test-upi-details
 - **Razorpay Dashboard:** https://dashboard.razorpay.com/
 - **CareVoice Backend Code:** `backend/app/routes/billing_routes.py`
 - **CareVoice Frontend Code:** `frontend/src/components/Billing.jsx`
@@ -604,7 +633,7 @@ Before deploying to production with real payments:
 
 ## Current Implementation Status
 
-✅ **Complete and Working:**
+**Implemented (automated tests and live account verification must be considered separately):**
 - Backend Razorpay order creation
 - Backend payment signature verification
 - Backend webhook handling (idempotent)
@@ -614,19 +643,14 @@ Before deploying to production with real payments:
 - Invoice creation for appointments
 - Patient-staff role separation
 - Refund request flow
-- Automated test coverage
+- Automated test coverage in the repository
 
-⚠️ **Requires Configuration:**
-- Razorpay Test Mode credentials (user must obtain from dashboard)
+**External verification still required:**
+- Razorpay must accept the configured Test Mode credentials; the local API check was blocked by outbound network connectivity.
+- A real hosted checkout must be opened to inspect available payment methods; a sandbox payment must be completed and checked in PostgreSQL.
 - Webhook secret (optional, only if using webhooks)
-
-🚀 **Ready for Production (after checklist):**
-- Complete payment lifecycle
-- Security best practices implemented
-- Error handling and retry logic
-- Audit trail for all payment actions
 
 ---
 
 **Last Updated:** 2026-10-18  
-**Integration Version:** Production-ready, awaiting credentials
+**Verification note:** Configuration and implementation do not equal a completed gateway payment. Confirm accepted credentials, hosted Checkout methods, payment capture, webhook delivery, and database persistence in Test Mode before relying on this flow.

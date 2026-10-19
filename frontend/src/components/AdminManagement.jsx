@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiRequest } from "../services/api";
 import AdminUserRow, { requiresPlatformAdminDemotionConfirmation } from "./AdminUserRow";
 import NotificationContactForm from "./NotificationContactForm";
+import { useToast } from "./ToastProvider";
 
 function countLabel(metric) {
   if (!metric) return "0";
@@ -32,6 +33,7 @@ export default function AdminManagement({
   onSessionInvalidated,
   language = "en",
 }) {
+  const toast = useToast();
   const [data, setData] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -50,6 +52,13 @@ export default function AdminManagement({
   });
   const hi = language === "hi";
   const platformAdmin = currentUser?.role === "platform_admin";
+
+  useEffect(() => {
+    if (error) { toast(error, "error"); setError(""); }
+  }, [error, toast]);
+  useEffect(() => {
+    if (notice) { toast(notice, "success"); setNotice(""); }
+  }, [notice, toast]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -228,8 +237,6 @@ export default function AdminManagement({
         </div>
         <button className="cv-button cv-button-quiet" onClick={load} disabled={loading}>{hi ? "रीफ़्रेश" : "Refresh"}</button>
       </div>
-      {error && <div className="cv-error" role="alert">{error}</div>}
-      {notice && <div className="cv-success" role="status">{notice}</div>}
       {loading && <div className="cv-loading" role="status">{hi ? "प्रशासन डेटा लोड हो रहा है…" : "Loading administration data…"}</div>}
       {data && (
         <>

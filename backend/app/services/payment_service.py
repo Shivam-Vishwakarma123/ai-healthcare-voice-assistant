@@ -15,9 +15,10 @@ class PaymentService(Protocol):
         self,
         *,
         invoice_id: int,
-        invoice_number: str,
+        receipt: str,
         amount_minor: int,
         currency: str,
+        checkout_config_id: str | None = None,
     ) -> str: ...
 
     async def fetch_payment(self, payment_id: str) -> dict[str, Any]: ...
@@ -37,24 +38,31 @@ class RazorpayPaymentService:
         self,
         *,
         invoice_id: int,
-        invoice_number: str,
+        receipt: str,
         amount_minor: int,
         currency: str,
+        checkout_config_id: str | None = None,
     ) -> str:
+        if type(amount_minor) is not int or amount_minor < 100:
+            raise ValueError("Razorpay orders require an amount of at least 100 paise.")
+        if not isinstance(receipt, str) or not receipt or len(receipt) > 40 or not receipt.isascii():
+            raise ValueError("Razorpay order receipts must be non-empty ASCII strings of at most 40 characters.")
         try:
+            order_data = {
+                "amount": amount_minor,
+                "currency": currency,
+                "receipt": receipt,
+                "notes": {"invoice_id": str(invoice_id)},
+            }
+            if checkout_config_id:
+                order_data["checkout_config_id"] = checkout_config_id
             async with httpx.AsyncClient(
                 auth=(self.key_id, self.key_secret),
                 timeout=httpx.Timeout(15.0, connect=5.0),
             ) as client:
                 response = await client.post(
                     f"{self.api_base_url}/orders",
-                    json={
-                        "amount": amount_minor,
-                        "currency": currency,
-                        "receipt": invoice_number,
-                        "payment_capture": 1,
-                        "notes": {"invoice_id": str(invoice_id)},
-                    },
+                    json=order_data,
                 )
                 response.raise_for_status()
                 order = response.json()

@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -98,6 +99,7 @@ def test_complete_razorpay_test_mode_flow(monkeypatch):
     monkeypatch.setattr(settings, "payment_mode", "live")
     monkeypatch.setattr(settings, "razorpay_key_id", "rzp_test_mock_key")
     monkeypatch.setattr(settings, "razorpay_key_secret", test_secret)
+    monkeypatch.setattr(settings, "razorpay_checkout_config_id", "config_test_upi_123")
 
     # Mock Razorpay HTTP responses
     mock_order_id = "order_rzp_mock_12345"
@@ -108,7 +110,10 @@ def test_complete_razorpay_test_mode_flow(monkeypatch):
             body = json.loads(request.content)
             assert body["amount"] == 75000
             assert body["currency"] == "INR"
-            assert body.get("payment_capture") == 1
+            assert body["receipt"].startswith("cv_")
+            assert len(body["receipt"]) <= 40
+            assert "payment_capture" not in body
+            assert body.get("checkout_config_id") == "config_test_upi_123"
             return httpx.Response(200, json={
                 "id": mock_order_id,
                 "amount": 75000,
@@ -264,9 +269,25 @@ async def test_live_razorpay_api_order_creation_if_connected():
     )
     order_id = await svc.create_order(
         invoice_id=88888,
-        invoice_number="TEST-RAZORPAY-SUITE-1",
+        receipt=f"test_{uuid.uuid4().hex}",
         amount_minor=60000,
         currency="INR",
     )
     assert order_id.startswith("order_")
     assert len(order_id) > 10
+
+
+@pytest.mark.anyio
+async def test_razorpay_order_rejects_amount_below_minimum():
+    svc = RazorpayPaymentService(
+        key_id="rzp_test_mock_key",
+        key_secret="test_secret",
+        api_base_url="https://razorpay.test/v1",
+    )
+    with pytest.raises(ValueError, match="at least 100 paise"):
+        await svc.create_order(
+            invoice_id=1,
+            receipt="cv_test_minimum",
+            amount_minor=99,
+            currency="INR",
+        )

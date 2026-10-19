@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     razorpay_key_secret: str = ""
     razorpay_webhook_secret: str = ""
     razorpay_api_base_url: str = "https://api.razorpay.com/v1"
+    razorpay_checkout_config_id: str = ""
     payment_mode: str = "live"
     appointment_refund_policy: str = "manual_review"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
@@ -76,6 +77,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_payment_mode(self):
         self.payment_mode = self.payment_mode.strip().lower()
+        self.razorpay_checkout_config_id = self.razorpay_checkout_config_id.strip()
         if self.payment_mode not in {"demo", "live"}:
             raise ValueError("PAYMENT_MODE must be demo or live.")
         if (

@@ -74,6 +74,7 @@ def test_staff_invoice_owner_checkout_and_captured_payment(monkeypatch):
     monkeypatch.setattr(settings, "razorpay_api_base_url", "https://razorpay.test/v1")
     invoice_amount = 12500
     created_orders = {}
+    created_receipts = set()
     provider_behavior = {"fail_order": False, "fail_payment_lookup": False, "wrong_amount": False}
 
     def provider_response(request):
@@ -82,7 +83,10 @@ def test_staff_invoice_owner_checkout_and_captured_payment(monkeypatch):
                 return httpx.Response(503, json={"error": "provider unavailable"})
             order = json.loads(request.content)
             assert order["amount"] == invoice_amount
-            order_id = f"order_test_{order['notes']['invoice_id']}"
+            assert len(order["receipt"]) <= 40
+            assert order["receipt"] not in created_receipts
+            created_receipts.add(order["receipt"])
+            order_id = f"order_test_{len(created_orders) + 1}"
             created_orders[order_id] = invoice_amount
             return httpx.Response(200, json={"id": order_id, "amount": invoice_amount, "currency": "INR"})
         if request.method == "GET" and request.url.path.startswith("/v1/payments/"):
@@ -144,6 +148,19 @@ def test_staff_invoice_owner_checkout_and_captured_payment(monkeypatch):
             )
             assert issued.status_code == 201
             invoice_id = issued.json()["id"]
+            with test_sessions() as db:
+                db.get(Invoice, invoice_id).amount_minor = 99
+                db.commit()
+            under_minimum = client.post(
+                "/api/v1/billing/checkout",
+                headers={"Authorization": f"Bearer {patient_token}"},
+                json={"invoice_id": invoice_id},
+            )
+            assert under_minimum.status_code == 422
+            assert len(created_orders) == 0
+            with test_sessions() as db:
+                db.get(Invoice, invoice_id).amount_minor = invoice_amount
+                db.commit()
 
             hospital_invoices = client.get(
                 "/api/v1/billing/invoices",
@@ -380,6 +397,15 @@ def test_staff_invoice_owner_checkout_and_captured_payment(monkeypatch):
                         PaymentWebhookEvent.provider_event_id == "evt_capture_duplicate"
                     )
                 ) == 1
+            retried_checkout = client.post(
+                "/api/v1/billing/checkout",
+                headers={"Authorization": f"Bearer {patient_token}"},
+                json={"invoice_id": second_invoice_id},
+            )
+            assert retried_checkout.status_code == 200
+            assert retried_checkout.json()["order_id"] != second_order.json()["order_id"]
+            assert len(created_orders) == 3
+            assert len(created_receipts) == 3
     finally:
         app.dependency_overrides.clear()
         engine.dispose()

@@ -472,6 +472,11 @@ async def create_checkout(payload: CheckoutCreate, request: Request, db: Session
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found.")
     if invoice.status != "unpaid":
         raise HTTPException(status.HTTP_409_CONFLICT, "This invoice is not payable in its current status.")
+    if type(invoice.amount_minor) is not int or invoice.amount_minor < 100:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Invoice amount must be at least 100 paise (₹1.00).",
+        )
     if invoice.appointment_id is not None:
         appointment = db.scalar(
             select(Appointment).where(Appointment.id == invoice.appointment_id).with_for_update()
@@ -533,9 +538,10 @@ async def create_checkout(payload: CheckoutCreate, request: Request, db: Session
     try:
         order_id = await _payment_service().create_order(
             invoice_id=invoice.id,
-            invoice_number=invoice.invoice_number,
+            receipt=f"cv_{uuid.uuid4().hex}",
             amount_minor=invoice.amount_minor,
             currency=invoice.currency,
+            checkout_config_id=settings.razorpay_checkout_config_id or None,
         )
     except PaymentProviderError as exc:
         logger.warning("Razorpay checkout order creation failed: %s", exc)

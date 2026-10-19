@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../services/api";
+import { useToast } from "./ToastProvider";
 
 export default function VoiceAssistant({ token, language = "en" }) {
+  const toast = useToast();
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -17,6 +19,11 @@ export default function VoiceAssistant({ token, language = "en" }) {
   const recordedChunksRef = useRef([]);
   const recordingTimeoutRef = useRef(null);
   const hi = language === "hi";
+  useEffect(() => {
+    if (!error) return;
+    toast(error, "error");
+    setError("");
+  }, [error, toast]);
   useEffect(() => {
     let active = true;
     apiRequest("/assistant/speech-to-text/config", token)
@@ -227,7 +234,6 @@ export default function VoiceAssistant({ token, language = "en" }) {
           {transcriptionBusy && <p className="chat-empty" role="status">{hi ? "आवाज़ लिखित रूप में बदली जा रही है…" : "Transcribing audio…"}</p>}
           {busy && <p className="chat-empty" role="status">{hi ? "CareVoice जवाब तैयार कर रहा है…" : "CareVoice is preparing a reply…"}</p>}
         </div>
-        {error && <div className="notice error" role="alert">{error}<button type="button" aria-label="Dismiss error" onClick={() => setError("")}>×</button></div>}
         <form className="chat-form" onSubmit={sendMessage}>
           {transcriptNeedsConfirmation && <div className="notice" role="status">{hi ? "कृपया ट्रांसक्रिप्ट की समीक्षा करें और पुष्टि करें। आप इसे संपादित कर सकते हैं।" : "Review and confirm the transcript. You can edit it before sending."}<button type="button" onClick={() => setTranscriptNeedsConfirmation(false)}>{hi ? "ट्रांसक्रिप्ट की पुष्टि करें" : "Confirm transcript"}</button></div>}
           {speechConfigError && <p className="chat-empty">{hi ? "वॉइस सेटिंग उपलब्ध नहीं हैं; आप लिखकर जारी रख सकते हैं।" : "Voice settings are unavailable; you can continue by typing."}</p>}
