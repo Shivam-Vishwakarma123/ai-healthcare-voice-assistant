@@ -149,7 +149,7 @@ export default function Billing({ token, user, language = "en", target, onTarget
         // filters this list against methods enabled for the merchant account.
         config: razorpayPaymentDisplayConfig(),
         prefill: { name: user.full_name, email: user.email, ...(user.phone_number ? { contact: user.phone_number } : {}) },
-        theme: { color: "#167b6b" },
+        theme: { color: "#0d9488" },
         handler: async (response) => {
           checkoutClosed = true;
           try {
