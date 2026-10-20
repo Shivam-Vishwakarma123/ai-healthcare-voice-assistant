@@ -70,19 +70,19 @@ class Settings(BaseSettings):
             database_url = urlsplit(self.database_url)
             if not database_url.password or len(database_url.password) < 20:
                 raise ValueError("Production DATABASE_URL must contain a strong database password.")
-            if self.payment_mode.strip().lower() == "demo":
-                raise ValueError("PAYMENT_MODE=demo is not permitted in production.")
+            if self.payment_mode.strip().lower() in {"demo", "test"}:
+                raise ValueError("PAYMENT_MODE=demo and PAYMENT_MODE=test are not permitted in production.")
         return self
 
     @model_validator(mode="after")
     def validate_payment_mode(self):
         self.payment_mode = self.payment_mode.strip().lower()
         self.razorpay_checkout_config_id = self.razorpay_checkout_config_id.strip()
-        if self.payment_mode not in {"demo", "live"}:
-            raise ValueError("PAYMENT_MODE must be demo or live.")
+        if self.payment_mode not in {"demo", "live", "test"}:
+            raise ValueError("PAYMENT_MODE must be demo, test, or live.")
         if (
-            self.app_env.strip().lower() in {"development", "test"}
-            and self.payment_mode == "live"
+            (self.app_env.strip().lower() in {"development", "test"} or self.payment_mode == "test")
+            and self.payment_mode in {"live", "test"}
             and self.razorpay_key_id
             and not self.razorpay_key_id.startswith("rzp_test_")
         ):

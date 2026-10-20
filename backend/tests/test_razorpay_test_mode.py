@@ -43,7 +43,7 @@ SYNTHETIC_TEST_CARDS = {
 
 def test_razorpay_test_mode_credentials_and_config():
     """Verify that Test Mode credentials are configured with expected prefix."""
-    assert settings.payment_mode == "live", "payment_mode must be 'live' to select Razorpay provider"
+    assert settings.payment_mode in {"live", "test"}, "payment_mode must be 'live' or 'test' to select Razorpay provider"
     assert settings.razorpay_key_id.startswith("rzp_test_"), "RAZORPAY_KEY_ID must use Razorpay test mode key in development"
     assert len(settings.razorpay_key_secret) > 10, "RAZORPAY_KEY_SECRET must be configured"
 

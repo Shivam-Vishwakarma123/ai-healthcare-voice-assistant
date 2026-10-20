@@ -48,6 +48,20 @@ def test_development_live_mode_rejects_razorpay_live_key():
             payment_mode="live",
             razorpay_key_id="rzp_live_example",
         )
+    with pytest.raises(ValueError, match="must use Razorpay test keys"):
+        Settings(
+            _env_file=None,
+            app_env="development",
+            payment_mode="test",
+            razorpay_key_id="rzp_live_example",
+        )
+    test_settings = Settings(
+        _env_file=None,
+        app_env="development",
+        payment_mode="test",
+        razorpay_key_id="rzp_test_example",
+    )
+    assert test_settings.payment_mode == "test"
 
 
 def test_refund_policy_only_accepts_explicit_supported_modes():

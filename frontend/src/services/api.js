@@ -46,9 +46,20 @@ export async function apiRequest(path, token, options = {}) {
     }
   }
   if (!response.ok) {
-    const message = typeof data?.detail === "string" ? data.detail : `Request failed (${response.status})`;
+    const detail = data?.detail;
+    const message = typeof detail === "string"
+      ? detail
+      : typeof detail?.message === "string"
+        ? detail.message
+        : `Request failed (${response.status})`;
     const error = new Error(message);
     error.status = response.status;
+    if (detail && typeof detail === "object") {
+      error.providerHttpStatus = Number.isInteger(detail.provider_http_status) ? detail.provider_http_status : undefined;
+      error.providerCode = typeof detail.provider_code === "string" ? detail.provider_code : undefined;
+      error.providerReason = typeof detail.provider_reason === "string" ? detail.provider_reason : undefined;
+      error.providerField = typeof detail.provider_field === "string" ? detail.provider_field : undefined;
+    }
     throw error;
   }
   return data;

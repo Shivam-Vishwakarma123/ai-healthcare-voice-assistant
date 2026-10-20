@@ -131,7 +131,7 @@ class RefundRead(BaseModel):
 def _checkout_order(invoice: Invoice, payment: Payment) -> CheckoutOrder:
     return CheckoutOrder(
         order_id=payment.provider_order_id,
-        key_id=settings.razorpay_key_id if settings.payment_mode == "live" else None,
+        key_id=settings.razorpay_key_id if settings.payment_mode in {"live", "test"} else None,
         amount_minor=invoice.amount_minor,
         currency=invoice.currency,
         invoice_number=invoice.invoice_number,
@@ -148,7 +148,7 @@ def _require_staff(user: User) -> None:
 @router.get("/config")
 def billing_config(_: User = Depends(get_current_user)):
     provider_checkout_enabled = (
-        settings.payment_mode == "live"
+        settings.payment_mode in {"live", "test"}
         and bool(settings.razorpay_key_id and settings.razorpay_key_secret)
     )
     demo_payment_enabled = settings.payment_mode == "demo"
@@ -237,7 +237,7 @@ async def create_refund(
 ):
     if user.role not in {"hospital_admin", "platform_admin"}:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Hospital or platform administrator approval is required for refunds.")
-    if settings.payment_mode != "live":
+    if settings.payment_mode not in {"live", "test"}:
         raise HTTPException(status.HTTP_409_CONFLICT, "Provider refunds are unavailable in demo mode.")
     if settings.appointment_refund_policy == "no_refunds":
         raise HTTPException(status.HTTP_409_CONFLICT, "The configured cancellation policy does not allow refunds.")
@@ -509,7 +509,7 @@ async def create_checkout(payload: CheckoutCreate, request: Request, db: Session
             if datetime.now(timezone.utc) - _as_utc(existing_order.created_at) <= timedelta(minutes=15):
                 return _checkout_order(invoice, existing_order)
             existing_order.status = "expired"
-        elif settings.payment_mode == "live" and not existing_is_demo:
+        elif settings.payment_mode in {"live", "test"} and not existing_is_demo:
             return _checkout_order(invoice, existing_order)
         else:
             existing_order.status = "cancelled"
@@ -544,8 +544,25 @@ async def create_checkout(payload: CheckoutCreate, request: Request, db: Session
             checkout_config_id=settings.razorpay_checkout_config_id or None,
         )
     except PaymentProviderError as exc:
-        logger.warning("Razorpay checkout order creation failed: %s", exc)
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+        logger.warning(
+            "Razorpay checkout order creation failed (phase=%s, provider_http_status=%s, provider_code=%s, is_test_mode=%s): %s",
+            getattr(exc, "error_phase", None),
+            getattr(exc, "provider_http_status", None),
+            getattr(exc, "provider_code", None),
+            bool(settings.razorpay_key_id and settings.razorpay_key_id.startswith("rzp_test_")),
+            exc,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "message": str(exc),
+                "provider_http_status": getattr(exc, "provider_http_status", None),
+                "provider_code": getattr(exc, "provider_code", None),
+                "provider_reason": getattr(exc, "provider_reason", None),
+                "provider_field": getattr(exc, "provider_field", None),
+            },
+        ) from exc
 
     payment = Payment(invoice_id=invoice.id, provider_order_id=order_id, status="created")
     db.add(payment)
@@ -744,7 +761,7 @@ async def razorpay_webhook(
     signature: str | None = Header(default=None, alias="X-Razorpay-Signature"),
     event_id: str | None = Header(default=None, alias="X-Razorpay-Event-Id"),
 ):
-    if settings.payment_mode != "live":
+    if settings.payment_mode not in {"live", "test"}:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Razorpay webhooks are disabled in demo mode.")
     if not settings.razorpay_webhook_secret:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Razorpay webhook verification is not configured.")

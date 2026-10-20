@@ -25,7 +25,8 @@ def test_payment_eligibility_fails_closed_for_naive_database_timestamp():
 
 
 def test_cancelled_completed_and_zero_fee_appointments_cannot_start_new_payment():
+    now = datetime(2026, 10, 20, 4, 0, tzinfo=timezone.utc)
     future = datetime(2026, 10, 20, 4, 30, tzinfo=timezone.utc)
-    assert appointment_payment_block_reason(_appointment(future, "cancelled"), 85000) == "cancelled"
-    assert appointment_payment_block_reason(_appointment(future, "completed"), 85000) == "not_upcoming"
-    assert appointment_payment_block_reason(_appointment(future), 0) == "no_fee"
+    assert appointment_payment_block_reason(_appointment(future, "cancelled"), 85000, now=now) == "cancelled"
+    assert appointment_payment_block_reason(_appointment(future, "completed"), 85000, now=now) == "not_upcoming"
+    assert appointment_payment_block_reason(_appointment(future), 0, now=now) == "no_fee"
