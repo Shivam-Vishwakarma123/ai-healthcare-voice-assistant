@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import Billing from "./components/Billing";
 import AdminManagement from "./components/AdminManagement";
 import VoiceAssistant from "./components/VoiceAssistant";
+import { PatientHealthRecords } from "./components/PatientHealthRecords";
+import { DoctorWorkspace } from "./components/DoctorWorkspace";
 import {
   AppointmentsPage,
   CareDirectoryPage,
@@ -26,6 +28,7 @@ const navigation = [
   { id: "Overview", icon: "⌂", en: "Overview", hi: "अवलोकन" },
   { id: "Find care", icon: "♙", en: "Find care", hi: "देखभाल खोजें" },
   { id: "Appointments", icon: "▦", en: "Appointments", hi: "अपॉइंटमेंट" },
+  { id: "Health records", icon: "📁", en: "Health records", hi: "स्वास्थ्य रिकॉर्ड" },
   { id: "Symptom check", icon: "✳", en: "Symptom check", hi: "लक्षण जाँच" },
   { id: "Assistant", icon: "◉", en: "CareVoice assistant", hi: "CareVoice सहायक" },
   { id: "Profile", icon: "♡", en: "Health profile", hi: "स्वास्थ्य प्रोफ़ाइल" },
@@ -34,6 +37,7 @@ const navigation = [
 ];
 const providerNavigation = [
   { id: "Provider dashboard", icon: "▦", en: "Provider dashboard", hi: "प्रदाता डैशबोर्ड" },
+  { id: "Doctor workspace", icon: "🩺", en: "Doctor workspace", hi: "डॉक्टर कार्यक्षेत्र" },
 ];
 const administrationNavigation = [
   { id: "Administration", icon: "⚙", en: "Administration", hi: "प्रशासन" },
@@ -416,11 +420,17 @@ export default function App() {
 
   const isHindi = language === "hi";
   const isAdmin = user?.role === "platform_admin" || user?.role === "hospital_admin";
+  const isDoctor = user?.role === "doctor";
   const canAccessBilling = user?.role === "patient" || ["hospital_staff", "hospital_admin", "platform_admin"].includes(user?.role);
   const homePage = user?.role === "patient" ? "Overview" : "Provider dashboard";
   const visibleNavigation = user?.role === "patient"
     ? navigation
-    : [...providerNavigation, ...(isAdmin ? administrationNavigation : []), ...navigation.filter((item) => ["Find care", "Appointments"].includes(item.id)), ...(canAccessBilling ? navigation.filter((item) => item.id === "Billing") : [])];
+    : [
+        ...providerNavigation.filter((item) => item.id !== "Doctor workspace" || isDoctor),
+        ...(isAdmin ? administrationNavigation : []),
+        ...navigation.filter((item) => ["Find care", "Appointments"].includes(item.id)),
+        ...(canAccessBilling ? navigation.filter((item) => item.id === "Billing") : []),
+      ];
   const currentPage = visibleNavigation.find((item) => item.id === page);
   const pageLabel = currentPage ? (isHindi ? currentPage.hi : currentPage.en) : page;
 
@@ -497,15 +507,17 @@ export default function App() {
                 ? <DashboardPage user={user} patient={patients[0]} token={token} onNavigate={setPage} language={language} />
                 : <ProviderDashboardPage user={user} token={token} onUserUpdated={updateCurrentUser} language={language} />)}
               {page === "Provider dashboard" && <ProviderDashboardPage user={user} token={token} onUserUpdated={updateCurrentUser} language={language} />}
+              {page === "Doctor workspace" && isDoctor && <DoctorWorkspace token={token} user={user} language={language} onNavigate={setPage} />}
               {page === "Administration" && isAdmin && <AdminManagement token={token} user={user} onUserUpdated={updateCurrentUser} onSessionInvalidated={signOut} language={language} />}
               {page === "Find care" && <CareDirectoryPage token={token} onNavigate={setPage} onAppointmentBooked={(appointment) => { setRecentAppointment(appointment); setPage("Appointments"); }} language={language} canBook={user?.role === "patient"} />}
               {page === "Appointments" && <AppointmentsPage token={token} language={language} user={user} recentAppointment={recentAppointment} onNavigate={(nextPage, request) => { if (nextPage === "Billing") setBillingRequest(request || null); setPage(nextPage); }} />}
-              {page === "Symptom check" && <TriagePage language={language} token={token} />}
-              {page === "Assistant" && <><ScreenTitle title={isHindi ? "CareVoice सहायक" : "CareVoice assistant"} description={isHindi ? "सामान्य स्वास्थ्य जानकारी के लिए लिखें या बोलें।" : "Type or speak for general health information. This is not a diagnosis or a substitute for care."} /><VoiceAssistant token={token} language={language} /></>}
+              {page === "Health records" && <PatientHealthRecords token={token} user={user} language={language} onNavigate={setPage} />}
+              {page === "Symptom check" && <TriagePage language={language} token={token} onNavigate={setPage} />}
+              {page === "Assistant" && <><ScreenTitle title={isHindi ? "CareVoice सहायक" : "CareVoice assistant"} description={isHindi ? "सामान्य स्वास्थ्य जानकारी के लिए लिखें या बोलें।" : "Type or speak for general health information. This is not a diagnosis or a substitute for care."} /><VoiceAssistant token={token} language={language} onNavigate={setPage} /></>}
               {page === "Profile" && user?.role === "patient" && <ProfilePage profile={profile} setProfile={setProfile} patient={patients[0]} busy={busy} onSave={saveProfile} onDelete={deleteProfile} token={token} user={user} onUserUpdated={updateCurrentUser} language={language} />}
               {page === "Notifications" && <NotificationsPage token={token} user={user} onUserUpdated={updateCurrentUser} language={language} />}
               {page === "Billing" && canAccessBilling && <Billing token={token} user={user} language={language} target={billingRequest} onTargetHandled={() => setBillingRequest(null)} />}
-              {page === "Medical records" && <UnavailablePage title={isHindi ? "मेडिकल रिकॉर्ड" : "Medical records"} description={isHindi ? "क्लिनिक से साझा किए गए दस्तावेज़ यहाँ दिखाई देंगे।" : "Documents shared by your clinic would appear here."} />}
+              {page === "Medical records" && <PatientHealthRecords token={token} user={user} language={language} onNavigate={setPage} />}
             </>
           )}
         </div>

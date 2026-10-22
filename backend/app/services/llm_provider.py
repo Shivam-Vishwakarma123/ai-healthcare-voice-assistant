@@ -126,13 +126,17 @@ class BaseLLMProvider:
         content = validate_chat_completion_response(response)
         try:
             return schema.model_validate_json(content)
-        except ValueError as exc:
-            raise LLMProviderError(
-                "AI provider returned content that did not match the required response schema.",
-                provider=self.name,
-                model=self.model,
-                retryable=False,
-            ) from exc
+        except ValueError:
+            try:
+                parsed = parse_model_json_content(content)
+                return schema.model_validate(parsed)
+            except Exception as exc:
+                raise LLMProviderError(
+                    "AI provider returned content that did not match the required response schema.",
+                    provider=self.name,
+                    model=self.model,
+                    retryable=False,
+                ) from exc
 
 
 class OllamaProvider(BaseLLMProvider):

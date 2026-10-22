@@ -137,13 +137,13 @@ function InlineError({ message, onRetry }) {
   );
 }
 
-export function TriagePage({ language = "en", token }) {
+export function TriagePage({ language = "en", token, onNavigate }) {
   const hi = language === "hi";
   return (
     <>
       <ScreenTitle eyebrow={hi ? "लक्षण सुरक्षा जाँच" : "SYMPTOM SAFETY CHECK"} title={hi ? "आप कैसा महसूस कर रहे हैं?" : "How are you feeling?"} description={hi ? "तत्काल, नियम-आधारित मार्गदर्शन के लिए बताएँ कि क्या हो रहा है। यह निदान नहीं है।" : "Describe what is happening for immediate, rule-based guidance. This is not a diagnosis."} />
       <div className="cv-triage-layout">
-        <PublicTriage language={language} />
+        <PublicTriage language={language} onNavigate={onNavigate} />
         <aside className="cv-card cv-safety-note">
           <span className="cv-icon-tile" aria-hidden="true">!</span>
           <h2>{hi ? "आपातकालीन सहायता चाहिए?" : "Need emergency help?"}</h2>
@@ -161,7 +161,7 @@ export function TriagePage({ language = "en", token }) {
             ? "टाइप करें या बोलें। आपातकालीन सुरक्षा जाँच हमेशा AI से पहले होती है।"
             : "Type or speak. Deterministic emergency checks always run before AI or source retrieval."}
         />
-        <VoiceAssistant token={token} language={language} />
+        <VoiceAssistant token={token} language={language} onNavigate={onNavigate} />
       </section>
     </>
   );
@@ -348,6 +348,7 @@ export function DashboardPage({ user, patient, token, onNavigate, language = "en
               <span className="eyebrow">{hi ? "त्वरित पहुँच" : "QUICK ACCESS"}</span>
               <h2>{hi ? "आज आपको किस मदद की ज़रूरत है?" : "How can we help today?"}</h2>
               <QuickLink icon="✳" title={hi ? "लक्षण जाँचें" : "Symptom check"} detail={hi ? "नियम-आधारित सुरक्षा मार्गदर्शन" : "Rule-based safety guidance"} onClick={() => onNavigate("Symptom check")} />
+              <QuickLink icon="📁" title={hi ? "स्वास्थ्य रिकॉर्ड" : "Health records"} detail={hi ? "इतिहास, पर्चे, रिपोर्ट व FHIR" : "History, prescriptions, reports & FHIR"} onClick={() => onNavigate("Health records")} />
               <QuickLink icon="◉" title={hi ? "CareVoice से बात करें" : "Talk to CareVoice"} detail={hi ? "सामान्य स्वास्थ्य जानकारी" : "General health information"} onClick={() => onNavigate("Assistant")} />
               <QuickLink icon="♙" title={hi ? "डॉक्टर खोजें" : "Find a doctor"} detail={hi ? "डॉक्टर और अस्पताल ब्राउज़ करें" : "Browse doctors and hospitals"} onClick={() => onNavigate("Find care")} />
             </section>

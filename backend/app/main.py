@@ -14,6 +14,7 @@ from app.routes.auth_routes import router as auth_router
 from app.routes.admin_routes import router as admin_router
 from app.routes.assistant_routes import router as assistant_router
 from app.routes.billing_routes import router as billing_router
+from app.routes.clinical_routes import router as clinical_router
 from app.routes.provider_routes import router as provider_router
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ app.add_middleware(
 app.include_router(auth_router, prefix=settings.api_v1_prefix)
 app.include_router(patient_router, prefix=settings.api_v1_prefix)
 app.include_router(assistant_router, prefix=settings.api_v1_prefix)
+app.include_router(clinical_router, prefix=settings.api_v1_prefix)
 app.include_router(provider_router, prefix=settings.api_v1_prefix)
 app.include_router(billing_router, prefix=settings.api_v1_prefix)
 app.include_router(admin_router, prefix=settings.api_v1_prefix)

@@ -13,6 +13,15 @@ from app.models.user import User
 from app.models.billing import Invoice, Payment, PaymentWebhookEvent, Refund
 from app.models.knowledge import KnowledgeChunk, KnowledgeDocument
 from app.models.security import AdminBootstrapState, AuditLog, AuthSession, NotificationDelivery, PasswordResetToken
+from app.models.conversation import AssistantConversation, AssistantMessage
+from app.models.clinical import (
+    ClinicalNote,
+    MedicalDocument,
+    MedicalReport,
+    PatientAllergy,
+    Prescription,
+    PrescriptionItem,
+)
 
 __all__ = [
     "Appointment",
@@ -20,8 +29,11 @@ __all__ = [
     "AppointmentEvent",
     "AppointmentSlotLock",
     "AdminBootstrapState",
+    "AssistantConversation",
+    "AssistantMessage",
     "AuditLog",
     "AuthSession",
+    "ClinicalNote",
     "Doctor",
     "DoctorQualification",
     "DoctorSchedule",
@@ -29,11 +41,16 @@ __all__ = [
     "Invoice",
     "KnowledgeChunk",
     "KnowledgeDocument",
+    "MedicalDocument",
+    "MedicalReport",
     "NotificationDelivery",
     "Patient",
+    "PatientAllergy",
     "PasswordResetToken",
     "Payment",
     "PaymentWebhookEvent",
+    "Prescription",
+    "PrescriptionItem",
     "Refund",
     "User",
 ]

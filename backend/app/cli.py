@@ -5,11 +5,14 @@ import sys
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from pathlib import Path
+
 from app.auth.security import hash_password
 from app.core.database import SessionLocal
 from app.models.providers import Doctor, Hospital
 from app.models.security import AuditLog
 from app.models.user import User
+from app.services.rag_service import RAGDocumentInput, RAGService
 
 
 def create_account(email: str, role: str, hospital_id: int | None, doctor_id: int | None) -> int:
@@ -87,6 +90,59 @@ def _record_account_provisioning(db: Session, user: User) -> None:
     )
 
 
+def ingest_knowledge_manifest(manifest_path: Path | None = None) -> int:
+    import json
+    from datetime import datetime
+
+    path = manifest_path or (Path(__file__).resolve().parents[1] / "data" / "knowledge" / "manifest.jsonl")
+    if not path.is_file():
+        print(f"Manifest file not found: {path}", file=sys.stderr)
+        return 2
+
+    records = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            records.append(json.loads(line))
+
+    service = RAGService()
+    with SessionLocal() as db:
+        for record in records:
+            content_path = (path.parent / record.pop("content_file")).resolve()
+            content = content_path.read_text(encoding="utf-8")
+            pub_date = datetime.fromisoformat(record["publication_date"]) if record.get("publication_date") else None
+            upd_date = datetime.fromisoformat(record["updated_at"]) if record.get("updated_at") else None
+            service.ingest_document(
+                db,
+                RAGDocumentInput(
+                    title=record["title"],
+                    source_url=record["source_url"],
+                    content=content,
+                    publication_date=pub_date,
+                    updated_at=upd_date,
+                    version=record["version"],
+                    licence=record["licence"],
+                    allowed_use=record["allowed_use"],
+                    provenance=record["provenance"],
+                    category="public_health",
+                    language=record.get("language", "en"),
+                    summary=record.get("summary"),
+                    metadata=record.get("metadata"),
+                ),
+            )
+        db.commit()
+    print(f"Successfully ingested/refreshed {len(records)} knowledge documents into RAG database.")
+    return 0
+
+
+def run_seed_demo() -> int:
+    from app.seed_demo import seed_demo_data
+
+    with SessionLocal.begin() as db:
+        counts = seed_demo_data(db)
+    print(f"CareVoice demo data successfully seeded: {counts}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="CareVoice account administration")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -99,9 +155,19 @@ def main() -> int:
     )
     account_parser.add_argument("--hospital-id", type=int)
     account_parser.add_argument("--doctor-id", type=int)
+
+    knowledge_parser = subparsers.add_parser("ingest-knowledge", help="Ingest reviewed medical knowledge corpus into RAG database")
+    knowledge_parser.add_argument("--manifest", type=Path, default=None, help="Optional path to manifest.jsonl")
+
+    subparsers.add_parser("seed-demo", help="Seed realistic synthetic demo data for patient and clinician demonstration")
+
     args = parser.parse_args()
     if args.command == "create-account":
         return create_account(args.email, args.role, args.hospital_id, args.doctor_id)
+    if args.command == "ingest-knowledge":
+        return ingest_knowledge_manifest(args.manifest)
+    if args.command == "seed-demo":
+        return run_seed_demo()
     return 2
 
 

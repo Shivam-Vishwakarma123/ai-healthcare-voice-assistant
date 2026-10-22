@@ -1,8 +1,21 @@
 """Idempotent development-only CareVoice demo-data seeder."""
 
+import os
+import uuid
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.platypus import (
+    HRFlowable,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -10,6 +23,14 @@ from app.auth.security import hash_password
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.models.billing import Invoice, Payment
+from app.models.clinical import (
+    ClinicalNote,
+    MedicalDocument,
+    MedicalReport,
+    PatientAllergy,
+    Prescription,
+    PrescriptionItem,
+)
 from app.models.patient import Patient
 from app.models.providers import (
     Appointment,
@@ -25,6 +46,10 @@ from app.models.user import User
 DEMO_PASSWORD = "CareVoiceDemo2026!"
 SEED_MARKER = "DEMO-SEED-V1"
 LOCAL_TZ = ZoneInfo("Asia/Kolkata")
+DOCUMENTS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "medical_documents"
+)
+os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 
 HOSPITALS = (
     {
@@ -326,7 +351,12 @@ def _ensure_appointments(
         hospital_id = hospitals[index % len(hospitals)].id
         for case_index, (final_status, scheduled_for) in enumerate(cases, start=1):
             marker = f"{SEED_MARKER}:appointment:{index + 1:02d}:{case_index}"
-            patient = patients[(index * 3 + case_index - 1) % len(patients)]
+            if index == 1 and case_index == 1:
+                patient = patients[0]  # Ensure Dr. Kabir (doctor index 1) has completed encounter with Aarav (patient index 0)
+            elif index == 6 and case_index == 3:
+                patient = patients[3]  # Swap with patient 3 so all patients have appointments
+            else:
+                patient = patients[(index * 3 + case_index - 1) % len(patients)]
             appointment = db.scalar(select(Appointment).where(Appointment.notes == marker))
             if appointment is None:
                 appointment = Appointment(
@@ -469,6 +499,731 @@ def _ensure_invoices_and_payments(db: Session) -> tuple[int, int]:
     return invoice_created, payment_created
 
 
+def _create_sample_diagnostic_pdf(
+    filepath: str,
+    hospital_name: str,
+    patient_name: str,
+    patient_age_gender: str,
+    test_title: str,
+    test_category: str,
+    collection_date: str,
+    parameters: list[tuple[str, str, str, str]],
+    interpretation: str,
+    signing_doctor: str,
+) -> int:
+    """Generate a high-fidelity clinical diagnostic PDF using ReportLab."""
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    doc = SimpleDocTemplate(
+        filepath,
+        pagesize=letter,
+        rightMargin=40,
+        leftMargin=40,
+        topMargin=40,
+        bottomMargin=40,
+    )
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle(
+        "DocTitle",
+        parent=styles["Heading1"],
+        fontName="Helvetica-Bold",
+        fontSize=15,
+        leading=18,
+        textColor=colors.HexColor("#0f766e"),
+        spaceAfter=3,
+    )
+    subtitle_style = ParagraphStyle(
+        "DocSub",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=9,
+        leading=13,
+        textColor=colors.HexColor("#475569"),
+        spaceAfter=10,
+    )
+    section_style = ParagraphStyle(
+        "SectionHeader",
+        parent=styles["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=11,
+        leading=15,
+        textColor=colors.HexColor("#0f172a"),
+        spaceBefore=8,
+        spaceAfter=5,
+    )
+    body_style = ParagraphStyle(
+        "Body",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=9,
+        leading=12,
+        textColor=colors.HexColor("#1e293b"),
+    )
+    banner_style = ParagraphStyle(
+        "DemoBanner",
+        parent=styles["Normal"],
+        fontName="Helvetica-Bold",
+        fontSize=8,
+        leading=10,
+        textColor=colors.HexColor("#b45309"),
+        alignment=1,
+    )
+
+    story = [
+        Paragraph("DEMO DATA — SYNTHETIC RECORD FOR CAREVOICE DEMONSTRATION PURPOSES ONLY", banner_style),
+        Spacer(1, 6),
+        Paragraph(hospital_name, title_style),
+        Paragraph(f"Department of {test_category} • Accredited Diagnostic Facility", subtitle_style),
+        HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#0f766e"), spaceAfter=10),
+    ]
+
+    patient_info = [
+        [
+            Paragraph(f"<b>Patient Name:</b> {patient_name}", body_style),
+            Paragraph(f"<b>Age / Gender:</b> {patient_age_gender}", body_style),
+        ],
+        [
+            Paragraph(f"<b>Investigation:</b> {test_title}", body_style),
+            Paragraph(f"<b>Reported:</b> {collection_date}", body_style),
+        ],
+        [
+            Paragraph("<b>Specimen:</b> Venous Blood / Routine", body_style),
+            Paragraph("<b>Result Status:</b> FINAL / VERIFIED", body_style),
+        ],
+    ]
+    info_table = Table(patient_info, colWidths=[266, 266])
+    info_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
+                ("PADDING", (0, 0), (-1, -1), 5),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+                ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+            ]
+        )
+    )
+    story.append(info_table)
+    story.append(Spacer(1, 10))
+
+    story.append(Paragraph("<b>Test Results & Biological Reference Intervals:</b>", section_style))
+    table_data = [["Test Parameter", "Observed Result", "Reference Interval", "Flag"]]
+    for row in parameters:
+        table_data.append(
+            [
+                Paragraph(row[0], body_style),
+                Paragraph(f"<b>{row[1]}</b>", body_style),
+                Paragraph(row[2], body_style),
+                Paragraph(f"<b>{row[3]}</b>" if row[3] != "NORMAL" else row[3], body_style),
+            ]
+        )
+
+    results_table = Table(table_data, colWidths=[190, 110, 162, 70])
+    results_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f766e")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, 0), 9),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f1f5f9")]),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+                ("PADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+    story.append(results_table)
+    story.append(Spacer(1, 10))
+
+    story.append(Paragraph("<b>Clinical Impression & Medical Notes:</b>", section_style))
+    story.append(Paragraph(interpretation, body_style))
+    story.append(Spacer(1, 12))
+
+    sig_data = [
+        [
+            Paragraph("<i>Electronically authenticated via secure laboratory information system.</i>", body_style),
+            Paragraph(f"<b>Authorized Signatory:</b><br/>{signing_doctor}<br/><i>Consultant Pathologist / Radiologist</i>", body_style),
+        ]
+    ]
+    sig_table = Table(sig_data, colWidths=[312, 220])
+    sig_table.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+            ]
+        )
+    )
+    story.append(sig_table)
+
+    doc.build(story)
+    return os.path.getsize(filepath)
+
+
+def _ensure_demo_clinical_records(
+    db: Session,
+    patients: list[User],
+    doctors: list[Doctor],
+    hospitals: list[Hospital],
+) -> dict[str, int]:
+    """Seed comprehensive longitudinal clinical records for Aarav Demo (patient01@demo.carevoice.test)."""
+    if not patients or not doctors or not hospitals:
+        return {}
+
+    aarav = patients[0]
+    dr_asha = doctors[0]
+    dr_asha_user = db.scalar(select(User).where(User.email == "doctor01@demo.carevoice.test"))
+    dr_kabir = doctors[1]
+    dr_kabir_user = db.scalar(select(User).where(User.email == "doctor02@demo.carevoice.test"))
+
+    hospital_primary = hospitals[0]
+    hospital_name = hospital_primary.name
+
+    now = datetime.now(timezone.utc)
+    counts = {
+        "allergies_created": 0,
+        "ai_reports_created": 0,
+        "prescriptions_created": 0,
+        "notes_created": 0,
+        "documents_created": 0,
+    }
+
+    # 1. Patient Allergies
+    demo_allergies = [
+        (
+            "Penicillins (Amoxicillin, Ampicillin)",
+            "allergy",
+            "moderate",
+            "Urticaria, pruritic rash, and mild periorbital edema",
+        ),
+        (
+            "NSAIDs (Aspirin, Ibuprofen)",
+            "medication_reaction",
+            "mild",
+            "Bronchospasm, mild dyspnea, and gastric irritation",
+        ),
+    ]
+    for allergen, cat, sev, reaction in demo_allergies:
+        existing_allergy = db.scalar(
+            select(PatientAllergy).where(
+                PatientAllergy.patient_user_id == aarav.id,
+                PatientAllergy.allergen_or_condition == allergen,
+            )
+        )
+        if existing_allergy is None:
+            allergy = PatientAllergy(
+                patient_user_id=aarav.id,
+                allergen_or_condition=allergen,
+                category=cat,
+                severity=sev,
+                reaction=reaction,
+                recorded_by_user_id=dr_asha_user.id if dr_asha_user else aarav.id,
+                is_active=True,
+            )
+            db.add(allergy)
+            counts["allergies_created"] += 1
+
+    # 2. AI Reports (5 comprehensive assessments)
+    demo_reports = [
+        {
+            "title": "Acute Pharyngitis & Upper Respiratory Symptoms Assessment",
+            "report_type": "symptom_assessment",
+            "urgency_level": "routine",
+            "days_ago": 28,
+            "doctor": dr_asha,
+            "summary": "Patient reported acute sore throat (3 days), painful swallowing, low-grade fever (100.4°F), and mild rhinorrhea. Centor criteria calculation indicates low likelihood (Score 2) of streptococcal pharyngitis, most consistent with self-limiting viral upper respiratory infection.",
+            "findings": [
+                {"finding": "Pharyngeal erythema with tonsillar injection", "significance": "Consistent with viral pharyngitis"},
+                {"finding": "Absence of tonsillar exudates", "significance": "Low risk for Group A Streptococcus"},
+                {"finding": "Bilateral tender anterior cervical lymphadenopathy", "significance": "Reactive inflammatory response"},
+            ],
+            "red_flags": [],
+            "next_steps": [
+                "Warm saline gargles 3-4 times daily",
+                "Hydration maintenance with warm liquids",
+                "Acetaminophen/Paracetamol 650mg for symptom relief (avoid NSAIDs due to recorded allergy)",
+                "Schedule in-person clinic follow-up if fever >101°F persists >48h or breathing difficulty occurs",
+            ],
+            "evidence": [
+                {"title": "WHO Guidelines on Pharyngitis and Sore Throat Home Management", "provenance": "WHO SEARO", "url": "https://who.int/guidelines/pharyngitis"},
+                {"title": "NIH MedQuAD Pharyngitis Clinical Care Guide", "provenance": "NIH MedQuAD", "url": "https://medlineplus.gov/sorethroat.html"},
+            ],
+        },
+        {
+            "title": "Stage 1 Hypertension Follow-up & Lifestyle Evaluation",
+            "report_type": "visit_summary",
+            "urgency_level": "routine",
+            "days_ago": 14,
+            "doctor": dr_kabir,
+            "summary": "Longitudinal review of 4-week home blood pressure readings (mean 140/90 mmHg). Patient remains asymptomatic. Re-assessed 10-year ASCVD risk and dietary sodium intake under AHA/ACC guidelines.",
+            "findings": [
+                {"finding": "Mean systolic blood pressure 140 mmHg", "significance": "Stage 1 Essential Hypertension"},
+                {"finding": "Absence of target organ damage", "significance": "Normal renal function and baseline ECG"},
+            ],
+            "red_flags": [],
+            "next_steps": [
+                "Continue antihypertensive medication as prescribed",
+                "Maintain dietary sodium under 2000mg per day (DASH diet protocol)",
+                "150 minutes of moderate aerobic exercise weekly",
+                "Weekly home BP logging in morning seated position",
+            ],
+            "evidence": [
+                {"title": "NIH NHLBI Guidelines on High Blood Pressure in Adults", "provenance": "NIH NHLBI", "url": "https://nih.gov/health-topics/high-blood-pressure"},
+            ],
+        },
+        {
+            "title": "Seasonal Allergic Rhinitis & Sinus Congestion Evaluation",
+            "report_type": "symptom_assessment",
+            "urgency_level": "routine",
+            "days_ago": 21,
+            "doctor": dr_asha,
+            "summary": "Evaluation of seasonal paroxysmal sneezing, clear rhinorrhea, and ocular pruritus triggered by seasonal pollen and dust. Assessment confirms moderate-to-severe intermittent allergic rhinitis.",
+            "findings": [
+                {"finding": "Bilateral nasal mucosal edema with pale turbinates", "significance": "Classic allergic rhinitis hallmark"},
+                {"finding": "Conjunctival hyperemia without purulent discharge", "significance": "Allergic conjunctivitis component"},
+            ],
+            "red_flags": [],
+            "next_steps": [
+                "Initiate intranasal corticosteroid spray (Fluticasone Propionate)",
+                "Non-sedating second-generation H1-antihistamine therapy",
+                "Environmental allergen avoidance: keep windows closed during high-pollen hours",
+                "Saline nasal irrigation twice daily",
+            ],
+            "evidence": [
+                {"title": "MedlinePlus Allergic Rhinitis Clinical Reference", "provenance": "MedlinePlus", "url": "https://medlineplus.gov/allergicrhinitis.html"},
+            ],
+        },
+        {
+            "title": "Acute Gastroenteritis & Rehydration Guidance",
+            "report_type": "symptom_assessment",
+            "urgency_level": "routine",
+            "days_ago": 7,
+            "doctor": dr_asha,
+            "summary": "Assessment of sudden onset nausea and acute watery diarrhea without gross blood or high fever. Rehydration plan established using WHO-formula Oral Rehydration Salts (ORS) and clinical warning thresholds.",
+            "findings": [
+                {"finding": "Acute onset watery diarrhea (4-5 episodes/day)", "significance": "Probable viral gastroenteritis"},
+                {"finding": "Mild dehydration without hemodynamic instability", "significance": "Candidate for home oral rehydration"},
+            ],
+            "red_flags": [],
+            "next_steps": [
+                "Active oral rehydration therapy with WHO-standard ORS (200-400 mL after each loose stool)",
+                "Zinc supplementation (20mg daily for 14 days) to support mucosal repair",
+                "Gradual dietary transition: BRAT diet (bananas, rice, applesauce, toast)",
+                "Emergency re-evaluation if signs of severe dehydration or persistent vomiting occur",
+            ],
+            "evidence": [
+                {"title": "WHO Clinical Management of Acute Diarrhea & ORS Formulation", "provenance": "WHO SEARO", "url": "https://who.int/publications/diarrhoea-treatment"},
+            ],
+        },
+        {
+            "title": "Adult Asthma Flare-up & Respiratory Monitoring Assessment",
+            "report_type": "symptom_assessment",
+            "urgency_level": "urgent",
+            "days_ago": 2,
+            "doctor": dr_asha,
+            "summary": "Patient reported mild nocturnal wheezing and dry cough following cold exposure. Peak flow monitoring showed 82% of personal best (Yellow Zone). Emergency red flags screened negative. Action plan reviewed.",
+            "findings": [
+                {"finding": "Peak Expiratory Flow (PEF) 475 L/min (82% of baseline)", "significance": "Mild-to-moderate airway hyperreactivity"},
+                {"finding": "Room air SpO2 97%", "significance": "Adequate peripheral arterial oxygen saturation"},
+            ],
+            "red_flags": [
+                "Notify immediately if unable to speak full sentences, central cyanosis develops, or PEF falls below 50% (Red Zone)"
+            ],
+            "next_steps": [
+                "Inhaled bronchodilator therapy as per personal action plan",
+                "Avoid cold air exposure and outdoor irritants",
+                "Repeat peak flow measurement every 4 hours",
+                "If peak flow does not improve to >90% within 24 hours, contact attending physician",
+            ],
+            "evidence": [
+                {"title": "Global Initiative for Asthma (GINA) Management Strategy", "provenance": "GINA", "url": "https://ginasthma.org/reports"},
+            ],
+        },
+    ]
+
+    for rep in demo_reports:
+        existing_report = db.scalar(
+            select(MedicalReport).where(
+                MedicalReport.patient_user_id == aarav.id,
+                MedicalReport.title == rep["title"],
+            )
+        )
+        if existing_report is None:
+            rep_date = now - timedelta(days=rep["days_ago"])
+            report = MedicalReport(
+                patient_user_id=aarav.id,
+                doctor_id=rep["doctor"].id,
+                report_type=rep["report_type"],
+                title=rep["title"],
+                summary=rep["summary"],
+                urgency_level=rep["urgency_level"],
+                red_flags=rep["red_flags"],
+                findings=rep["findings"],
+                recommended_next_steps=rep["next_steps"],
+                evidence_sources=rep["evidence"],
+                disclaimer="DEMO DATA — NOT A REAL PATIENT ASSESSMENT. CareVoice AI reports provide structured educational assessment and clinical synthesis only.",
+                status="reviewed",
+                reviewed_by_doctor_id=rep["doctor"].id,
+                reviewed_at=rep_date + timedelta(hours=2),
+                created_at=rep_date,
+            )
+            db.add(report)
+            counts["ai_reports_created"] += 1
+
+    # 3. Prescriptions (4 finalized prescriptions with complete items)
+    demo_prescriptions = [
+        {
+            "prescription_number": "RX-20260924-DEMO01",
+            "days_ago": 28,
+            "doctor": dr_asha,
+            "finalized_by": dr_asha_user,
+            "diagnosis": "Acute Pharyngitis & Upper Respiratory Infection",
+            "notes": "Patient has documented penicillin allergy (urticaria). Prescribed Macrolide (Azithromycin) instead of beta-lactams. Maintain hydration and complete full antibiotic course.",
+            "warnings": [
+                "Cross-reactivity screened: Patient allergic to Penicillins. Beta-lactams avoided; Azithromycin safely selected.",
+                "NSAIDs avoided due to recorded adverse reaction.",
+            ],
+            "items": [
+                ("Azithromycin", "500 mg", "tablet", "oral", "1-0-0 (Once daily)", "3 days", "3 tablets", "Take 1 hour before food or 2 hours after meals"),
+                ("Paracetamol", "650 mg", "tablet", "oral", "1-0-1 (SOS / As needed)", "5 days", "10 tablets", "Take after food for fever or throat discomfort"),
+                ("Cetirizine Hydrochloride", "10 mg", "tablet", "oral", "0-0-1 (Night)", "5 days", "5 tablets", "Take at bedtime for rhinorrhea and sneezing"),
+            ],
+        },
+        {
+            "prescription_number": "RX-20261008-DEMO02",
+            "days_ago": 14,
+            "doctor": dr_kabir,
+            "finalized_by": dr_kabir_user,
+            "diagnosis": "Essential (Primary) Hypertension, Stage 1",
+            "notes": "Target BP: <130/80 mmHg. Emphasized low-sodium diet (<2g/day) and daily 30-min brisk walk. Log BP in the morning before medication.",
+            "warnings": [
+                "Allergy profile verified: Penicillin and NSAID allergies present. No conflict with ARB / CCB classes.",
+            ],
+            "items": [
+                ("Telmisartan", "40 mg", "tablet", "oral", "1-0-0 (Morning)", "30 days", "30 tablets", "Take every morning after breakfast with water"),
+                ("Amlodipine Besylate", "5 mg", "tablet", "oral", "0-0-1 (Evening)", "30 days", "30 tablets", "Take each evening. Report peripheral edema if noticed"),
+            ],
+        },
+        {
+            "prescription_number": "RX-20261001-DEMO03",
+            "days_ago": 21,
+            "doctor": dr_asha,
+            "finalized_by": dr_asha_user,
+            "diagnosis": "Moderate-to-Severe Intermittent Allergic Rhinitis",
+            "notes": "Use nasal spray regularly for full therapeutic effect (onset 2-4 days). Keep windows closed during morning pollen peaks.",
+            "warnings": [
+                "Patient allergy screen passed. No contraindications detected.",
+            ],
+            "items": [
+                ("Levocetirizine + Montelukast", "5 mg / 10 mg", "tablet", "oral", "0-0-1 (Night)", "14 days", "14 tablets", "Take one tablet every night before sleep"),
+                ("Fluticasone Propionate Nasal Spray", "50 mcg/actuation", "nasal spray", "nasal", "2 sprays each nostril OD", "30 days", "1 bottle (120 doses)", "Prime bottle before first use; spray away from nasal septum"),
+            ],
+        },
+        {
+            "prescription_number": "RX-20261015-DEMO04",
+            "days_ago": 7,
+            "doctor": dr_asha,
+            "finalized_by": dr_asha_user,
+            "diagnosis": "Acute Gastroenteritis (Resolved, Recovery Phase)",
+            "notes": "Continue oral hydration. Zinc supplementation is critical to restore intestinal mucosal barrier integrity.",
+            "warnings": [
+                "Patient allergy screen passed.",
+            ],
+            "items": [
+                ("Oral Rehydration Salts (WHO Formula)", "20.5 g sachet", "powder for solution", "oral", "As needed (200-400 mL/stool)", "3 days", "6 sachets", "Dissolve 1 sachet in exactly 1 Liter of clean boiled water. Sip throughout day"),
+                ("Ondansetron", "4 mg", "orally disintegrating tablet", "oral", "1-0-1 (SOS)", "3 days", "6 tablets", "Place on tongue to dissolve 30 minutes before meal if nausea occurs"),
+                ("Zinc Sulfate Monohydrate", "20 mg elemental zinc", "tablet", "oral", "1-0-0 (Morning)", "14 days", "14 tablets", "Take once daily with breakfast for 14 continuous days"),
+            ],
+        },
+    ]
+
+    for rx_data in demo_prescriptions:
+        existing_rx = db.scalar(
+            select(Prescription).where(
+                Prescription.patient_user_id == aarav.id,
+                Prescription.prescription_number == rx_data["prescription_number"],
+            )
+        )
+        if existing_rx is None:
+            rx_date = now - timedelta(days=rx_data["days_ago"])
+            rx = Prescription(
+                prescription_number=rx_data["prescription_number"],
+                patient_user_id=aarav.id,
+                doctor_id=rx_data["doctor"].id,
+                diagnosis=rx_data["diagnosis"],
+                notes=rx_data["notes"],
+                allergy_warnings=rx_data["warnings"],
+                status="finalized",
+                finalized_at=rx_date,
+                finalized_by_user_id=rx_data["finalized_by"].id if rx_data["finalized_by"] else aarav.id,
+                created_at=rx_date,
+            )
+            for it in rx_data["items"]:
+                item = PrescriptionItem(
+                    medication_name=it[0],
+                    strength=it[1],
+                    dosage_form=it[2],
+                    route=it[3],
+                    frequency=it[4],
+                    duration=it[5],
+                    quantity=it[6],
+                    instructions=it[7],
+                )
+                rx.items.append(item)
+            db.add(rx)
+            counts["prescriptions_created"] += 1
+
+    # 4. Doctor Notes (5 clinical consultation notes)
+    demo_notes = [
+        {
+            "chief_complaint": "Severe throat pain, odynophagia, and fever for 3 days",
+            "days_ago": 28,
+            "doctor": dr_asha,
+            "finalized_by": dr_asha_user,
+            "note_type": "consultation_note",
+            "hpi": "32-year-old male presents with 3-day history of scratchy sore throat, difficulty swallowing solids, and mild fever up to 100.4°F. Associated with clear nasal discharge and dry cough. Denies dyspnea, stridor, neck stiffness, or rash.",
+            "exam": "Vitals: BP 124/80 mmHg, HR 78 bpm regular, Temp 100.2°F, SpO2 99% on ambient air. Pharynx: Marked erythema of posterior pharyngeal wall and tonsillar pillars. No exudates, membranes, or uvular deviation. Neck: Tender submandibular and anterior cervical lymphadenopathy bilaterally (1 cm, mobile). Lungs: Vesicular breath sounds bilaterally, no crackles or rhonchi.",
+            "assessment": "Acute viral pharyngitis with mild upper respiratory involvement. Centor Score = 2 (low probability of bacterial GAS infection). Penicillin allergy noted.",
+            "plan": "Prescribed Azithromycin 500mg (as non-penicillin antimicrobial coverage due to clinical suspicion of secondary bacterial overlay), Paracetamol 650mg SOS for pyrexia, and Cetirizine 10mg. Warm saline gargles recommended.",
+            "follow_up": "Return to clinic immediately if temperature exceeds 102°F, inability to swallow liquids occurs, or shortness of breath develops.",
+        },
+        {
+            "chief_complaint": "Cardiology consult: Evaluation of stage 1 hypertension detected on workplace physical",
+            "days_ago": 14,
+            "doctor": dr_kabir,
+            "finalized_by": dr_kabir_user,
+            "note_type": "progress_note",
+            "hpi": "Patient was advised to obtain formal cardiology evaluation after routine corporate health screen showed BP 144/92 mmHg. Over the past 4 weeks, patient logged home BP readings ranging 136-146 / 88-94 mmHg. Asymptomatic: denies exertional chest tightness, dyspnea, orthopnea, palpitations, syncope, or visual disturbances. Non-smoker, occasional alcohol.",
+            "exam": "Vitals: Seated Right Arm BP 142/90 mmHg (repeat left arm 140/88 mmHg), Pulse 72 bpm regular, BMI 24.6 kg/m². CV: S1 and S2 physiologically normal. No murmurs, clicks, rubs, or gallops. JVP not elevated. Abdomen: No renal artery bruits. Extremities: Warm and well-perfused, zero pedal edema.",
+            "assessment": "Stage 1 Essential Hypertension (ICD-10 I10). Low 10-year atherosclerotic cardiovascular disease risk (<5%). Good candidate for first-line ARB therapy.",
+            "plan": "1. Start Telmisartan 40mg once daily in morning. 2. Low-dose Amlodipine 5mg evening. 3. DASH dietary sodium restriction (<2,000 mg/day). 4. Prescribed lipid panel and renal function panel. 5. Maintain daily home BP log.",
+            "follow_up": "Follow-up in 4 weeks with home BP record and laboratory results.",
+        },
+        {
+            "chief_complaint": "Paroxysmal sneezing, itchy watery eyes, and clear nasal discharge",
+            "days_ago": 21,
+            "doctor": dr_asha,
+            "finalized_by": dr_asha_user,
+            "note_type": "soap_note",
+            "hpi": "Patient reports persistent sneezing bouts (10-15 consecutively) especially in early morning and during dust exposure for the past 2 weeks. Associated with itchy soft palate and red, tearing eyes. Impairing sleep and work productivity.",
+            "exam": "Eyes: Bilateral mild conjunctival injection without crusting or discharge. Nose: Nasal mucosa boggy, pale-bluish with copious thin watery secretions. Ears: Bilateral tympanic membranes pearly gray, intact with normal light reflex.",
+            "assessment": "Moderate-Severe Intermittent Allergic Rhinitis (ARIA criteria) with associated allergic rhinoconjunctivitis.",
+            "plan": "1. Fluticasone Propionate nasal spray (2 sprays per nostril OD). 2. Levocetirizine 5mg + Montelukast 10mg nightly for 14 days. 3. Advised on environmental allergen mitigation (HEPA air purifier, mattress covers, morning window closure).",
+            "follow_up": "Review in 2 weeks or SOS if unmanaged.",
+        },
+        {
+            "chief_complaint": "Follow-up: Recovery from acute gastroenteritis and diet re-introduction",
+            "days_ago": 7,
+            "doctor": dr_asha,
+            "finalized_by": dr_asha_user,
+            "note_type": "progress_note",
+            "hpi": "Patient presented 5 days ago with acute watery diarrhea (5-6 loose stools) and nausea after dining at a public banquet. Managed successfully at home with WHO-ORS fluid therapy. Diarrhea resolved 48 hours ago; now passing soft formed stool. Denies lingering fever or abdominal cramps.",
+            "exam": "Vitals: BP 120/78 mmHg, HR 74 bpm, Temp 98.4°F, SpO2 99%. Oral cavity: Moist mucous membranes, normal skin turgor. Abdomen: Soft, non-tender, non-distended, active normoactive bowel sounds. No organomegaly.",
+            "assessment": "Resolved acute gastroenteritis (probable viral etiology). Successful home oral rehydration without complication or electrolyte imbalance.",
+            "plan": "1. Discontinue Ondansetron. 2. Continue Zinc 20mg daily to complete the full 14-day mucosal restitution regimen. 3. Liberalize diet progressively from bland soft foods to regular balanced diet; avoid heavy fried foods and unpasteurized dairy for 3 days.",
+            "follow_up": "Routine follow-up as needed.",
+        },
+        {
+            "chief_complaint": "Annual preventive health checkup and comprehensive lab review",
+            "days_ago": 2,
+            "doctor": dr_asha,
+            "finalized_by": dr_asha_user,
+            "note_type": "consultation_note",
+            "hpi": "32-year-old male presents for routine annual preventative clinical evaluation. No active clinical complaints. Compliant with antihypertensive medication. Exercise routine: 30-minute jog 4 times weekly. Sleep 7 hours nightly.",
+            "exam": "Vitals: BP 126/82 mmHg (well-controlled), HR 70 bpm, BMI 24.2 kg/m² (normal range), Waist circumference 33 inches. General: Healthy, alert, athletic build. Systemic examination: Heart, lungs, abdomen, and neurological checks all within normal limits.",
+            "assessment": "Healthy adult male with well-controlled Stage 1 Essential Hypertension on low-dose medical therapy and lifestyle management. Normal routine hematological and metabolic panels.",
+            "plan": "1. Continue current lifestyle regimen and medication. 2. Routine age-appropriate screening: baseline dental prophylaxis and annual ophthalmological fundus check. 3. Repeat fasting lipid panel and renal parameters in 12 months.",
+            "follow_up": "Next annual preventive wellness assessment in 12 months.",
+        },
+    ]
+
+    for n_data in demo_notes:
+        existing_note = db.scalar(
+            select(ClinicalNote).where(
+                ClinicalNote.patient_user_id == aarav.id,
+                ClinicalNote.chief_complaint == n_data["chief_complaint"],
+            )
+        )
+        if existing_note is None:
+            note_date = now - timedelta(days=n_data["days_ago"])
+            note = ClinicalNote(
+                patient_user_id=aarav.id,
+                doctor_id=n_data["doctor"].id,
+                note_type=n_data["note_type"],
+                chief_complaint=n_data["chief_complaint"],
+                history_of_present_illness=n_data["hpi"],
+                examination_findings=n_data["exam"],
+                assessment=n_data["assessment"],
+                plan=n_data["plan"],
+                follow_up_instructions=n_data["follow_up"],
+                status="finalized",
+                finalized_at=note_date,
+                finalized_by_user_id=n_data["finalized_by"].id if n_data["finalized_by"] else aarav.id,
+                created_at=note_date,
+            )
+            db.add(note)
+            counts["notes_created"] += 1
+
+    # 5. Medical Documents & Diagnostic Reports (6 physical PDFs generated on disk)
+    demo_documents = [
+        {
+            "filename": "DEMO_CBC_Panel_Aarav_Demo.pdf",
+            "title": "Complete Blood Count (CBC) Panel with Differential",
+            "document_type": "lab_report",
+            "days_ago": 28,
+            "category": "Clinical Pathology",
+            "parameters": [
+                ("Hemoglobin (Hb)", "14.8 g/dL", "13.0 - 17.0 g/dL", "NORMAL"),
+                ("Total RBC Count", "5.1 mil/uL", "4.5 - 5.9 mil/uL", "NORMAL"),
+                ("Total Leucocyte Count (WBC)", "7,400 /uL", "4,000 - 11,000 /uL", "NORMAL"),
+                ("Platelet Count", "265,000 /uL", "150,000 - 450,000 /uL", "NORMAL"),
+                ("Neutrophils", "62 %", "40 - 75 %", "NORMAL"),
+                ("Lymphocytes", "29 %", "20 - 45 %", "NORMAL"),
+                ("Monocytes", "6 %", "2 - 10 %", "NORMAL"),
+                ("Eosinophils", "2 %", "1 - 6 %", "NORMAL"),
+                ("Erythrocyte Sedimentation Rate (ESR)", "8 mm/hr", "0 - 15 mm/hr", "NORMAL"),
+            ],
+            "interpretation": "Normocytic, normochromic RBC morphology. Normal total and differential WBC count. Platelets adequate on smear. No atypical cells seen.",
+            "doctor": "Dr. S. K. Sharma, MD (Pathology)",
+        },
+        {
+            "filename": "DEMO_CMP_Lipid_Profile_Aarav_Demo.pdf",
+            "title": "Comprehensive Metabolic Panel (CMP) & Lipid Profile",
+            "document_type": "lab_report",
+            "days_ago": 14,
+            "category": "Clinical Biochemistry",
+            "parameters": [
+                ("Fasting Blood Sugar (Glucose)", "94 mg/dL", "70 - 99 mg/dL", "NORMAL"),
+                ("Glycated Hemoglobin (HbA1c)", "5.4 %", "< 5.7 % (Normal)", "NORMAL"),
+                ("Serum Creatinine", "0.95 mg/dL", "0.70 - 1.30 mg/dL", "NORMAL"),
+                ("Estimated GFR (eGFR)", "> 90 mL/min/1.73m²", "> 60 mL/min/1.73m²", "NORMAL"),
+                ("Blood Urea Nitrogen (BUN)", "14 mg/dL", "7 - 20 mg/dL", "NORMAL"),
+                ("Total Serum Cholesterol", "188 mg/dL", "< 200 mg/dL (Desirable)", "NORMAL"),
+                ("LDL Cholesterol", "112 mg/dL", "< 100 mg/dL (Optimal)", "BORDERLINE HIGH"),
+                ("HDL Cholesterol", "48 mg/dL", "> 40 mg/dL (Normal)", "NORMAL"),
+                ("Serum Triglycerides", "140 mg/dL", "< 150 mg/dL (Normal)", "NORMAL"),
+            ],
+            "interpretation": "Fasting glucose and HbA1c indicate normal glucose homeostasis. Renal function panel is intact. Mild borderline elevation of LDL cholesterol, manageable with dietary adjustments.",
+            "doctor": "Dr. Neha Verma, MD (Biochemistry)",
+        },
+        {
+            "filename": "DEMO_12_Lead_ECG_Report_Aarav_Demo.pdf",
+            "title": "12-Lead Electrocardiogram (ECG) Diagnostic Report",
+            "document_type": "imaging",
+            "days_ago": 14,
+            "category": "Cardiovascular Diagnostics",
+            "parameters": [
+                ("Ventricular Heart Rate", "72 bpm", "60 - 100 bpm", "NORMAL"),
+                ("PR Interval", "156 ms", "120 - 200 ms", "NORMAL"),
+                ("QRS Duration", "88 ms", "60 - 100 ms", "NORMAL"),
+                ("QT / QTc Interval", "380 / 412 ms", "< 440 ms (Male)", "NORMAL"),
+                ("Mean Frontal P-QRS-T Axes", "+52° / +45° / +40°", "Normal Axis (-30° to +90°)", "NORMAL"),
+                ("ST Segment & T Wave Morphology", "Isoelectric / Normal", "No ST elevation or depression", "NORMAL"),
+            ],
+            "interpretation": "Normal Sinus Rhythm at 72 bpm. Normal intervals and axis. No pathological Q waves, ST deviations, or T wave inversions. No evidence of chamber enlargement or active ischemia.",
+            "doctor": "Dr. Kabir Sample, MD, DM (Cardiology)",
+        },
+        {
+            "filename": "DEMO_Chest_XRay_Radiology_Aarav_Demo.pdf",
+            "title": "Chest X-Ray (PA View) Radiology Report",
+            "document_type": "imaging",
+            "days_ago": 14,
+            "category": "Diagnostic Radiology",
+            "parameters": [
+                ("Projection & Technique", "Posteroanterior (PA) View", "Adequate inspiratory effort", "NORMAL"),
+                ("Pulmonary Parenchyma", "Clear lung fields bilaterally", "No focal consolidation or effusion", "NORMAL"),
+                ("Cardiothoracic Ratio (CTR)", "0.44", "< 0.50 (Normal cardiac size)", "NORMAL"),
+                ("Mediastinum & Hilar Contours", "Normal configuration", "No lymphadenopathy or mass", "NORMAL"),
+                ("Costophrenic & Cardiophrenic Sulci", "Sharp bilaterally", "No pleural thickening or blunting", "NORMAL"),
+                ("Thoracic Cage & Soft Tissues", "Intact osseous structures", "No acute fracture or lytic lesion", "NORMAL"),
+            ],
+            "interpretation": "Unremarkable chest radiograph. No active pulmonary parenchymal consolidation, pleural effusion, pneumothorax, or cardiomegaly.",
+            "doctor": "Dr. Rajesh Gupta, MD (Radiodiagnosis)",
+        },
+        {
+            "filename": "DEMO_Urinalysis_Routine_Aarav_Demo.pdf",
+            "title": "Urine Routine & Microscopic Examination (Urinalysis)",
+            "document_type": "lab_report",
+            "days_ago": 7,
+            "category": "Clinical Pathology",
+            "parameters": [
+                ("Physical Appearance & Color", "Pale Yellow, Clear", "Straw / Yellow, Clear", "NORMAL"),
+                ("Specific Gravity", "1.018", "1.005 - 1.030", "NORMAL"),
+                ("pH Reaction", "6.2", "4.5 - 8.0", "NORMAL"),
+                ("Urinary Protein / Albumin", "Negative", "Negative (< 15 mg/dL)", "NORMAL"),
+                ("Urinary Glucose", "Negative", "Negative", "NORMAL"),
+                ("Ketones & Bilirubin", "Negative", "Negative", "NORMAL"),
+                ("Microscopic Red Blood Cells (RBC)", "0 - 1 / HPF", "0 - 2 / HPF", "NORMAL"),
+                ("Microscopic Pus Cells (WBC)", "1 - 2 / HPF", "0 - 5 / HPF", "NORMAL"),
+            ],
+            "interpretation": "Normal routine and microscopic urinalysis. Negative for proteinuria, glycosuria, hematuria, or bacteriuria.",
+            "doctor": "Dr. S. K. Sharma, MD (Pathology)",
+        },
+        {
+            "filename": "DEMO_Pulmonary_Function_Spirometry_Aarav_Demo.pdf",
+            "title": "Pulmonary Function Test (Spirometry) Report",
+            "document_type": "other",
+            "days_ago": 2,
+            "category": "Pulmonary Function Laboratory",
+            "parameters": [
+                ("Forced Vital Capacity (FVC)", "4.62 L (98 % pred)", ">= 80 % predicted", "NORMAL"),
+                ("Forced Expiratory Volume in 1s (FEV1)", "3.88 L (96 % pred)", ">= 80 % predicted", "NORMAL"),
+                ("FEV1 / FVC Ratio", "84.0 %", ">= 70.0 % (Normal limit)", "NORMAL"),
+                ("Forced Expiratory Flow (FEF 25-75%)", "4.10 L/s (92 % pred)", ">= 65 % predicted", "NORMAL"),
+                ("Peak Expiratory Flow Rate (PEFR)", "580 L/min", ">= 80 % predicted", "NORMAL"),
+            ],
+            "interpretation": "Spirometry demonstrates normal baseline ventilatory volumes and flow rates. No obstructive or restrictive ventilatory impairment observed.",
+            "doctor": "Dr. Asha Demo, MD (General Medicine)",
+        },
+    ]
+
+    for doc_data in demo_documents:
+        filepath = os.path.join(DOCUMENTS_DIR, doc_data["filename"])
+        file_size = 0
+        if not os.path.exists(filepath):
+            file_size = _create_sample_diagnostic_pdf(
+                filepath=filepath,
+                hospital_name=hospital_name,
+                patient_name="Aarav Demo",
+                patient_age_gender="32Y / Male",
+                test_title=doc_data["title"],
+                test_category=doc_data["category"],
+                collection_date=(now - timedelta(days=doc_data["days_ago"])).strftime("%d %b %Y"),
+                parameters=doc_data["parameters"],
+                interpretation=doc_data["interpretation"],
+                signing_doctor=doc_data["doctor"],
+            )
+        else:
+            file_size = os.path.getsize(filepath)
+
+        existing_doc = db.scalar(
+            select(MedicalDocument).where(
+                MedicalDocument.patient_user_id == aarav.id,
+                MedicalDocument.title == doc_data["title"],
+            )
+        )
+        if existing_doc is None:
+            doc_date = now - timedelta(days=doc_data["days_ago"])
+            doc = MedicalDocument(
+                patient_user_id=aarav.id,
+                uploaded_by_user_id=dr_asha_user.id if dr_asha_user else aarav.id,
+                title=doc_data["title"],
+                document_type=doc_data["document_type"],
+                file_path=filepath,
+                file_size=file_size,
+                mime_type="application/pdf",
+                notes=f"Synthetic diagnostic record for {doc_data['title']}.",
+                extracted_data={"category": doc_data["category"], "status": "VERIFIED"},
+                created_at=doc_date,
+            )
+            db.add(doc)
+            counts["documents_created"] += 1
+
+    db.flush()
+    return counts
+
+
 def seed_demo_data(db: Session) -> dict[str, int]:
     """Add missing synthetic records without changing existing application data."""
     if settings.app_env.strip().lower() not in {"development", "test"}:
@@ -480,6 +1235,7 @@ def seed_demo_data(db: Session) -> dict[str, int]:
     doctor_accounts_created = _ensure_doctor_accounts(db, doctors, hospitals)
     appointments_created = _ensure_appointments(db, doctors, patients, hospitals)
     invoices_created, payments_created = _ensure_invoices_and_payments(db)
+    clinical_counts = _ensure_demo_clinical_records(db, patients, doctors, hospitals)
     return {
         "hospitals_created": hospitals_created,
         "doctors_created": doctors_created,
@@ -490,6 +1246,7 @@ def seed_demo_data(db: Session) -> dict[str, int]:
         "appointments_created": appointments_created,
         "invoices_created": invoices_created,
         "payments_created": payments_created,
+        **clinical_counts,
     }
 
 

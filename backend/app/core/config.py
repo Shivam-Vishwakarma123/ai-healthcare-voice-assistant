@@ -25,12 +25,25 @@ class Settings(BaseSettings):
     app_public_url: str = "http://localhost:3000"
     admin_bootstrap_token: str = ""
     backend_cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+
+    # AI Configuration (supports both AI_* and legacy LLM_* / EMBEDDING_* conventions)
+    ai_enabled: bool = True
+    ai_provider: str | None = None
+    ai_model: str | None = None
+    ai_api_key: str | None = None
+    ai_base_url: str | None = None
+    ai_timeout_seconds: float | None = None
+    ai_max_output_tokens: int | None = None
+    ai_temperature: float | None = None
+    ai_embedding_provider: str | None = None
+    ai_embedding_model: str | None = None
+
     llm_provider: str = "ollama"
     llm_api_key: str = ""
     llm_base_url: str = "http://ollama:11434/v1"
     llm_model: str = "llama3.2:1b-instruct-q4_K_M"
     llm_temperature: float = 0.4
-    llm_max_tokens: int = 96
+    llm_max_tokens: int = 512
     llm_timeout_seconds: float = 45.0
     llm_max_retries: int = 2
     speech_to_text_provider: str = "browser"
@@ -39,14 +52,14 @@ class Settings(BaseSettings):
     speech_to_text_model: str = "whisper-1"
     speech_to_text_timeout_seconds: float = 45.0
     speech_to_text_max_audio_bytes: int = 10_485_760
-    rag_enabled: bool = False
+    rag_enabled: bool = True
     embedding_provider: str = "hash"
     embedding_model: str = "text-embedding-3-small"
     embedding_timeout_seconds: float = 15.0
     embedding_dimensions: int = 384
     rag_chunk_size: int = 500
     rag_chunk_overlap: int = 100
-    rag_approved_source_hosts: str = "who.int,mohfw.gov.in,mohfw.nic.in,nhs.uk,cdc.gov"
+    rag_approved_source_hosts: str = "who.int,mohfw.gov.in,mohfw.nic.in,nhs.uk,cdc.gov,medlineplus.gov,nih.gov,nlm.nih.gov,niddk.nih.gov,nhlbi.nih.gov"
     provider_match_specialty_weight: float = 0.55
     provider_match_city_weight: float = 0.2
     provider_match_language_weight: float = 0.15
@@ -94,6 +107,52 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_ai_limits(self):
+        # Sync AI_* and LLM_* settings
+        if self.ai_provider:
+            self.llm_provider = self.ai_provider.strip().lower()
+        else:
+            self.ai_provider = self.llm_provider.strip().lower()
+
+        if self.ai_model:
+            self.llm_model = self.ai_model.strip()
+        else:
+            self.ai_model = self.llm_model.strip()
+
+        if self.ai_api_key is not None:
+            self.llm_api_key = self.ai_api_key
+        else:
+            self.ai_api_key = self.llm_api_key
+
+        if self.ai_base_url:
+            self.llm_base_url = self.ai_base_url.strip()
+        else:
+            self.ai_base_url = self.llm_base_url.strip()
+
+        if self.ai_timeout_seconds is not None:
+            self.llm_timeout_seconds = self.ai_timeout_seconds
+        else:
+            self.ai_timeout_seconds = self.llm_timeout_seconds
+
+        if self.ai_max_output_tokens is not None:
+            self.llm_max_tokens = self.ai_max_output_tokens
+        else:
+            self.ai_max_output_tokens = self.llm_max_tokens
+
+        if self.ai_temperature is not None:
+            self.llm_temperature = self.ai_temperature
+        else:
+            self.ai_temperature = self.llm_temperature
+
+        if self.ai_embedding_provider:
+            self.embedding_provider = self.ai_embedding_provider.strip().lower()
+        else:
+            self.ai_embedding_provider = self.embedding_provider.strip().lower()
+
+        if self.ai_embedding_model:
+            self.embedding_model = self.ai_embedding_model.strip()
+        else:
+            self.ai_embedding_model = self.embedding_model.strip()
+
         if not 1 <= self.llm_max_tokens <= 8192:
             raise ValueError("LLM_MAX_TOKENS must be between 1 and 8192.")
         if not 1 <= self.llm_timeout_seconds <= 600:

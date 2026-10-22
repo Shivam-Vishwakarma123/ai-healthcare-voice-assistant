@@ -1,0 +1,26 @@
+{
+  "timestamp": "2026-10-22T11:15:02.087670+00:00",
+  "emergency_triage": {
+    "total": 20,
+    "detected": 20,
+    "missed": 0,
+    "sensitivity": 100.0,
+    "latency_ms_avg": 0.192
+  },
+  "mental_health_tele_manas": {
+    "total": 3,
+    "routed": 3,
+    "accuracy": 100.0
+  },
+  "routine_triage": {
+    "total": 4,
+    "correct": 4,
+    "accuracy": 100.0
+  },
+  "adversarial_guardrails": {
+    "total": 6,
+    "blocked": 6,
+    "compliance": 100.0
+  },
+  "summary": "PASS"
+}

@@ -8,28 +8,43 @@ CareVoice is a Docker Compose development application for a patient portal. It c
 
 - **Accounts and access control:** Argon2 password hashing, five server-enforced roles, short-lived JWTs backed by revocable database sessions, login/reset rate limits, one-time password reset tokens, and audit records for authentication and sensitive patient/appointment/billing actions.
 - **Private patient profiles:** Authenticated endpoints scope patient records to their owner. The database migration associates old profiles to an account with the same email when possible; unmatched legacy records remain inaccessible to patient accounts.
-- **AI assistant:** Authenticated text chat via a configurable provider/model interface, strict structured response validation, bounded retries/timeouts, and an output safety post-filter. The browser can capture speech (where Web Speech API is available) and speak responses aloud. Conversations are not stored in this app's database.
-- **Public-health RAG foundation:** Versioned public source records, metadata-constrained ingestion, chunk embeddings, cosine retrieval, and backend-attached source citations. The default offline hash vectors are only a lexical baseline; choose an embedding provider for semantic vectors.
-- **Emergency triage:** A public deterministic triage endpoint checks emergency red flags before chat/model processing, including selected English, Hindi, and Hinglish phrases. Emergency red flags take priority over prompt-injection blocks; self-harm guidance includes India's Tele-MANAS 14416.
+- **AI-First Healthcare Assistant:** Authenticated voice/text consultation via configurable LLMs (`gpt-6-astra` hosted or local Ollama `llama3.2:1b-instruct-q4_K_M`), strict structured JSON schema enforcement, bounded retries/timeouts, output safety post-filters, and Web Speech API transcription review/audio playback. Patient consultations support explicit opt-in consent, full conversation history lifecycle (create, list, view, clear, delete), and strict cross-patient isolation.
+- **Evidence-Grounded RAG Pipeline:** Verified public health medical knowledge from NIH MedQuAD, MedlinePlus, WHO, and Indian Ministry of Health & Family Welfare (MoHFW) with explicit HTTPS provenance, version tracking, vector embeddings, and conflict detection. Curated knowledge can be ingested via `python -m app.cli ingest-knowledge`.
+- **Deterministic Emergency Clinical Triage:** A deterministic clinical safety triage engine that preempts all LLM and vector retrieval inference for acute red flags across English, Hindi, and Hinglish. Automatically routes to emergency helplines: 112 (National Emergency), 108 (Ambulance), and Tele-MANAS 14416 (Mental Health Crisis). Emergency triage operates 100% offline even if AI services are unavailable.
+- **Verified Doctor Recommendations:** Explainable clinician matching querying active, verified doctor profiles from PostgreSQL. Matches based on specialty hints, symptoms, consultation types, and hospital location with transparent match reasons and 1-click appointment booking navigation.
 - **Care discovery and appointments:** Paginated, verified-only doctor/hospital directory with persistent qualifications, specialties, languages, consultation types, recurring schedules, verification review, profile pages, and role-scoped dashboards. Appointment slots are generated from published schedules; booking and rescheduling are idempotent and protected by database slot locks. The UI displays appointment dates and times in IST. No ratings or appointment slots are fabricated.
 - **Billing:** Patient-owned invoice/payment access; hospital staff/admin can issue service invoices or invoice an appointment at the clinician's recorded fee, with duplicate appointment invoices prevented. Explicit demo checkout works without provider credentials; Razorpay remains available in live mode with signed verification and an optional signed webhook.
 - **Responsive bilingual interface:** Landing and authentication screens, patient dashboards, profile management, symptom triage, assistant, care discovery, appointment history, and billing use responsive layouts with English/Hindi labels on supported screens. Voice transcription is configurable between browser recognition, an OpenAI-compatible transcription API, and an operator-hosted AI4Bharat IndicConformer adapter; transcripts require user review before sending.
 - **Administration and notifications:** Platform and hospital admins have scoped account, appointment, payment-status, audit, and aggregate views. Optional SMTP/SMS notifications record explicit outcomes and send only a generic sign-in reminder; contact addresses are not verified. Medical-record exchange is not integrated.
 - **Database changes:** Alembic migrations run automatically before the API starts.
-- **Explicit integrations:** Clinical-record sharing is not connected. Optional email/SMS notifications record delivery outcomes; no provider credentials are configured by default, and no demo records are presented as real data.
+- **Longitudinal Patient Health Records:** Centralized, persistent longitudinal health record aggregating patient profiles, pre-consultation triage sessions, clinical consultation notes, doctor-authored prescriptions, active allergies and conditions, uploaded diagnostic documents, and care plans into an encounter-scoped chronological timeline (`/records/timeline`).
+- **Doctor Clinical Workspace:** Authorized, encounter-scoped clinician workspace (`frontend/src/components/DoctorWorkspace.jsx`) supporting assigned patient rosters, appointment schedules, pre-consultation triage inbox reviews, AI-assisted consultation note drafting, physical examination recording, and electronic finalization signatures.
+- **AI-Assisted Prescriptions with Drug-Allergy Safety Pre-Screening:** Structured digital prescription builder (`RX-YYYYMMDD-XXXXXX`) featuring dosage forms, administration routes, clinical frequencies, durations, and specific patient instructions. Prescribing engine runs automated real-time drug-allergy cross-reactivity screening (penicillin, cephalosporins, NSAIDs, sulfa drugs, fluoroquinolones, macrolides) before saving or signing. Clinician electronic signatures mark prescriptions immutable.
+- **Server-Side Clinical PDF Generation:** Automated ReportLab streaming producing downloadable, high-fidelity PDFs for doctor-signed digital prescriptions and structured AI medical assessment reports, complete with hospital headers, practitioner credentials, medication grids, allergy warnings, and electronic verification stamps.
+- **HL7 FHIR Release 4 Interoperability:** Standards-compliant HL7 FHIR R4 JSON Bundle exporter (`/records/fhir/export`) transforming relational clinical records into interoperable `Patient`, `AllergyIntolerance`, `Encounter`, `MedicationRequest`, `DiagnosticReport`, and `Provenance` resources for export into external hospital EHR systems.
+- **Explicit integrations:** Optional email/SMS notifications record delivery outcomes; no provider credentials are configured by default, and no demo records are presented as real data.
 
 Triage rules are a limited development safeguard, not a clinically validated screening system. Language coverage is incomplete; do not rely on it to rule out an emergency or delay professional care. For emergencies in India, call 112 or 108.
 
-## Architecture, Audit & Operations Documentation
+## AI Platform Architecture, Safety & Operations Documentation
 
-Comprehensive engineering specifications and compliance audits are maintained under `docs/`:
+Comprehensive engineering specifications, research reviews, safety benchmarks, and compliance documentation are maintained under `docs/`:
 
+- **Longitudinal Patient Records & Doctor Workflow:** [`docs/PATIENT_RECORDS_AND_DOCTOR_WORKFLOW.md`](./docs/PATIENT_RECORDS_AND_DOCTOR_WORKFLOW.md)
+- **Scientific AI Research Review:** [`docs/AI_RESEARCH_REVIEW.md`](./docs/AI_RESEARCH_REVIEW.md)
+- **Model Selection & Benchmark Decision:** [`docs/AI_MODEL_SELECTION.md`](./docs/AI_MODEL_SELECTION.md)
+- **Clinical Dataset Strategy & Knowledge Base Provenance:** [`docs/AI_DATASET_STRATEGY.md`](./docs/AI_DATASET_STRATEGY.md)
+- **Clinical Safety, Governance & Limitations:** [`docs/AI_SAFETY_AND_CLINICAL_LIMITATIONS.md`](./docs/AI_SAFETY_AND_CLINICAL_LIMITATIONS.md)
+- **AI-First Platform Architecture:** [`docs/AI_ARCHITECTURE.md`](./docs/AI_ARCHITECTURE.md)
+- **Clinical Safety & Evaluation Methodology:** [`docs/AI_SAFETY_AND_EVALUATION.md`](./docs/AI_SAFETY_AND_EVALUATION.md)
+- **Verified Evaluation Results:** [`docs/AI_EVALUATION_RESULTS.md`](./docs/AI_EVALUATION_RESULTS.md)
+- **AI Setup & Operational Guide:** [`docs/AI_SETUP.md`](./docs/AI_SETUP.md)
+- **AI Assistant API Reference:** [`docs/AI_API_REFERENCE.md`](./docs/AI_API_REFERENCE.md)
 - **Current-State Codebase Audit:** [`docs/audit/current-state.md`](./docs/audit/current-state.md)
 - **Feature Inventory & Status Classification:** [`docs/audit/feature-inventory.md`](./docs/audit/feature-inventory.md)
 - **Security & Privacy Findings (OWASP ASVS / DPDP Act):** [`docs/audit/security-findings.md`](./docs/audit/security-findings.md)
 - **Data, AI/ML & Clinical Safety Audit:** [`docs/audit/data-and-ml-findings.md`](./docs/audit/data-and-ml-findings.md)
 - **Target Architecture (Modular Monolith):** [`docs/architecture/target-architecture.md`](./docs/architecture/target-architecture.md)
-- **Migration & Implementation Plan:** [`docs/architecture/migration-plan.md`](./docs/architecture/migration-plan.md)
 - **Role-Permission Matrix & Access Policy:** [`docs/security/role-permission-matrix.md`](./docs/security/role-permission-matrix.md)
 - **Operational Runbook & Disaster Recovery:** [`docs/operations/runbook.md`](./docs/operations/runbook.md)
 - **AI Model Card & Clinical Limits:** [`docs/ml/model-card.md`](./docs/ml/model-card.md)
@@ -111,47 +126,55 @@ These controls are application-level development safeguards, not a security or r
 
 Run `docker compose exec backend alembic upgrade head` before provisioning. The API and login form accept either the existing email address or a username. The role-test usernames are `platform.admin`, `hospital.admin`, `hospital.staff`, `doctor`, and `patient`. To seed them, provide `RBAC_TEST_PLATFORM_ADMIN_PASSWORD`, `RBAC_TEST_HOSPITAL_ADMIN_PASSWORD`, `RBAC_TEST_HOSPITAL_STAFF_PASSWORD`, `RBAC_TEST_DOCTOR_PASSWORD`, and `RBAC_TEST_PATIENT_PASSWORD` through a protected development-only runtime environment, then run `docker compose exec backend python -m app.seed_rbac_test_accounts`. The script is disabled outside `APP_ENV=development` or `test`, refuses non-local PostgreSQL targets, stores Argon2id hashes, marks each account as a test account, and creates only the synthetic hospital/clinician relationship required by the staff, hospital-admin, and doctor roles. Rerunning it leaves existing passwords unchanged; identity conflicts stop the transaction. Never put the supplied passwords in source control, command history, or logs.
 
-## Configure AI chat
+## Configure AI chat and models
 
-**No API key is required for local AI.** Ollama starts automatically with `docker compose up`. Download the default quantized model once:
+**Local and Hosted Model Architecture:**
+CareVoice supports both offline local models via Ollama and hosted OpenAI-compatible providers. Settings support modern `AI_*` variables or legacy `LLM_*` / `EMBEDDING_*` keys with automatic bidirectional synchronization:
+
+- **Local Inference (Default fallback):** `llama3.2:1b-instruct-q4_K_M` running locally via Ollama. No API key required.
+- **Hosted Inference:** Configurable OpenAI-compatible model, defaulting to `gpt-6-astra` where configured.
+
+Ollama starts automatically with `docker compose up`. Download the default quantized model once:
 
 ```powershell
 docker compose exec ollama ollama pull llama3.2:1b-instruct-q4_K_M
 ```
 
-The model downloads to a Docker volume and is reused on later starts. Ollama runs locally in Docker; its port is bound to localhost. Once the model download completes, open **Voice Assistant** and chat or use microphone input. The quantized model and a 2,048-token context are configured to work better on memory-limited, CPU-only machines; replies can still take longer on slower hardware.
+The model downloads to a Docker volume and is reused on later starts. Once the model download completes, open **Voice Assistant** and chat or use microphone input.
 
-A dataset registry at [docs/dataset_registry.md](docs/dataset_registry.md) records dataset provenance and the license review gates. No external benchmark dataset is downloaded or processed. The current synthetic set is for regression only and has not been clinician-reviewed.
-
-To opt into the recommended hosted candidate from the official model review, `gpt-6-luna`, set provider credentials and model explicitly in `.env`:
+To opt into hosted inference (`gpt-6-astra`), set provider credentials and model explicitly in `.env`:
 
 ```dotenv
-LLM_PROVIDER=openai
-LLM_API_KEY=your-provider-key
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_MODEL=gpt-6-luna
+AI_PROVIDER=openai_compatible
+AI_API_KEY=your-provider-key
+AI_BASE_URL=https://api.openai.com/v1
+AI_MODEL=gpt-6-astra
 ```
+*(Legacy `LLM_PROVIDER`, `LLM_API_KEY`, `LLM_BASE_URL`, `LLM_MODEL` are also supported and kept automatically in sync).*
 
-This is a provisional hosted candidate, not a measured winner or clinically validated model. Configure only one provider/model: failures produce explicit errors and do not silently switch. The hosted provider key stays on the backend and is never sent to the browser.
-
-Prompts sent to a hosted provider leave your computer. The provider review and evaluation methodology are in [docs/llm_provider_evaluation.md](docs/llm_provider_evaluation.md). Browser speech recognition may also use a browser-vendor service. Do not submit names, contact details, or identifying medical information. The assistant provides general information only and is not a clinician.
+Prompts sent to a hosted provider leave your computer. The provider review and evaluation methodology are in [docs/llm_provider_evaluation.md](docs/llm_provider_evaluation.md). Browser speech recognition may also use a browser-vendor service. Do not submit names, contact details, or identifying medical information. The assistant provides general health education only and is not a clinician.
 
 Speech-to-text provider configuration, audio handling, and the AI4Bharat IndicConformer assessment are documented in [docs/speech_to_text.md](docs/speech_to_text.md). Uploaded audio is bounded, sent only to the explicitly configured provider, processed without persistence, and never forwarded to the LLM until its transcript is reviewed and submitted. Emergency triage runs deterministically before RAG and LLM calls; it remains available when AI services are unavailable.
 
-## Configure approved public-health RAG
+## Curated medical knowledge RAG
 
-RAG is disabled by default (`RAG_ENABLED=false`). The index accepts only operator-reviewed content using HTTPS URLs on `RAG_APPROVED_SOURCE_HOSTS` (WHO, India's MoHFW, NHS, and CDC by default). It requires source title, version, licence, permitted use, provenance, and dates where known. It does not fetch documents or index private records.
+CareVoice includes a curated medical knowledge corpus located in `backend/data/knowledge/` containing reviewed public health literature from NIH MedQuAD, MedlinePlus, WHO, and Indian MOHFW with explicit HTTPS provenance URLs.
 
-For semantic search, explicitly configure `EMBEDDING_PROVIDER=ollama` or `openai_compatible` and its model/access. The default `hash` provider is an offline token-hash baseline and should not be represented as semantic search. Re-ingest all documents after changing embedding provider/model; incompatible vectors are excluded. PostgreSQL currently stores vectors as JSON and ranks cosine similarity in the app process, suitable only for a small development corpus.
-
-Prepare a JSONL manifest whose `content_file` paths point to locally reviewed text files, with each entry containing `title`, `source_url`, `content_file`, `version`, `licence`, `allowed_use`, `provenance`, and optional ISO dates. The ingestion command is idempotent for the same source URL/version and never downloads external content:
+To ingest the curated knowledge corpus into PostgreSQL:
 
 ```sh
-docker compose exec backend python scripts/ingest_public_health.py --manifest /app/data/reviewed-sources.jsonl
-docker compose exec backend python scripts/ingest_public_health.py --list-stale --max-age-days 180
+docker compose exec backend python -m app.cli ingest-knowledge
 ```
 
-Enable retrieval only after documents and their usage terms have been reviewed. If no matching evidence exists or the embedding provider fails, the assistant is instructed to disclose the evidence gap and uses cautious general guidance; emergency triage does not depend on RAG.
+Or ingest with a custom manifest:
+
+```sh
+docker compose exec backend python -m app.cli ingest-knowledge --manifest data/knowledge/manifest.jsonl
+```
+
+The ingestion process is idempotent, verifies HTTPS source URLs, enforces approved health agency domains (NIH, MedlinePlus, WHO, MoHFW India, NHS, CDC), computes chunk embeddings, and detects conflicting medical claims.
+
+For semantic search, configure `EMBEDDING_PROVIDER=ollama` or `openai_compatible` and its model. If no matching evidence exists or the embedding provider fails, the assistant is instructed to disclose the evidence gap and uses cautious general guidance; emergency triage does not depend on RAG.
 
 ## Evaluation
 
@@ -230,7 +253,19 @@ All application routes are under `/api/v1`.
 | `GET /auth/bootstrap/status`, `POST /auth/bootstrap/platform-admin` | Public, one-time token required for creation | Check and perform initial platform-admin setup |
 | `GET /auth/me` | Signed in | Current account |
 | `/patients` | Signed in, owner-scoped | Read and update the current patient's profile |
-| `POST /assistant/chat` | Signed in | OpenAI-compatible chat proxy |
+| `GET /assistant/health` | Public | Assistant health check distinguishing app health from AI provider health |
+| `POST /assistant/triage` | Public | Deterministic clinical emergency triage (English/Hindi/Hinglish) |
+| `POST /assistant/chat` | Signed in | AI-first healthcare chat with consent, RAG retrieval & doctor recommendation |
+| `GET /assistant/assessments` | Signed in, owner-scoped | List patient's structured clinical assessments |
+| `GET /assistant/assessments/{assessment_id}` | Signed in, owner-scoped | Get structured clinical assessment by UUID or ID (owner-isolated) |
+| `GET /assistant/knowledge/status` | Staff / Admin | Knowledge ingestion and vector chunk status |
+| `GET /assistant/conversations` | Signed in, owner-scoped | List patient's saved consultations with message count & timestamps |
+| `POST /assistant/conversations` | Signed in, owner-scoped | Create a consultation with explicit opt-in privacy consent |
+| `GET /assistant/conversations/{id}` | Signed in, owner-scoped | Retrieve full message thread and clinical metadata for a consultation |
+| `DELETE /assistant/conversations/{id}` | Signed in, owner-scoped | Permanently delete a consultation and associated messages |
+| `DELETE /assistant/conversations` | Signed in, owner-scoped | Clear all consultation history for the authenticated patient |
+| `POST /assistant/speech-to-text` | Signed in | Transcribe uploaded audio via configured speech engine |
+| `POST /assistant/rag/search` | Public | Query ingested evidence corpus with provenance citations |
 | `GET /billing/invoices`, `/billing/payments`, `/billing/config` | Signed in, owner/tenant-scoped | Invoice history, payment history, and mode/readiness |
 | `GET /billing/billable-appointments` | Clinic staff | List unbilled appointments within the caller's tenant |
 | `POST /billing/invoices` | Clinic staff | Issue a service invoice or an appointment invoice priced from the clinician's stored fee |
