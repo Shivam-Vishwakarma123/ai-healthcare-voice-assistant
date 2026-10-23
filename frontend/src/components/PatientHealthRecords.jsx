@@ -440,13 +440,16 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                     onChange={(e) => setTimelineSearch(e.target.value)}
                   />
                   <div style={{ fontSize: "13px", color: "var(--cv-text-muted)", fontWeight: "600" }}>
-                    {isHindi ? `कुल ${filteredEvents.length} प्रविष्टियां` : `Showing ${filteredEvents.length} chronological events`}
+                    {filteredEvents.length === timeline.length
+                      ? (isHindi ? `कुल ${timeline.length} प्रविष्टियां` : `Showing all ${timeline.length} chronological events`)
+                      : (isHindi ? `${timeline.length} में से ${filteredEvents.length} प्रविष्टियां` : `Showing ${filteredEvents.length} of ${timeline.length} chronological events`)}
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                   {[
                     { id: "all", label: isHindi ? "सभी" : "All" },
                     { id: "assessment", label: isHindi ? "AI आकलन" : "AI Assessments" },
+                    { id: "report", label: isHindi ? "लैब रिपोर्ट" : "Lab Reports" },
                     { id: "prescription", label: isHindi ? "पर्चे" : "Prescriptions" },
                     { id: "note", label: isHindi ? "क्लिनिकल नोट्स" : "Notes" },
                     { id: "appointment", label: isHindi ? "अपॉइंटमेंट" : "Appointments" },
@@ -464,12 +467,31 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                 </div>
               </div>
 
-              {filteredEvents.length === 0 ? (
+              {timeline.length === 0 ? (
                 <EmptyState
                   icon="⏱"
-                  title={isHindi ? "कोई रिकॉर्ड नहीं मिला" : "No timeline events recorded"}
+                  title={isHindi ? "कोई कालक्रम रिकॉर्ड नहीं मिला" : "No timeline events recorded"}
                   description={isHindi ? "आपकी स्वास्थ्य परामर्श और विज़िट यहाँ कालक्रम में दिखाई देंगी।" : "Your health assessments, visits, and clinical records will appear here chronologically."}
                 />
+              ) : filteredEvents.length === 0 ? (
+                <div className="cv-card cv-empty-state" style={{ textAlign: "center", padding: "32px 16px" }}>
+                  <span style={{ fontSize: "32px", display: "block", marginBottom: "8px" }} aria-hidden="true">🔍</span>
+                  <h4 style={{ margin: "0 0 6px", fontSize: "16px", color: "var(--cv-text-primary)" }}>
+                    {isHindi ? "कोई मेल खाने वाला इवेंट नहीं मिला" : "No matching timeline events found"}
+                  </h4>
+                  <p style={{ margin: "0 0 14px", color: "var(--cv-text-muted)", fontSize: "13px" }}>
+                    {isHindi
+                      ? `वर्तमान खोज या फ़िल्टर के लिए कोई परिणाम नहीं मिला। फ़िल्टर रीसेट करके सभी ${timeline.length} इवेंट देखें।`
+                      : `No events matched your current search or category filter. Reset filters to view all ${timeline.length} recorded events.`}
+                  </p>
+                  <button
+                    type="button"
+                    className="cv-btn cv-btn-sm cv-btn-secondary"
+                    onClick={() => { setTimelineSearch(""); setFilterType("all"); }}
+                  >
+                    {isHindi ? "फ़िल्टर रीसेट करें" : "Reset filters"}
+                  </button>
+                </div>
               ) : (
                 <div className="timeline-flow">
                   {filteredEvents.map((ev) => {
@@ -562,7 +584,9 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                   DEMO DATA — NOT A REAL PATIENT ASSESSMENT
                 </span>
                 <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
-                  {isHindi ? `कुल ${reports.length} रिपोर्ट` : `${reports.length} structured clinical assessments`}
+                  {filteredReports.length === reports.length
+                    ? (isHindi ? `कुल ${reports.length} रिपोर्ट` : `${reports.length} structured clinical assessments`)
+                    : (isHindi ? `${reports.length} में से ${filteredReports.length} रिपोर्ट` : `Showing ${filteredReports.length} of ${reports.length} reports`)}
                 </span>
               </div>
 
@@ -594,12 +618,31 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                 </div>
               </div>
 
-              {filteredReports.length === 0 ? (
+              {reports.length === 0 ? (
                 <EmptyState
                   icon="📑"
-                  title={isHindi ? "कोई AI रिपोर्ट नहीं मिली" : "No matching AI reports"}
-                  description={isHindi ? "खोज या फ़िल्टर मानदंड बदलकर पुनः प्रयास करें।" : "Try clearing search filters or generate a new assessment."}
+                  title={isHindi ? "कोई AI रिपोर्ट दर्ज नहीं है" : "No AI assessments recorded"}
+                  description={isHindi ? "सहानुभूतिपूर्ण लक्षण जाँच के बाद तैयार की गई आकलन रिपोर्ट यहाँ दिखाई देंगी।" : "Evaluations generated by the CareVoice AI assistant will appear here."}
                 />
+              ) : filteredReports.length === 0 ? (
+                <div className="cv-card cv-empty-state" style={{ textAlign: "center", padding: "32px 16px" }}>
+                  <span style={{ fontSize: "32px", display: "block", marginBottom: "8px" }} aria-hidden="true">🔍</span>
+                  <h4 style={{ margin: "0 0 6px", fontSize: "16px", color: "var(--cv-text-primary)" }}>
+                    {isHindi ? "कोई मेल खाने वाली AI रिपोर्ट नहीं मिली" : "No matching AI reports found"}
+                  </h4>
+                  <p style={{ margin: "0 0 14px", color: "var(--cv-text-muted)", fontSize: "13px" }}>
+                    {isHindi
+                      ? `वर्तमान खोज या फ़िल्टर के लिए कोई रिपोर्ट नहीं मिली। फ़िल्टर रीसेट करके सभी ${reports.length} रिपोर्ट देखें।`
+                      : `No reports matched your current search filters. Reset filters to view all ${reports.length} assessments.`}
+                  </p>
+                  <button
+                    type="button"
+                    className="cv-btn cv-btn-sm cv-btn-secondary"
+                    onClick={() => { setReportSearch(""); setReportFilter("all"); }}
+                  >
+                    {isHindi ? "फ़िल्टर रीसेट करें" : "Reset filters"}
+                  </button>
+                </div>
               ) : (
                 <div style={{ display: "grid", gap: "16px" }}>
                   {filteredReports.map((rep) => {
@@ -793,12 +836,31 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                 </div>
               </div>
 
-              {filteredConversations.length === 0 ? (
+              {conversations.length === 0 ? (
                 <EmptyState
                   icon="💬"
-                  title={isHindi ? "कोई परामर्श बातचीत नहीं मिली" : "No AI conversations found"}
+                  title={isHindi ? "कोई परामर्श बातचीत दर्ज नहीं है" : "No AI conversations recorded"}
                   description={isHindi ? "वॉयस या चैट सहायक के साथ परामर्श यहाँ सहेजे जाते हैं।" : "Your interactive symptom evaluations with the CareVoice AI assistant will appear here."}
                 />
+              ) : filteredConversations.length === 0 ? (
+                <div className="cv-card cv-empty-state" style={{ textAlign: "center", padding: "32px 16px" }}>
+                  <span style={{ fontSize: "32px", display: "block", marginBottom: "8px" }} aria-hidden="true">🔍</span>
+                  <h4 style={{ margin: "0 0 6px", fontSize: "16px", color: "var(--cv-text-primary)" }}>
+                    {isHindi ? "कोई मेल खाने वाला संवाद नहीं मिला" : "No matching conversations found"}
+                  </h4>
+                  <p style={{ margin: "0 0 14px", color: "var(--cv-text-muted)", fontSize: "13px" }}>
+                    {isHindi
+                      ? `"${convSearch}" के लिए कोई संवाद नहीं मिला। खोज साफ़ करके सभी ${conversations.length} संवाद देखें।`
+                      : `No conversations matched "${convSearch}". Clear search to view all ${conversations.length} transcripts.`}
+                  </p>
+                  <button
+                    type="button"
+                    className="cv-btn cv-btn-sm cv-btn-secondary"
+                    onClick={() => setConvSearch("")}
+                  >
+                    {isHindi ? "खोज साफ़ करें" : "Clear search"}
+                  </button>
+                </div>
               ) : (
                 <div style={{ display: "grid", gap: "14px" }}>
                   {filteredConversations.map((conv) => {
@@ -857,7 +919,9 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                   DEMO DATA — DOCTOR-SIGNED DIGITAL PRESCRIPTIONS
                 </span>
                 <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
-                  {isHindi ? `कुल ${prescriptions.length} पर्चे` : `${prescriptions.length} prescriptions on file`}
+                  {filteredPrescriptions.length === prescriptions.length
+                    ? (isHindi ? `कुल ${prescriptions.length} पर्चे` : `${prescriptions.length} prescriptions on file`)
+                    : (isHindi ? `${prescriptions.length} में से ${filteredPrescriptions.length} पर्चे` : `Showing ${filteredPrescriptions.length} of ${prescriptions.length} prescriptions`)}
                 </span>
               </div>
 
@@ -888,12 +952,31 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                 </div>
               </div>
 
-              {filteredPrescriptions.length === 0 ? (
+              {prescriptions.length === 0 ? (
                 <EmptyState
                   icon="℞"
-                  title={isHindi ? "कोई पर्चा नहीं मिला" : "No prescriptions found"}
-                  description={isHindi ? "खोज या फ़िल्टर मानदंड बदलकर पुनः प्रयास करें।" : "Try clearing your search query or selecting a different filter."}
+                  title={isHindi ? "कोई पर्चा दर्ज नहीं है" : "No prescriptions on file"}
+                  description={isHindi ? "डॉक्टर द्वारा हस्ताक्षरित पर्चे यहाँ दिखाई देंगे।" : "Doctor-signed prescriptions and medication plans will appear here."}
                 />
+              ) : filteredPrescriptions.length === 0 ? (
+                <div className="cv-card cv-empty-state" style={{ textAlign: "center", padding: "32px 16px" }}>
+                  <span style={{ fontSize: "32px", display: "block", marginBottom: "8px" }} aria-hidden="true">🔍</span>
+                  <h4 style={{ margin: "0 0 6px", fontSize: "16px", color: "var(--cv-text-primary)" }}>
+                    {isHindi ? "कोई मेल खाने वाला पर्चा नहीं मिला" : "No matching prescriptions found"}
+                  </h4>
+                  <p style={{ margin: "0 0 14px", color: "var(--cv-text-muted)", fontSize: "13px" }}>
+                    {isHindi
+                      ? `वर्तमान खोज या फ़िल्टर के लिए कोई पर्चा नहीं मिला। फ़िल्टर रीसेट करके सभी ${prescriptions.length} पर्चे देखें।`
+                      : `No prescriptions matched your filters. Reset filters to view all ${prescriptions.length} prescriptions.`}
+                  </p>
+                  <button
+                    type="button"
+                    className="cv-btn cv-btn-sm cv-btn-secondary"
+                    onClick={() => { setRxSearch(""); setRxFilter("all"); }}
+                  >
+                    {isHindi ? "फ़िल्टर रीसेट करें" : "Reset filters"}
+                  </button>
+                </div>
               ) : (
                 <div style={{ display: "grid", gap: "20px" }}>
                   {filteredPrescriptions.map((rx) => {
@@ -1045,7 +1128,9 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                   DEMO DATA — CLINICIAN CONSULTATION ENCOUNTER NOTES
                 </span>
                 <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
-                  {isHindi ? `कुल ${notes.length} नोट्स` : `${notes.length} consultation notes on file`}
+                  {filteredNotes.length === notes.length
+                    ? (isHindi ? `कुल ${notes.length} नोट्स` : `${notes.length} consultation notes on file`)
+                    : (isHindi ? `${notes.length} में से ${filteredNotes.length} नोट्स` : `Showing ${filteredNotes.length} of ${notes.length} notes`)}
                 </span>
               </div>
 
@@ -1076,12 +1161,31 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                 </div>
               </div>
 
-              {filteredNotes.length === 0 ? (
+              {notes.length === 0 ? (
                 <EmptyState
                   icon="🩺"
-                  title={isHindi ? "कोई विज़िट नोट नहीं मिला" : "No clinical notes found"}
-                  description={isHindi ? "खोज या फ़िल्टर मानदंड बदलकर पुनः प्रयास करें।" : "Try clearing your search query or selecting a different filter."}
+                  title={isHindi ? "कोई विज़िट नोट दर्ज नहीं है" : "No clinical notes on file"}
+                  description={isHindi ? "डॉक्टर द्वारा हस्ताक्षरित परामर्श नोट्स यहाँ दिखाई देंगे।" : "Doctor clinical consultation and encounter notes will appear here."}
                 />
+              ) : filteredNotes.length === 0 ? (
+                <div className="cv-card cv-empty-state" style={{ textAlign: "center", padding: "32px 16px" }}>
+                  <span style={{ fontSize: "32px", display: "block", marginBottom: "8px" }} aria-hidden="true">🔍</span>
+                  <h4 style={{ margin: "0 0 6px", fontSize: "16px", color: "var(--cv-text-primary)" }}>
+                    {isHindi ? "कोई मेल खाने वाला नोट नहीं मिला" : "No matching clinical notes found"}
+                  </h4>
+                  <p style={{ margin: "0 0 14px", color: "var(--cv-text-muted)", fontSize: "13px" }}>
+                    {isHindi
+                      ? `वर्तमान खोज या फ़िल्टर के लिए कोई नोट नहीं मिला। फ़िल्टर रीसेट करके सभी ${notes.length} नोट्स देखें।`
+                      : `No notes matched your filters. Reset filters to view all ${notes.length} clinical encounter notes.`}
+                  </p>
+                  <button
+                    type="button"
+                    className="cv-btn cv-btn-sm cv-btn-secondary"
+                    onClick={() => { setNoteSearch(""); setNoteFilter("all"); }}
+                  >
+                    {isHindi ? "फ़िल्टर रीसेट करें" : "Reset filters"}
+                  </button>
+                </div>
               ) : (
                 <div style={{ display: "grid", gap: "16px" }}>
                   {filteredNotes.map((n) => {
@@ -1382,7 +1486,9 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                   DEMO DATA — VERIFIED CLINICAL DIAGNOSTIC REPORTS & LAB OBSERVATIONS
                 </span>
                 <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
-                  {isHindi ? `कुल ${documents.length} दस्तावेज़` : `${documents.length} diagnostic reports on file`}
+                  {filteredDocs.length === documents.length
+                    ? (isHindi ? `कुल ${documents.length} दस्तावेज़` : `${documents.length} diagnostic reports on file`)
+                    : (isHindi ? `${documents.length} में से ${filteredDocs.length} दस्तावेज़` : `Showing ${filteredDocs.length} of ${documents.length} documents`)}
                 </span>
               </div>
 
@@ -1415,12 +1521,31 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                 </div>
               </div>
 
-              {filteredDocs.length === 0 ? (
+              {documents.length === 0 ? (
                 <EmptyState
                   icon="📁"
-                  title={isHindi ? "कोई दस्तावेज़ नहीं मिला" : "No documents match filters"}
-                  description={isHindi ? "खोज या श्रेणी फ़िल्टर बदलकर पुनः प्रयास करें।" : "Try clearing search filters or uploading a diagnostic document."}
+                  title={isHindi ? "कोई दस्तावेज़ दर्ज नहीं है" : "No documents recorded"}
+                  description={isHindi ? "अपलोड किए गए मेडिकल दस्तावेज़ और रिपोर्ट यहाँ दिखाई देंगे।" : "Uploaded medical records, laboratory tests, and imaging scans will appear here."}
                 />
+              ) : filteredDocs.length === 0 ? (
+                <div className="cv-card cv-empty-state" style={{ textAlign: "center", padding: "32px 16px" }}>
+                  <span style={{ fontSize: "32px", display: "block", marginBottom: "8px" }} aria-hidden="true">🔍</span>
+                  <h4 style={{ margin: "0 0 6px", fontSize: "16px", color: "var(--cv-text-primary)" }}>
+                    {isHindi ? "कोई मेल खाने वाला दस्तावेज़ नहीं मिला" : "No matching documents found"}
+                  </h4>
+                  <p style={{ margin: "0 0 14px", color: "var(--cv-text-muted)", fontSize: "13px" }}>
+                    {isHindi
+                      ? `वर्तमान खोज या फ़िल्टर के लिए कोई दस्तावेज़ नहीं मिला। फ़िल्टर रीसेट करके सभी ${documents.length} दस्तावेज़ देखें।`
+                      : `No documents matched your current search filters. Reset filters to view all ${documents.length} records.`}
+                  </p>
+                  <button
+                    type="button"
+                    className="cv-btn cv-btn-sm cv-btn-secondary"
+                    onClick={() => { setDocSearch(""); setDocCategoryFilter("all"); }}
+                  >
+                    {isHindi ? "फ़िल्टर रीसेट करें" : "Reset filters"}
+                  </button>
+                </div>
               ) : (
                 <div style={{ display: "grid", gap: "16px" }}>
                   {filteredDocs.map((d) => {
@@ -1880,7 +2005,9 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                   DEMO DATA — VERIFIED MEDICAL INVOICES &amp; PAYMENT RECEIPTS
                 </span>
                 <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
-                  {isHindi ? `कुल ${invoices.length} बिलिंग रिकॉर्ड` : `${invoices.length} billing statements on file`}
+                  {filteredInvoices.length === invoices.length
+                    ? (isHindi ? `कुल ${invoices.length} बिलिंग रिकॉर्ड` : `${invoices.length} billing statements on file`)
+                    : (isHindi ? `${invoices.length} में से ${filteredInvoices.length} रिकॉर्ड` : `Showing ${filteredInvoices.length} of ${invoices.length} invoices`)}
                 </span>
               </div>
 
@@ -1912,12 +2039,31 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                 </div>
               </div>
 
-              {filteredInvoices.length === 0 ? (
+              {invoices.length === 0 ? (
                 <EmptyState
                   icon="💳"
-                  title={isHindi ? "कोई बिलिंग रिकॉर्ड नहीं मिला" : "No invoices found"}
+                  title={isHindi ? "कोई बिलिंग रिकॉर्ड दर्ज नहीं है" : "No billing records found"}
                   description={isHindi ? "परामर्श के बाद जारी किए गए बिल और रसीदें यहाँ दिखाई देंगे।" : "Medical invoices and payment receipts from consultations will appear here."}
                 />
+              ) : filteredInvoices.length === 0 ? (
+                <div className="cv-card cv-empty-state" style={{ textAlign: "center", padding: "32px 16px" }}>
+                  <span style={{ fontSize: "32px", display: "block", marginBottom: "8px" }} aria-hidden="true">🔍</span>
+                  <h4 style={{ margin: "0 0 6px", fontSize: "16px", color: "var(--cv-text-primary)" }}>
+                    {isHindi ? "कोई मेल खाने वाला बिल नहीं मिला" : "No matching invoices found"}
+                  </h4>
+                  <p style={{ margin: "0 0 14px", color: "var(--cv-text-muted)", fontSize: "13px" }}>
+                    {isHindi
+                      ? `वर्तमान खोज या स्थिति फ़िल्टर के लिए कोई इनवॉइस नहीं मिला। फ़िल्टर रीसेट करके सभी ${invoices.length} इनवॉइस देखें।`
+                      : `No invoices matched your current filters. Reset filters to view all ${invoices.length} billing statements.`}
+                  </p>
+                  <button
+                    type="button"
+                    className="cv-btn cv-btn-sm cv-btn-secondary"
+                    onClick={() => { setBillingSearch(""); setBillingFilter("all"); }}
+                  >
+                    {isHindi ? "फ़िल्टर रीसेट करें" : "Reset filters"}
+                  </button>
+                </div>
               ) : (
                 <div style={{ display: "grid", gap: "14px" }}>
                   {filteredInvoices.map((inv) => {
