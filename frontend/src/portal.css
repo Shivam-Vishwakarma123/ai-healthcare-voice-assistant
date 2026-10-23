@@ -252,7 +252,7 @@
   justify-content: flex-end;
 }
 
-@media (max-width: 767px) {
+@media (max-width: 768px) {
   .invoice-row .cv-card-actions {
     grid-column: 1 / -1;
     width: 100%;
@@ -408,7 +408,7 @@
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 768px) {
   .user-label,
   .signout-button,
   .small-avatar {

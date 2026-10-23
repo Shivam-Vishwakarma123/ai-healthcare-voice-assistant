@@ -925,7 +925,7 @@ export function DoctorWorkspace({ token, user, language = "en", onNavigate }) {
                         <div><b>{p.prescription_number}</b> ({p.status})</div>
                         <div style={{ color: "var(--text-muted)" }}>{p.diagnosis || "No diagnosis"}</div>
                         <button
-                          className="cv-btn cv-btn-xs cv-btn-outline"
+                          className="cv-btn cv-btn-xs cv-btn-outline cv-btn-download"
                           style={{ marginTop: "0.3rem" }}
                           onClick={() => downloadBinary(`/records/prescriptions/${p.id}/pdf`, `rx-${p.prescription_number}.pdf`)}
                         >
@@ -1243,7 +1243,7 @@ export function DoctorWorkspace({ token, user, language = "en", onNavigate }) {
                         <div><b>Gender:</b> {patientOverview.gender || "N/A"} | <b>Age:</b> {patientOverview.age || "N/A"}</div>
                       </div>
                       <button
-                        className="cv-btn cv-btn-sm cv-btn-secondary"
+                        className="cv-btn cv-btn-sm cv-btn-secondary cv-btn-download"
                         onClick={() => downloadBinary(`/records/summary/pdf?patient_user_id=${selectedPatientId}`, `health-summary-patient-${selectedPatientId}.pdf`)}
                         title="Download comprehensive longitudinal clinical summary PDF"
                       >
@@ -1265,7 +1265,7 @@ export function DoctorWorkspace({ token, user, language = "en", onNavigate }) {
                           <b>{rx.prescription_number}</b> ({rx.status}) — Diagnosis: {rx.diagnosis || "Clinical evaluation"}
                         </div>
                         <button
-                          className="cv-btn cv-btn-xs cv-btn-outline"
+                          className="cv-btn cv-btn-xs cv-btn-outline cv-btn-download"
                           onClick={() => downloadBinary(`/records/prescriptions/${rx.id}/pdf`, `rx-${rx.prescription_number}.pdf`)}
                         >
                           📥 Download PDF
@@ -1284,13 +1284,13 @@ export function DoctorWorkspace({ token, user, language = "en", onNavigate }) {
                           </div>
                           <div style={{ display: "flex", gap: "6px" }}>
                             <button
-                              className="cv-btn cv-btn-xs cv-btn-outline"
+                              className="cv-btn cv-btn-xs cv-btn-outline cv-btn-download"
                               onClick={() => downloadBinary(`/records/notes/${n.id}/pdf`, `clinical-note-${n.id}.pdf`)}
                             >
                               📥 Note PDF
                             </button>
                             <button
-                              className="cv-btn cv-btn-xs cv-btn-ghost"
+                              className="cv-btn cv-btn-xs cv-btn-ghost cv-btn-download"
                               onClick={() => downloadBinary(`/records/followup/${n.id}/pdf`, `followup-plan-${n.id}.pdf`)}
                             >
                               📋 Follow-up Plan PDF

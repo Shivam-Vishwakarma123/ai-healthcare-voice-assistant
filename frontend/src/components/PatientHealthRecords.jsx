@@ -654,7 +654,7 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                               <span>{isHindi ? "विवरण देखें" : "View Details"}</span>
                             </button>
                             <button
-                              className="cv-btn cv-btn-sm cv-btn-outline"
+                              className="cv-btn cv-btn-sm cv-btn-outline cv-btn-download"
                               disabled={isDownloading}
                               onClick={() =>
                                 downloadBinary(
@@ -948,7 +948,7 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                               <span>{isHindi ? "विवरण देखें" : "View"}</span>
                             </button>
                             <button
-                              className="cv-btn cv-btn-sm cv-btn-primary"
+                              className="cv-btn cv-btn-sm cv-btn-primary cv-btn-download"
                               disabled={isDownloading}
                               onClick={() =>
                                 downloadBinary(
@@ -1140,7 +1140,7 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                             </button>
                             <button
                               type="button"
-                              className="cv-btn cv-btn-xs cv-btn-outline"
+                              className="cv-btn cv-btn-xs cv-btn-outline cv-btn-download"
                               disabled={downloadingId === `note-${n.id}`}
                               onClick={() =>
                                 downloadBinary(
@@ -1155,7 +1155,7 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                             </button>
                             <button
                               type="button"
-                              className="cv-btn cv-btn-xs cv-btn-primary"
+                              className="cv-btn cv-btn-xs cv-btn-primary cv-btn-download"
                               disabled={downloadingId === `fup-${n.id}`}
                               onClick={() =>
                                 downloadBinary(
@@ -1486,7 +1486,7 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                               <span>{isHindi ? "विवरण देखें" : "View"}</span>
                             </button>
                             <button
-                              className="cv-btn cv-btn-sm cv-btn-outline"
+                              className="cv-btn cv-btn-sm cv-btn-outline cv-btn-download"
                               disabled={isDownloading}
                               onClick={() =>
                                 downloadBinary(
@@ -1984,7 +1984,7 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                             </button>
                             <button
                               type="button"
-                              className="cv-btn cv-btn-sm cv-btn-outline"
+                              className="cv-btn cv-btn-sm cv-btn-outline cv-btn-download"
                               disabled={isDownloadingInv}
                               onClick={() =>
                                 downloadBinary(
@@ -2000,7 +2000,7 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                             {isPaid && (
                               <button
                                 type="button"
-                                className="cv-btn cv-btn-sm cv-btn-primary"
+                                className="cv-btn cv-btn-sm cv-btn-primary cv-btn-download"
                                 disabled={isDownloadingRec}
                                 onClick={() =>
                                   downloadBinary(
@@ -2444,7 +2444,7 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                 {selectedRecordModal.downloadPath && (
                   <button
                     type="button"
-                    className="cv-btn cv-btn-sm cv-btn-primary"
+                    className="cv-btn cv-btn-sm cv-btn-primary cv-btn-download"
                     onClick={() =>
                       downloadBinary(
                         selectedRecordModal.downloadPath,

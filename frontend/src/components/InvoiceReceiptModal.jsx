@@ -91,7 +91,7 @@ export default function InvoiceReceiptModal({ isOpen, onClose, invoice, payment,
         <div style={{ display: "flex", gap: "10px", marginTop: "16px", flexWrap: "wrap" }}>
           {invoice.status === "paid" && (
             <button
-              className="cv-btn cv-btn-sm cv-btn-primary"
+              className="cv-btn cv-btn-sm cv-btn-primary cv-btn-download"
               style={{ flex: 1 }}
               type="button"
               disabled={downloading}
@@ -101,7 +101,7 @@ export default function InvoiceReceiptModal({ isOpen, onClose, invoice, payment,
             </button>
           )}
           <button
-            className="cv-btn cv-btn-sm cv-btn-secondary"
+            className="cv-btn cv-btn-sm cv-btn-secondary cv-btn-download"
             style={{ flex: 1 }}
             type="button"
             disabled={downloading}

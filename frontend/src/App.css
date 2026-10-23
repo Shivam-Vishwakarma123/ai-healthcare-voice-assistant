@@ -1,5 +1,44 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap');
 
+/* Core Healthcare Design Tokens */
+:root {
+  --primary-color: #006E51;
+  --primary-color-hover: #00563F;
+  --primary-color-light: #E6F4F0;
+  --primary-color-contrast: #FFFFFF;
+  --secondary-color: #A5D6A7;
+  --secondary-color-dark: #2E7D32;
+  --accent-color: var(--primary-color);
+  --background-color: #F8FAFC;
+  --surface-color: #FFFFFF;
+  --border-color: #D1E0D9;
+  --text-color: #0F172A;
+
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --space-xl: 32px;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+}
+
+html[data-theme="dark"] {
+  --primary-color: #34D399;
+  --primary-color-hover: #10B981;
+  --primary-color-light: #064E3B;
+  --primary-color-contrast: #042F2E;
+  --secondary-color: #A5D6A7;
+  --secondary-color-dark: #1E4620;
+  --accent-color: var(--primary-color);
+  --background-color: #0A1412;
+  --surface-color: #101E19;
+  --border-color: #234239;
+  --text-color: #F8FAFC;
+}
+
 /* Base Reset & Core Typography */
 * {
   box-sizing: border-box;
