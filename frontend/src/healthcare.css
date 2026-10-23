@@ -4434,28 +4434,129 @@ body.cv-menu-open {
   flex-wrap: wrap;
 }
 
+/* ==========================================================================
+   Responsive Health Records Navigation & Scroll System
+   ========================================================================== */
+
+.health-records-tabs-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  margin-bottom: 20px;
+}
+
+.health-records-tabs-wrapper.has-scroll-left::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 38px;
+  background: linear-gradient(to right, var(--cv-surface) 35%, transparent);
+  pointer-events: none;
+  z-index: 2;
+  border-top-left-radius: 999px;
+  border-bottom-left-radius: 999px;
+}
+
+.health-records-tabs-wrapper.has-scroll-right::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 38px;
+  background: linear-gradient(to left, var(--cv-surface) 35%, transparent);
+  pointer-events: none;
+  z-index: 2;
+  border-top-right-radius: 999px;
+  border-bottom-right-radius: 999px;
+}
+
+.health-records-scroll-btn {
+  position: absolute;
+  top: calc(50% - 4px);
+  transform: translateY(-50%);
+  z-index: 5;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--cv-border);
+  background: var(--cv-surface);
+  color: var(--cv-text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--cv-shadow-sm);
+  transition: all 0.15s ease;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.health-records-scroll-btn:hover {
+  background: var(--cv-surface-muted);
+  border-color: var(--cv-border-control);
+  color: var(--primary-color);
+  box-shadow: var(--cv-shadow);
+}
+
+.health-records-scroll-btn:focus-visible {
+  outline: 3px solid var(--cv-focus-ring);
+  outline-offset: 2px;
+}
+
+.health-records-scroll-btn.left {
+  left: -12px;
+}
+
+.health-records-scroll-btn.right {
+  right: -12px;
+}
+
 .health-records-tabs {
   display: flex;
   align-items: center;
   gap: 8px;
-  border-bottom: 1px solid var(--cv-border);
-  padding-bottom: 8px;
-  margin-bottom: 24px;
+  flex-wrap: nowrap;
   overflow-x: auto;
+  overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x pan-y;
+  scrollbar-width: thin;
+  scrollbar-color: var(--cv-border-soft) transparent;
+  padding: 4px 6px 10px;
+  margin-bottom: 0;
+  border-bottom: 1px solid var(--cv-border);
+  scroll-behavior: smooth;
+  width: 100%;
 }
 
 .health-records-tabs::-webkit-scrollbar {
-  display: none;
+  height: 4px;
+}
+
+.health-records-tabs::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.health-records-tabs::-webkit-scrollbar-thumb {
+  background: var(--cv-border-soft);
+  border-radius: 999px;
+}
+
+.health-records-tabs::-webkit-scrollbar-thumb:hover {
+  background: var(--cv-border-control);
 }
 
 .health-records-tab {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 38px;
-  padding: 6px 14px;
+  min-height: 42px;
+  padding: 8px 16px;
   border-radius: 999px;
   border: 1px solid transparent;
   background: var(--cv-surface-soft);
@@ -4464,12 +4565,22 @@ body.cv-menu-open {
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
-  transition: all 0.15s ease;
+  flex-shrink: 0;
+  touch-action: manipulation;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  user-select: none;
 }
 
 .health-records-tab:hover {
   background: var(--cv-surface-muted);
   color: var(--cv-text-primary);
+  border-color: var(--cv-border-soft);
+}
+
+.health-records-tab:focus-visible {
+  outline: 3px solid var(--cv-focus-ring);
+  outline-offset: 2px;
+  z-index: 1;
 }
 
 .health-records-tab.active {
@@ -4484,19 +4595,161 @@ body.cv-menu-open {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 700;
-  background: rgb(255 255 255 / 25%);
+  background: rgb(255 255 255 / 24%);
   color: inherit;
 }
 
 .health-records-tab:not(.active) .health-records-tab-count {
   background: var(--cv-surface-muted);
   color: var(--cv-text-muted);
+  border: 1px solid var(--cv-border-soft);
+}
+
+/* Accessible Tab Panel Content */
+.health-records-tabpanel {
+  width: 100%;
+  animation: cv-tab-fade-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  outline: none;
+}
+
+.health-records-tabpanel:focus-visible {
+  outline: 2px dashed var(--cv-focus-ring);
+  outline-offset: 4px;
+}
+
+@keyframes cv-tab-fade-in {
+  from {
+    opacity: 0.7;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Mobile Quick-Picker Dropdown */
+.health-records-mobile-picker {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  background: var(--cv-surface-soft);
+  border: 1px solid var(--cv-border);
+  border-radius: 12px;
+}
+
+.health-records-mobile-picker-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--cv-text-secondary);
+  white-space: nowrap;
+}
+
+.health-records-mobile-select-wrapper {
+  flex: 1;
+  max-width: 280px;
+}
+
+.health-records-mobile-select {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 8px;
+  background: var(--cv-surface);
+  border: 1px solid var(--cv-border-control);
+  color: var(--cv-text-primary);
+}
+
+/* Secondary Filter Strip */
+.health-records-filter-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+  max-width: 100%;
+}
+
+.health-records-filter-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.health-records-filter-strip .cv-btn {
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-height: 32px;
+}
+
+/* Responsive Toolbar */
+.health-records-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 18px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.health-records-search-input {
+  max-width: 280px;
+  flex: 1;
+  min-width: 200px;
+  padding: 7px 12px;
+  font-size: 13px;
+}
+
+@media (max-width: 767px) {
+  .health-records-mobile-picker {
+    display: flex;
+  }
+
+  .health-records-scroll-btn {
+    display: none; /* Native touch swiping is preferred on mobile */
+  }
+
+  .health-records-tabs {
+    padding-bottom: 6px;
+    gap: 6px;
+  }
+
+  .health-records-tab {
+    min-height: 40px;
+    padding: 6px 13px;
+    font-size: 12px;
+    gap: 6px;
+  }
+
+  .health-records-tab-count {
+    min-width: 18px;
+    height: 18px;
+    font-size: 10px;
+    padding: 0 4px;
+  }
+
+  .health-records-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .health-records-search-input {
+    max-width: 100%;
+    width: 100%;
+  }
 }
 
 /* Upload Card & Dropzone */

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { apiRequest } from "../services/api";
 import { getUrgencyBadgeConfig } from "../services/assistantHelpers";
 import { EmptyState, ScreenTitle } from "./PortalScreens";
@@ -37,6 +37,12 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [downloadingId, setDownloadingId] = useState(null);
+
+  // Tablist navigation refs and overflow indicators
+  const tablistRef = useRef(null);
+  const tabRefs = useRef({});
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
 
   // Clinical records collections
   const [timeline, setTimeline] = useState([]);
@@ -341,6 +347,89 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
     return matchesFilter && matchesSearch;
   });
 
+  const TABS = [
+    { id: "timeline", label: isHindi ? "कालक्रम" : "Health Timeline", icon: "⏱", count: timeline.length },
+    { id: "reports", label: isHindi ? "AI आकलन रिपोर्ट" : "AI Reports", icon: "📑", count: reports.length },
+    { id: "conversations", label: isHindi ? "AI परामर्श" : "AI Conversations", icon: "💬", count: conversations.length },
+    { id: "prescriptions", label: isHindi ? "डॉक्टर के पर्चे (Rx)" : "Prescriptions", icon: "℞", count: prescriptions.length },
+    { id: "notes", label: isHindi ? "क्लिनिकल नोट्स" : "Doctor Notes", icon: "🩺", count: notes.length },
+    { id: "documents", label: isHindi ? "दस्तावेज़ व लैब रिपोर्ट" : "Lab & Diagnostic Reports", icon: "🔬", count: documents.length },
+    { id: "vitals", label: isHindi ? "वाइटल्स व प्रोटोकॉल" : "Vitals & Protocols", icon: "❤️", count: overview?.recent_vitals?.length || 0 },
+    { id: "allergies", label: isHindi ? "रोग व एलर्जी" : "Conditions & Allergies", icon: "⚠️", count: allergies.length },
+    { id: "billing", label: isHindi ? "बिलिंग व रसीदें" : "Invoices & Receipts", icon: "💳", count: invoices.length },
+    { id: "guides", label: isHindi ? "मरीज केयर गाइड" : "Care Guides (EN/HI)", icon: "📖", count: notes.length },
+    { id: "careteam", label: isHindi ? "देखभाल टीम" : "Care Team", icon: "👨‍⚕️" },
+    { id: "privacy", label: isHindi ? "DPDP गोपनीयता" : "DPDP Privacy", icon: "🔒" },
+  ];
+
+  // Evaluates tablist scroll position and updates left/right overflow shadow indicators.
+  const checkScrollOverflow = useCallback(() => {
+    const el = tablistRef.current;
+    if (!el) return;
+    const { scrollLeft, scrollWidth, clientWidth } = el;
+    setCanScrollLeft(scrollLeft > 4);
+    setCanScrollRight(scrollLeft + clientWidth < scrollWidth - 4);
+  }, []);
+
+  // Smoothly scrolls tab bar left or right when navigation chevron buttons are clicked.
+  function scrollTabs(direction) {
+    if (!tablistRef.current) return;
+    const delta = direction === "left" ? -240 : 240;
+    tablistRef.current.scrollBy({ left: delta, behavior: "smooth" });
+  }
+
+  // Smoothly centers active tab in view and refreshes overflow indicators whenever active tab changes.
+  useEffect(() => {
+    const activeEl = tabRefs.current[activeTab];
+    if (activeEl && tablistRef.current) {
+      activeEl.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+        inline: "center",
+      });
+    }
+    checkScrollOverflow();
+  }, [activeTab, checkScrollOverflow]);
+
+  // Registers scroll and window resize listeners to maintain scroll shadow states dynamically.
+  useEffect(() => {
+    const el = tablistRef.current;
+    if (!el) return;
+    checkScrollOverflow();
+
+    const handleScroll = () => checkScrollOverflow();
+    el.addEventListener("scroll", handleScroll, { passive: true });
+    window.addEventListener("resize", handleScroll, { passive: true });
+
+    return () => {
+      el.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("resize", handleScroll);
+    };
+  }, [checkScrollOverflow, timeline.length, reports.length, prescriptions.length, notes.length, documents.length, invoices.length]);
+
+  // Handles ArrowLeft/Right, Home, and End keyboard navigation across tabs according to WAI-ARIA authoring practices.
+  function handleTabKeyDown(e, tabId, index) {
+    const tabCount = TABS.length;
+    let nextIndex = -1;
+    if (e.key === "ArrowRight") {
+      nextIndex = (index + 1) % tabCount;
+    } else if (e.key === "ArrowLeft") {
+      nextIndex = (index - 1 + tabCount) % tabCount;
+    } else if (e.key === "Home") {
+      nextIndex = 0;
+    } else if (e.key === "End") {
+      nextIndex = tabCount - 1;
+    }
+
+    if (nextIndex >= 0) {
+      e.preventDefault();
+      const nextTab = TABS[nextIndex];
+      setActiveTab(nextTab.id);
+      const nextEl = tabRefs.current[nextTab.id];
+      if (nextEl) nextEl.focus();
+    }
+  }
+
   return (
     <div className="health-records-container">
       {/* Header with Responsive FHIR Action */}
@@ -385,36 +474,82 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
         </div>
       )}
 
-      {/* Record Navigation Tabs */}
-      <div className="health-records-tabs" role="tablist">
-        {[
-          { id: "timeline", label: isHindi ? "कालक्रम" : "Health Timeline", icon: "⏱", count: timeline.length },
-          { id: "reports", label: isHindi ? "AI आकलन रिपोर्ट" : "AI Reports", icon: "📑", count: reports.length },
-          { id: "conversations", label: isHindi ? "AI परामर्श" : "AI Conversations", icon: "💬", count: conversations.length },
-          { id: "prescriptions", label: isHindi ? "डॉक्टर के पर्चे (Rx)" : "Prescriptions", icon: "℞", count: prescriptions.length },
-          { id: "notes", label: isHindi ? "क्लिनिकल नोट्स" : "Doctor Notes", icon: "🩺", count: notes.length },
-          { id: "documents", label: isHindi ? "दस्तावेज़ व लैब रिपोर्ट" : "Lab & Diagnostic Reports", icon: "🔬", count: documents.length },
-          { id: "vitals", label: isHindi ? "वाइटल्स व प्रोटोकॉल" : "Vitals & Protocols", icon: "❤️", count: overview?.recent_vitals?.length || 0 },
-          { id: "allergies", label: isHindi ? "रोग व एलर्जी" : "Conditions & Allergies", icon: "⚠️", count: allergies.length },
-          { id: "billing", label: isHindi ? "बिलिंग व रसीदें" : "Invoices & Receipts", icon: "💳", count: invoices.length },
-          { id: "guides", label: isHindi ? "मरीज केयर गाइड" : "Care Guides (EN/HI)", icon: "📖", count: notes.length },
-          { id: "careteam", label: isHindi ? "देखभाल टीम" : "Care Team", icon: "👨‍⚕️" },
-          { id: "privacy", label: isHindi ? "DPDP गोपनीयता" : "DPDP Privacy", icon: "🔒" },
-        ].map((tab) => (
-          <button
-            key={tab.id}
-            role="tab"
-            aria-selected={activeTab === tab.id}
-            className={`health-records-tab ${activeTab === tab.id ? "active" : ""}`}
-            onClick={() => setActiveTab(tab.id)}
+      {/* Mobile Quick-Picker Dropdown for Instant 1-Tap Navigation */}
+      <div className="health-records-mobile-picker" aria-label={isHindi ? "त्वरित टैब चयन" : "Quick section navigation"}>
+        <label htmlFor="mobile-tab-select" className="health-records-mobile-picker-label">
+          <span>{isHindi ? "वर्तमान अनुभाग:" : "Active Section:"}</span>
+        </label>
+        <div className="health-records-mobile-select-wrapper">
+          <select
+            id="mobile-tab-select"
+            className="cv-select health-records-mobile-select"
+            value={activeTab}
+            onChange={(e) => setActiveTab(e.target.value)}
           >
-            <span>{tab.icon}</span>
-            <span>{tab.label}</span>
-            {tab.count !== undefined && (
-              <span className="health-records-tab-count">{tab.count}</span>
-            )}
+            {TABS.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.icon} {t.label} {t.count !== undefined ? `(${t.count})` : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* Horizontally Scrollable Responsive Tab Strip with Overflow Indicators & Chevrons */}
+      <div
+        className={`health-records-tabs-wrapper ${canScrollLeft ? "has-scroll-left" : ""} ${canScrollRight ? "has-scroll-right" : ""}`}
+      >
+        {canScrollLeft && (
+          <button
+            type="button"
+            className="health-records-scroll-btn left"
+            aria-label={isHindi ? "बाईं ओर स्क्रॉल करें" : "Scroll tabs left"}
+            onClick={() => scrollTabs("left")}
+          >
+            ‹
           </button>
-        ))}
+        )}
+
+        <div
+          ref={tablistRef}
+          className="health-records-tabs"
+          role="tablist"
+          aria-label={isHindi ? "स्वास्थ्य रिकॉर्ड अनुभाग" : "Patient health records sections"}
+        >
+          {TABS.map((tab, idx) => (
+            <button
+              key={tab.id}
+              ref={(el) => { tabRefs.current[tab.id] = el; }}
+              role="tab"
+              id={`tab-${tab.id}`}
+              aria-controls={`tabpanel-${tab.id}`}
+              aria-selected={activeTab === tab.id}
+              tabIndex={activeTab === tab.id ? 0 : -1}
+              className={`health-records-tab ${activeTab === tab.id ? "active" : ""}`}
+              onClick={() => setActiveTab(tab.id)}
+              onKeyDown={(e) => handleTabKeyDown(e, tab.id, idx)}
+            >
+              <span aria-hidden="true">{tab.icon}</span>
+              <span>{tab.label}</span>
+              {tab.count !== undefined && (
+                <span className="health-records-tab-count" aria-label={`${tab.count} records`}>
+                  {tab.count}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+
+        {canScrollRight && (
+          <button
+            type="button"
+            className="health-records-scroll-btn right"
+            aria-label={isHindi ? "दायीं ओर स्क्रॉल करें" : "Scroll tabs right"}
+            onClick={() => scrollTabs("right")}
+          >
+            ›
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -578,7 +713,13 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
               TAB 2: AI REPORTS
               ========================================================================= */}
           {activeTab === "reports" && (
-            <div>
+            <div
+              role="tabpanel"
+              id="tabpanel-reports"
+              aria-labelledby="tab-reports"
+              tabIndex={0}
+              className="health-records-tabpanel"
+            >
               <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
                 <span className="demo-data-tag">
                   DEMO DATA — NOT A REAL PATIENT ASSESSMENT
@@ -591,16 +732,15 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
               </div>
 
               {/* Search & Urgency Filters */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
+              <div className="health-records-toolbar">
                 <input
-                  className="cv-input"
-                  style={{ maxWidth: "260px", padding: "6px 12px", fontSize: "13px" }}
+                  className="cv-input health-records-search-input"
                   type="text"
                   placeholder={isHindi ? "रिपोर्ट खोजें…" : "Search AI reports…"}
                   value={reportSearch}
                   onChange={(e) => setReportSearch(e.target.value)}
                 />
-                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                <div className="health-records-filter-strip" role="group" aria-label={isHindi ? "आपातकालीन स्तर फ़िल्टर" : "Urgency level filters"}>
                   {[
                     { id: "all", label: isHindi ? "सभी" : "All" },
                     { id: "routine", label: isHindi ? "रूटीन" : "Routine" },
@@ -609,6 +749,7 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                   ].map((f) => (
                     <button
                       key={f.id}
+                      type="button"
                       className={`cv-btn cv-btn-xs ${reportFilter === f.id ? "cv-btn-secondary" : "cv-btn-ghost"}`}
                       onClick={() => setReportFilter(f.id)}
                     >
@@ -811,7 +952,13 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
               TAB 3: AI CONVERSATIONS & CONSULTATION TRANSCRIPTS
               ========================================================================= */}
           {activeTab === "conversations" && (
-            <div>
+            <div
+              role="tabpanel"
+              id="tabpanel-conversations"
+              aria-labelledby="tab-conversations"
+              tabIndex={0}
+              className="health-records-tabpanel"
+            >
               <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
                 <span className="demo-data-tag">
                   DEMO DATA — MULTI-TURN AI CONSULTATION TRANSCRIPTS
@@ -822,10 +969,9 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
               </div>
 
               {/* Search Bar */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
+              <div className="health-records-toolbar">
                 <input
-                  className="cv-input"
-                  style={{ maxWidth: "280px", padding: "6px 12px", fontSize: "13px" }}
+                  className="cv-input health-records-search-input"
                   type="text"
                   placeholder={isHindi ? "परामर्श संवाद खोजें…" : "Search consultation transcripts…"}
                   value={convSearch}
@@ -913,7 +1059,13 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
               TAB 4: PRESCRIPTIONS
               ========================================================================= */}
           {activeTab === "prescriptions" && (
-            <div>
+            <div
+              role="tabpanel"
+              id="tabpanel-prescriptions"
+              aria-labelledby="tab-prescriptions"
+              tabIndex={0}
+              className="health-records-tabpanel"
+            >
               <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
                 <span className="demo-data-tag">
                   DEMO DATA — DOCTOR-SIGNED DIGITAL PRESCRIPTIONS
@@ -926,16 +1078,15 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
               </div>
 
               {/* Prescriptions Filter Bar */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
+              <div className="health-records-toolbar">
                 <input
-                  className="cv-input"
-                  style={{ maxWidth: "260px", padding: "6px 12px", fontSize: "13px" }}
+                  className="cv-input health-records-search-input"
                   type="text"
                   placeholder={isHindi ? "पर्चे खोजें…" : "Search prescriptions…"}
                   value={rxSearch}
                   onChange={(e) => setRxSearch(e.target.value)}
                 />
-                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                <div className="health-records-filter-strip" role="group" aria-label={isHindi ? "पर्चे फ़िल्टर" : "Prescription status filters"}>
                   {[
                     { id: "all", label: isHindi ? "सभी" : "All" },
                     { id: "finalized", label: isHindi ? "अंतिम हस्ताक्षरित" : "Finalized (Signed)" },
@@ -943,6 +1094,7 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                   ].map((f) => (
                     <button
                       key={f.id}
+                      type="button"
                       className={`cv-btn cv-btn-xs ${rxFilter === f.id ? "cv-btn-secondary" : "cv-btn-ghost"}`}
                       onClick={() => setRxFilter(f.id)}
                     >
@@ -1122,7 +1274,13 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
               TAB 5: CLINICAL NOTES
               ========================================================================= */}
           {activeTab === "notes" && (
-            <div>
+            <div
+              role="tabpanel"
+              id="tabpanel-notes"
+              aria-labelledby="tab-notes"
+              tabIndex={0}
+              className="health-records-tabpanel"
+            >
               <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
                 <span className="demo-data-tag">
                   DEMO DATA — CLINICIAN CONSULTATION ENCOUNTER NOTES
@@ -1135,16 +1293,15 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
               </div>
 
               {/* Doctor Notes Filter Bar */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
+              <div className="health-records-toolbar">
                 <input
-                  className="cv-input"
-                  style={{ maxWidth: "260px", padding: "6px 12px", fontSize: "13px" }}
+                  className="cv-input health-records-search-input"
                   type="text"
                   placeholder={isHindi ? "नोट्स खोजें…" : "Search clinical notes…"}
                   value={noteSearch}
                   onChange={(e) => setNoteSearch(e.target.value)}
                 />
-                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                <div className="health-records-filter-strip" role="group" aria-label={isHindi ? "क्लिनिकल नोट्स फ़िल्टर" : "Clinical notes filters"}>
                   {[
                     { id: "all", label: isHindi ? "सभी" : "All" },
                     { id: "finalized", label: isHindi ? "अंतिम हस्ताक्षरित" : "Finalized (Signed)" },
@@ -1152,6 +1309,7 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                   ].map((f) => (
                     <button
                       key={f.id}
+                      type="button"
                       className={`cv-btn cv-btn-xs ${noteFilter === f.id ? "cv-btn-secondary" : "cv-btn-ghost"}`}
                       onClick={() => setNoteFilter(f.id)}
                     >
@@ -1328,10 +1486,16 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
           )}
 
           {/* =========================================================================
-              TAB 5: DOCUMENTS & LAB REPORTS
+              TAB 6: DOCUMENTS & LAB REPORTS
               ========================================================================= */}
           {activeTab === "documents" && (
-            <div>
+            <div
+              role="tabpanel"
+              id="tabpanel-documents"
+              aria-labelledby="tab-documents"
+              tabIndex={0}
+              className="health-records-tabpanel"
+            >
               {/* Redesigned Upload Card */}
               <div className="health-records-upload-card">
                 <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px" }}>
@@ -1493,16 +1657,15 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
               </div>
 
               {/* Category Filter & Search Bar */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
+              <div className="health-records-toolbar">
                 <input
-                  className="cv-input"
-                  style={{ maxWidth: "260px", padding: "6px 12px", fontSize: "13px" }}
+                  className="cv-input health-records-search-input"
                   type="text"
                   placeholder={isHindi ? "दस्तावेज़ खोजें…" : "Search documents & labs…"}
                   value={docSearch}
                   onChange={(e) => setDocSearch(e.target.value)}
                 />
-                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                <div className="health-records-filter-strip" role="group" aria-label={isHindi ? "दस्तावेज़ श्रेणी फ़िल्टर" : "Document category filters"}>
                   {[
                     { id: "all", label: isHindi ? "सभी" : "All" },
                     { id: "lab_report", label: isHindi ? "लैब रिपोर्ट" : "Lab Reports" },
@@ -1512,6 +1675,7 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                   ].map((f) => (
                     <button
                       key={f.id}
+                      type="button"
                       className={`cv-btn cv-btn-xs ${docCategoryFilter === f.id ? "cv-btn-secondary" : "cv-btn-ghost"}`}
                       onClick={() => setDocCategoryFilter(f.id)}
                     >
@@ -1685,10 +1849,16 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
           )}
 
           {/* =========================================================================
-              TAB 6: VITALS & PROTOCOL MONITOR
+              TAB 7: VITALS & PROTOCOL MONITOR
               ========================================================================= */}
           {activeTab === "vitals" && (
-            <div>
+            <div
+              role="tabpanel"
+              id="tabpanel-vitals"
+              aria-labelledby="tab-vitals"
+              tabIndex={0}
+              className="health-records-tabpanel"
+            >
               <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
                 <span className="demo-data-tag">
                   DEMO DATA — PROTOCOL MONITORING & CLINICAL VITAL SIGNS
@@ -1877,7 +2047,13 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
               TAB 8: CONDITIONS & ALLERGIES
               ========================================================================= */}
           {activeTab === "allergies" && (
-            <div>
+            <div
+              role="tabpanel"
+              id="tabpanel-allergies"
+              aria-labelledby="tab-allergies"
+              tabIndex={0}
+              className="health-records-tabpanel"
+            >
               <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
                 <span className="demo-data-tag">
                   DEMO DATA — VERIFIED PATIENT ALLERGIES &amp; CONTRAINDICATION RULES
@@ -1999,7 +2175,13 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
               TAB 9: INVOICES & PAYMENT RECEIPTS
               ========================================================================= */}
           {activeTab === "billing" && (
-            <div>
+            <div
+              role="tabpanel"
+              id="tabpanel-billing"
+              aria-labelledby="tab-billing"
+              tabIndex={0}
+              className="health-records-tabpanel"
+            >
               <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
                 <span className="demo-data-tag">
                   DEMO DATA — VERIFIED MEDICAL INVOICES &amp; PAYMENT RECEIPTS
@@ -2012,16 +2194,15 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
               </div>
 
               {/* Billing Search & Status Filters */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
+              <div className="health-records-toolbar">
                 <input
-                  className="cv-input"
-                  style={{ maxWidth: "260px", padding: "6px 12px", fontSize: "13px" }}
+                  className="cv-input health-records-search-input"
                   type="text"
                   placeholder={isHindi ? "बिल खोजें…" : "Search invoices…"}
                   value={billingSearch}
                   onChange={(e) => setBillingSearch(e.target.value)}
                 />
-                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                <div className="health-records-filter-strip" role="group" aria-label={isHindi ? "बिलिंग फ़िल्टर" : "Billing status filters"}>
                   {[
                     { id: "all", label: isHindi ? "सभी" : "All" },
                     { id: "paid", label: isHindi ? "भुगतान पूर्ण" : "Paid" },
@@ -2030,6 +2211,7 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                   ].map((f) => (
                     <button
                       key={f.id}
+                      type="button"
                       className={`cv-btn cv-btn-xs ${billingFilter === f.id ? "cv-btn-secondary" : "cv-btn-ghost"}`}
                       onClick={() => setBillingFilter(f.id)}
                     >
@@ -2174,7 +2356,13 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
               TAB 10: MULTILINGUAL PATIENT CARE GUIDES (EN / HI)
               ========================================================================= */}
           {activeTab === "guides" && (
-            <div>
+            <div
+              role="tabpanel"
+              id="tabpanel-guides"
+              aria-labelledby="tab-guides"
+              tabIndex={0}
+              className="health-records-tabpanel"
+            >
               <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
                 <span className="demo-data-tag">
                   DEMO DATA — POST-CONSULTATION PATIENT CARE GUIDES (EN / HI)
@@ -2403,10 +2591,16 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
           )}
 
           {/* =========================================================================
-              TAB 9: CARE TEAM & FACILITIES
+              TAB 11: CARE TEAM & FACILITIES
               ========================================================================= */}
           {activeTab === "careteam" && (
-            <div>
+            <div
+              role="tabpanel"
+              id="tabpanel-careteam"
+              aria-labelledby="tab-careteam"
+              tabIndex={0}
+              className="health-records-tabpanel"
+            >
               <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
                 <span className="demo-data-tag">
                   DEMO DATA — ASSIGNED MULTIDISCIPLINARY CARE TEAM &amp; NETWORK
@@ -2501,10 +2695,16 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
           )}
 
           {/* =========================================================================
-              TAB 10: DPDP PRIVACY & PORTABILITY
+              TAB 12: DPDP PRIVACY & PORTABILITY
               ========================================================================= */}
           {activeTab === "privacy" && (
-            <div>
+            <div
+              role="tabpanel"
+              id="tabpanel-privacy"
+              aria-labelledby="tab-privacy"
+              tabIndex={0}
+              className="health-records-tabpanel"
+            >
               <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
                 <span className="demo-data-tag">
                   DEMO DATA — DPDP ACT 2023 PATIENT PRIVACY &amp; CONSENT
