@@ -4,6 +4,7 @@ import AdminManagement from "./components/AdminManagement";
 import VoiceAssistant from "./components/VoiceAssistant";
 import { PatientHealthRecords } from "./components/PatientHealthRecords";
 import { DoctorWorkspace } from "./components/DoctorWorkspace";
+import { DPDPPrivacyCenter } from "./components/DPDPPrivacyCenter";
 import {
   AppointmentsPage,
   CareDirectoryPage,
@@ -32,6 +33,7 @@ const navigation = [
   { id: "Symptom check", icon: "✳", en: "Symptom check", hi: "लक्षण जाँच" },
   { id: "Assistant", icon: "◉", en: "CareVoice assistant", hi: "CareVoice सहायक" },
   { id: "Profile", icon: "♡", en: "Health profile", hi: "स्वास्थ्य प्रोफ़ाइल" },
+  { id: "Privacy", icon: "🛡️", en: "DPDP Privacy", hi: "DPDP गोपनीयता" },
   { id: "Notifications", icon: "♧", en: "Notifications", hi: "सूचनाएँ" },
   { id: "Billing", icon: "₹", en: "Billing", hi: "बिलिंग" },
 ];
@@ -43,6 +45,7 @@ const administrationNavigation = [
   { id: "Administration", icon: "⚙", en: "Administration", hi: "प्रशासन" },
 ];
 
+// Safely retrieves a key from localStorage with exception resilience and default fallback.
 function storageGet(key, fallback = "") {
   try {
     return window.localStorage.getItem(key) || fallback;
@@ -51,6 +54,7 @@ function storageGet(key, fallback = "") {
   }
 }
 
+// Master application component orchestrating auth state, bilingual localization, routing, and portal views.
 export default function App() {
   const toast = useToast();
   const isPasswordResetPath = window.location.pathname === "/reset-password";
@@ -107,6 +111,7 @@ export default function App() {
     document.documentElement.lang = language === "hi" ? "hi" : "en";
   }, [language]);
 
+  // Updates application color theme and saves preference to browser local storage.
   function changeTheme(nextTheme) {
     setTheme(nextTheme);
     if (!persistThemePreference(nextTheme)) setError("The theme preference could not be saved in this browser.");
@@ -135,6 +140,7 @@ export default function App() {
     return () => window.removeEventListener("popstate", handleHistoryChange);
   }, []);
 
+  // Switches between landing, login, register, and initial administrator bootstrap authentication modes.
   function changeAuthMode(mode) {
     const nextPath = mode === "bootstrap" ? "/setup/administrator" : "/";
     if (window.location.pathname !== nextPath) window.history.pushState({}, "", nextPath);
@@ -163,6 +169,7 @@ export default function App() {
     }
     let active = true;
     setAccountLoading(true);
+    // Loads profile and linked patient demographic data for the authenticated session.
     async function loadAccount() {
       try {
         const account = await apiRequest("/auth/me", token);
@@ -197,6 +204,7 @@ export default function App() {
     return () => { active = false; };
   }, [token]);
 
+  // Toggles interface language between English and Hindi, persisting the choice in localStorage.
   function changeLanguage(nextLanguage) {
     setLanguage(nextLanguage);
     try {
@@ -218,14 +226,17 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [mobileMenuOpen]);
 
+  // Toggles the mobile responsive hamburger navigation menu drawer open or closed.
   function toggleMobileMenu() {
     setMobileMenuOpen(prev => !prev);
   }
 
+  // Closes the responsive mobile navigation drawer.
   function closeMobileMenu() {
     setMobileMenuOpen(false);
   }
 
+  // Handles navigation item clicks, switching views and dismissing mobile drawers.
   const handleNavClick = (pageId) => {
     setPage(pageId);
     setMobileMenuOpen(false);
@@ -233,6 +244,7 @@ export default function App() {
     setNotice("");
   };
 
+  // Syncs updated account attributes into React component state and local storage.
   function updateCurrentUser(account) {
     setUser(account);
     try {
@@ -242,6 +254,7 @@ export default function App() {
     }
   }
 
+  // Clears session tokens, stored user profiles, and active patient records from local state.
   function clearLocalSession(errorMessage = "") {
     try {
       window.localStorage.removeItem("ahva_token");
@@ -259,6 +272,7 @@ export default function App() {
     setNotice("");
   }
 
+  // Signs out the user, calling the backend revocation endpoint and purging browser credentials.
   async function signOut() {
     const currentToken = token;
     clearLocalSession();
@@ -271,6 +285,7 @@ export default function App() {
     }
   }
 
+  // Submits user credentials for registration, login, or initial platform bootstrap.
   async function submitAuth(event) {
     event.preventDefault();
     setBusy(true);
@@ -310,6 +325,7 @@ export default function App() {
     }
   }
 
+  // Requests a time-limited one-time password reset token via transactional email.
   async function submitPasswordResetRequest(event) {
     event.preventDefault();
     setBusy(true);
@@ -328,6 +344,7 @@ export default function App() {
     }
   }
 
+  // Submits verified reset token and new strong password to complete account recovery.
   async function submitPasswordReset(event) {
     event.preventDefault();
     setBusy(true);
@@ -349,6 +366,7 @@ export default function App() {
     }
   }
 
+  // Persists patient demographic profile information to the backend API.
   async function saveProfile(event) {
     event.preventDefault();
     setBusy(true);
@@ -369,6 +387,7 @@ export default function App() {
     }
   }
 
+  // Deletes the active patient demographic profile following explicit user confirmation.
   async function deleteProfile() {
     if (!patients[0] || !window.confirm(language === "hi" ? "क्या आप अपनी स्वास्थ्य प्रोफ़ाइल हटाना चाहते हैं?" : "Delete your patient profile? This cannot be undone.")) return;
     setError("");
@@ -515,6 +534,7 @@ export default function App() {
               {page === "Symptom check" && <TriagePage language={language} token={token} onNavigate={setPage} />}
               {page === "Assistant" && <><ScreenTitle title={isHindi ? "CareVoice सहायक" : "CareVoice assistant"} description={isHindi ? "सामान्य स्वास्थ्य जानकारी के लिए लिखें या बोलें।" : "Type or speak for general health information. This is not a diagnosis or a substitute for care."} /><VoiceAssistant token={token} language={language} onNavigate={setPage} /></>}
               {page === "Profile" && user?.role === "patient" && <ProfilePage profile={profile} setProfile={setProfile} patient={patients[0]} busy={busy} onSave={saveProfile} onDelete={deleteProfile} token={token} user={user} onUserUpdated={updateCurrentUser} language={language} />}
+              {page === "Privacy" && <DPDPPrivacyCenter token={token} user={user} language={language} onNavigate={setPage} />}
               {page === "Notifications" && <NotificationsPage token={token} user={user} onUserUpdated={updateCurrentUser} language={language} />}
               {page === "Billing" && canAccessBilling && <Billing token={token} user={user} language={language} target={billingRequest} onTargetHandled={() => setBillingRequest(null)} />}
               {page === "Medical records" && <PatientHealthRecords token={token} user={user} language={language} onNavigate={setPage} />}
@@ -526,6 +546,7 @@ export default function App() {
   );
 }
 
+// Renders public landing and authentication screens (login, signup, recovery, bootstrap).
 function AuthScreen({ mode, setMode, auth, setAuth, setError, setNotice, busy, error, notice, language, setLanguage, theme, setTheme, bootstrapStatus, onSubmit, onResetRequest, onResetConfirm, resetToken }) {
   const hi = language === "hi";
   const isLogin = mode === "login";
@@ -615,6 +636,7 @@ function AuthScreen({ mode, setMode, auth, setAuth, setError, setNotice, busy, e
   );
 }
 
+// Renders an accessible toggle button group to switch between English and Hindi interface languages.
 function LanguageToggle({ language, setLanguage }) {
   return (
     <div className="cv-language-toggle" role="group" aria-label="Interface language">
@@ -624,6 +646,7 @@ function LanguageToggle({ language, setLanguage }) {
   );
 }
 
+// Dropdown selector allowing users to switch between system auto, light, and dark visual themes.
 function ThemeSelector({ theme, setTheme, language }) {
   const hi = language === "hi";
   return (
@@ -642,6 +665,7 @@ function ThemeSelector({ theme, setTheme, language }) {
   );
 }
 
+// Maps role identifier slugs to localized human-readable display badges in English or Hindi.
 function roleLabel(role, hindi) {
   if (role === "platform_admin") return hindi ? "प्लेटफ़ॉर्म एडमिन" : "Platform administrator";
   if (role === "hospital_admin") return hindi ? "अस्पताल एडमिन" : "Hospital administrator";

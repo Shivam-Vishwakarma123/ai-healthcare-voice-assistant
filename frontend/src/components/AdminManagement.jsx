@@ -4,15 +4,18 @@ import AdminUserRow, { requiresPlatformAdminDemotionConfirmation } from "./Admin
 import NotificationContactForm from "./NotificationContactForm";
 import { useToast } from "./ToastProvider";
 
+// Formats aggregate metric counts applying DPDP low-cell-count suppression (<5) to protect privacy.
 function countLabel(metric) {
   if (!metric) return "0";
   return metric.suppressed ? "<5 (suppressed)" : String(metric.count);
 }
 
+// Visual card wrapper for distinct administrative oversight panels.
 function AdminSection({ title, children }) {
   return <section className="cv-card cv-admin-section"><h2>{title}</h2>{children}</section>;
 }
 
+// Recursively paginates administrative user list endpoint to retrieve complete user directory.
 async function fetchAllAdminUsers(token) {
   const firstPage = await apiRequest("/admin/users?limit=100&offset=0", token);
   const pageOffsets = [];
@@ -27,6 +30,7 @@ async function fetchAllAdminUsers(token) {
   return [firstPage, ...remainingPages].flatMap((page) => page.items);
 }
 
+// Multi-tenant administrative portal managing facility oversight, user provisioning, and audit logs.
 export default function AdminManagement({
   token,
   onUserUpdated,
@@ -60,6 +64,7 @@ export default function AdminManagement({
     if (notice) { toast(notice, "success"); setNotice(""); }
   }, [notice, toast]);
 
+  // Loads tenant overview, managed accounts, appointments, payments, audit trails, and facility rosters.
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -92,6 +97,7 @@ export default function AdminManagement({
 
   useEffect(() => { load(); }, [load]);
 
+  // Toggles user active state with last-admin protection and session invalidation triggers.
   async function updateUser(account) {
     const isCurrentAccount = account.id === currentUser?.id;
     if (
@@ -124,6 +130,7 @@ export default function AdminManagement({
     }
   }
 
+  // Updates user security role and hospital association with last platform administrator safeguards.
   async function saveRole(account, draft) {
     const selfDemotion = requiresPlatformAdminDemotionConfirmation(
       account,
@@ -170,6 +177,7 @@ export default function AdminManagement({
     }
   }
 
+  // Administratively updates or confirms appointment status across managed health facilities.
   async function updateAppointment(appointment, action) {
     setBusyId(`appointment-${appointment.id}`);
     setError("");
@@ -186,6 +194,7 @@ export default function AdminManagement({
     }
   }
 
+  // Provisions a managed clinician or hospital staff account scoped to administrator's authorized facility.
   async function createAccount(event) {
     event.preventDefault();
     setBusyId("create-account");

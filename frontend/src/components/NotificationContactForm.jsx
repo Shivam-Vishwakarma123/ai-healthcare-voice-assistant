@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { apiRequest } from "../services/api";
 import { useToast } from "./ToastProvider";
 
+// User settings form for updating international telephone number (+91) for SMS/WhatsApp dispatch.
 export default function NotificationContactForm({ token, user, onUpdated, language = "en" }) {
   const toast = useToast();
   const [phone, setPhone] = useState(user?.phone_number || "");
@@ -10,6 +11,7 @@ export default function NotificationContactForm({ token, user, onUpdated, langua
 
   useEffect(() => setPhone(user?.phone_number || ""), [user?.phone_number]);
 
+  // Persists normalized international contact number to user authentication profile.
   async function save(event) {
     event.preventDefault();
     setBusy(true);

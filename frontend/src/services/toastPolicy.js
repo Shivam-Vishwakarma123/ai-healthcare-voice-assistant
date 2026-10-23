@@ -1,5 +1,6 @@
 const unsafeDetails = /traceback|stack trace|sqlalchemy|psycopg|select\s+.+\s+from\s|insert\s+into|update\s+\w+\s+set|razorpay_key_secret|webhook_secret|authorization:\s*bearer|\b(?:otp|cvv|card number)\s*[:=]/i;
 
+// Strips database traces, credentials, or sensitive headers from toast messages before rendering to users.
 export function sanitizeToastMessage(value) {
   const message = String(value || "").trim();
   if (!message) return "";
@@ -7,6 +8,7 @@ export function sanitizeToastMessage(value) {
   return message.length > 320 ? `${message.slice(0, 317)}…` : message;
 }
 
+// Debounces rapid identical notification toasts within a configurable sliding time window.
 export function isDuplicateToast(key, now, recent, windowMs = 1500) {
   const previous = recent.get(key) || 0;
   if (now - previous < windowMs) return true;

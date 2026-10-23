@@ -1,6 +1,7 @@
 from email_validator import EmailNotValidError, validate_email
 
 
+# Validates the syntax of an email address and returns it in normalized lowercase form.
 def normalize_email(value: str) -> str:
     candidate = value.strip()
     if not candidate:

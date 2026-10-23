@@ -126,3 +126,35 @@ def test_conflict_detection_in_rag_sources():
         ),
     ]
     assert RAGService.sources_conflict(hits_conflict)
+
+
+def test_keyword_boost_and_insufficient_reference(test_db: Session):
+    """Verify boost terms ('ORS', 'SpO2', '14416', '112') elevate scores and low scores trigger insufficient_reference."""
+    service = RAGService()
+    doc_input = RAGDocumentInput(
+        title="WHO Diarrheal Disease & ORS Protocol",
+        source_url="https://www.who.int/news-room/fact-sheets/detail/diarrhoeal-disease",
+        content=(
+            "Dehydration from diarrhoea is treated with Oral Rehydration Salts (ORS) solution. "
+            "The low-osmolarity ORS formula contains 245 mOsm/L and prevents hospitalization. "
+            "For severe cases, call emergency 112 or seek urgent rehydration."
+        ),
+        version="1.0",
+        licence="Open Access (WHO)",
+        allowed_use="Public health education",
+        provenance="World Health Organization",
+        category="public_health",
+    )
+    service.ingest_document(test_db, doc_input)
+
+    # Search with keyword ORS
+    eval_ors = service.search_with_evaluation(test_db, "ORS solution for dehydration", limit=3)
+    assert len(eval_ors.results) >= 1
+    assert eval_ors.results[0].score >= 0.45
+    assert not eval_ors.insufficient_reference_material
+
+    # Search completely unrelated query that will fail threshold
+    eval_unrelated = service.search_with_evaluation(test_db, "quantum mechanics wave equation", limit=3)
+    assert eval_unrelated.insufficient_reference_material
+    assert len(eval_unrelated.results) == 0
+    assert "Insufficient Evidence" in (eval_unrelated.precautionary_escalation_note or "")

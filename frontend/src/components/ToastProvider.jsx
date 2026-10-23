@@ -4,6 +4,7 @@ import { isDuplicateToast, sanitizeToastMessage } from "../services/toastPolicy"
 const ToastContext = createContext(null);
 const durations = { success: 4800, error: 6200, info: 4800, warning: 5600 };
 
+// Context provider managing floating UI notifications with auto-dismiss timers and duplicate debouncing.
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
   const timers = useRef(new Map());
@@ -45,6 +46,7 @@ export function ToastProvider({ children }) {
   );
 }
 
+// React hook exposing sanitized notification dispatch method to child components.
 export function useToast() {
   const showToast = useContext(ToastContext);
   if (!showToast) throw new Error("useToast must be used within ToastProvider");

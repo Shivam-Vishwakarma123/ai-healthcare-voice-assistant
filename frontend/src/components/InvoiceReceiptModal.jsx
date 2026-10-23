@@ -1,12 +1,42 @@
+import { useState } from "react";
 import Modal from "./Modal";
 import { formatMoney } from "../services/api";
 
-export default function InvoiceReceiptModal({ isOpen, onClose, invoice, payment, language = "en" }) {
+const API_BASE = (import.meta.env?.VITE_API_BASE_URL || "http://localhost:8000/api/v1").replace(/\/+$/, "");
+
+// Renders an accessible modal dialog displaying invoice transaction details and authenticated PDF downloads.
+export default function InvoiceReceiptModal({ isOpen, onClose, invoice, payment, token, language = "en" }) {
   const hi = language === "hi";
+  const [downloading, setDownloading] = useState(false);
 
   if (!invoice) return null;
 
   const simulatedPayment = payment?.is_demo === true || invoice.payment_is_demo === true;
+
+  // Streams binary PDF from authenticated API endpoint and triggers client browser file download.
+  async function handleDownload(urlPath, filename) {
+    if (!token) return;
+    setDownloading(true);
+    try {
+      const resp = await fetch(`${API_BASE}${urlPath}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!resp.ok) throw new Error(`Download failed with status ${resp.status}`);
+      const blob = await resp.blob();
+      const objUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(objUrl);
+    } catch (err) {
+      alert(`Download failed: ${err.message}`);
+    } finally {
+      setDownloading(false);
+    }
+  }
 
   return (
     <Modal
@@ -58,8 +88,31 @@ export default function InvoiceReceiptModal({ isOpen, onClose, invoice, payment,
           <p><code>{payment?.transaction_id || invoice.payment_intent_id || invoice.invoice_number}</code></p>
         </div>
 
-        <div className="cv-card-actions">
-          <button className="cv-button cv-button-primary cv-full" type="button" onClick={onClose}>
+        <div style={{ display: "flex", gap: "10px", marginTop: "16px", flexWrap: "wrap" }}>
+          {invoice.status === "paid" && (
+            <button
+              className="cv-btn cv-btn-sm cv-btn-primary"
+              style={{ flex: 1 }}
+              type="button"
+              disabled={downloading}
+              onClick={() => handleDownload(`/billing/receipts/${invoice.id}/pdf`, `receipt-${invoice.invoice_number}.pdf`)}
+            >
+              📥 {downloading ? (hi ? "डाउनलोड हो रहा है…" : "Downloading…") : (hi ? "सत्यापित रसीद (PDF)" : "Download Receipt (PDF)")}
+            </button>
+          )}
+          <button
+            className="cv-btn cv-btn-sm cv-btn-secondary"
+            style={{ flex: 1 }}
+            type="button"
+            disabled={downloading}
+            onClick={() => handleDownload(`/billing/invoices/${invoice.id}/pdf`, `invoice-${invoice.invoice_number}.pdf`)}
+          >
+            📄 {downloading ? (hi ? "डाउनलोड हो रहा है…" : "Downloading…") : (hi ? "टैक्स इनवॉइस (PDF)" : "Download Invoice (PDF)")}
+          </button>
+        </div>
+
+        <div className="cv-card-actions" style={{ marginTop: "12px" }}>
+          <button className="cv-button cv-button-quiet cv-full" type="button" onClick={onClose}>
             {hi ? "बंद करें" : "Close"}
           </button>
         </div>

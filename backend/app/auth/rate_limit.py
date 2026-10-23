@@ -11,6 +11,7 @@ _lock = Lock()
 _MAX_BUCKETS = 10_000
 
 
+# Enforces sliding-window rate limits by IP address and user identity to prevent brute-force attacks.
 def enforce_auth_rate_limit(request: Request, identity: str) -> None:
     now = monotonic()
     window = settings.auth_rate_limit_window_seconds
@@ -42,6 +43,7 @@ def enforce_auth_rate_limit(request: Request, identity: str) -> None:
             _attempts.popitem(last=False)
 
 
+# Clears all in-memory rate-limiting buckets, primarily used in test teardowns.
 def reset_auth_rate_limits() -> None:
     with _lock:
         _attempts.clear()

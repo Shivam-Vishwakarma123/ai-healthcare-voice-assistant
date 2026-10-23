@@ -70,6 +70,7 @@ _EVENT_DETAILS = {
 }
 
 
+# Lists paginated SMS and email notifications delivered to the authenticated patient.
 @router.get("/notifications", response_model=PatientNotificationPage)
 def list_patient_notifications(
     request: Request,
@@ -116,6 +117,7 @@ def list_patient_notifications(
     return PatientNotificationPage(items=items, total=total, limit=limit, offset=skip)
 
 
+# Registers a new clinical patient demographic profile owned by the authenticated user.
 @router.post("/", response_model=PatientRead, status_code=status.HTTP_201_CREATED)
 def create_patient(payload: PatientCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(patient_user)):
     patient = patient_controller.create(db, payload, user.id)
@@ -123,6 +125,8 @@ def create_patient(payload: PatientCreate, request: Request, db: Session = Depen
     db.commit()
     return patient
 
+
+# Lists patient profiles owned by or linked to the calling patient account.
 @router.get("/", response_model=list[PatientRead])
 def list_patients(request: Request, skip: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100), db: Session = Depends(get_db), user: User = Depends(patient_user)):
     patients = patient_controller.list(db, skip, limit, user.id)
@@ -130,6 +134,8 @@ def list_patients(request: Request, skip: int = Query(0, ge=0), limit: int = Que
     db.commit()
     return patients
 
+
+# Retrieves patient demographic details, emergency contacts, and blood group info.
 @router.get("/{patient_id}", response_model=PatientRead)
 def get_patient(patient_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(patient_user)):
     patient = patient_controller.get(db, patient_id, user.id)
@@ -137,6 +143,8 @@ def get_patient(patient_id: int, request: Request, db: Session = Depends(get_db)
     db.commit()
     return patient
 
+
+# Updates existing patient demographic fields, emergency contacts, or address records.
 @router.patch("/{patient_id}", response_model=PatientRead)
 def update_patient(patient_id: int, payload: PatientUpdate, request: Request, db: Session = Depends(get_db), user: User = Depends(patient_user)):
     patient = patient_controller.update(db, patient_id, payload, user.id)
@@ -144,6 +152,8 @@ def update_patient(patient_id: int, payload: PatientUpdate, request: Request, db
     db.commit()
     return patient
 
+
+# Deletes a patient profile owned by the authenticated caller and audits the action.
 @router.delete("/{patient_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_patient(patient_id: int, request: Request, db: Session = Depends(get_db), user: User = Depends(patient_user)):
     patient_controller.delete(db, patient_id, user.id)

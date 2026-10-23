@@ -13,6 +13,7 @@ from app.models.user import User
 logger = logging.getLogger(__name__)
 
 
+# Dispatches multi-channel email and SMS alerts to a user and logs delivery audit records.
 def notify_user(
     db: Session,
     user: User,
@@ -42,6 +43,7 @@ def notify_user(
     return outcomes
 
 
+# Sends transactional notification emails via SMTP with optional TLS encryption.
 def _send_email(recipient: str) -> str:
     try:
         message = EmailMessage()
@@ -69,6 +71,7 @@ def _send_email(recipient: str) -> str:
         return "failed"
 
 
+# Sends transactional notification SMS messages via external HTTP gateway.
 def _send_sms(recipient: str) -> str:
     try:
         response = httpx.post(
@@ -90,6 +93,7 @@ def _send_sms(recipient: str) -> str:
         return "failed"
 
 
+# Inserts a delivery attempt tracking record into the database.
 def _record_delivery(
     db: Session,
     user: User,

@@ -5,6 +5,7 @@ from app.models.security import AuditLog
 from app.models.user import User
 
 
+# Persists immutable audit log records capturing security actions, actor identity, and network context.
 def record_audit(
     db: Session,
     request: Request,

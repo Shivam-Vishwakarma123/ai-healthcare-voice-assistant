@@ -15,6 +15,7 @@ from app.models.knowledge import KnowledgeChunk, KnowledgeDocument
 from app.services.embedding_provider import get_embedding_provider
 
 
+# Data container for ingesting verified public-health documents into the RAG knowledge base.
 @dataclass
 class RAGDocumentInput:
     title: str
@@ -32,6 +33,7 @@ class RAGDocumentInput:
     metadata: dict[str, Any] | None = None
 
 
+# Structured result representing a single verified knowledge document chunk match.
 @dataclass
 class RAGSearchResult:
     title: str
@@ -48,6 +50,16 @@ class RAGSearchResult:
     score: float
 
 
+# Container for RAG retrieval results with clinical evidence sufficiency and conflict flags.
+@dataclass
+class RAGEvaluationResult:
+    results: list[RAGSearchResult]
+    insufficient_reference_material: bool
+    conflicting_sources: bool
+    precautionary_escalation_note: str | None
+    top_score: float
+
+
 PROMPT_INJECTION_PATTERNS = (
     "ignore all previous instructions",
     "ignore the system",
@@ -62,6 +74,7 @@ PROMPT_INJECTION_PATTERNS = (
 )
 
 
+# Strips prompt injection patterns and normalizes whitespace in search queries.
 def sanitize_search_query(query: str) -> str:
     cleaned = re.sub(r"\s+", " ", (query or "")).strip()
     lowered = cleaned.lower()
@@ -70,6 +83,7 @@ def sanitize_search_query(query: str) -> str:
     return cleaned
 
 
+# Removes potential prompt injection attempts from untrusted user text before LLM inference.
 def sanitize_model_input(text: str) -> str:
     cleaned = re.sub(r"\s+", " ", (text or "")).strip()
     if any(pattern in cleaned.casefold() for pattern in PROMPT_INJECTION_PATTERNS):
@@ -77,10 +91,12 @@ def sanitize_model_input(text: str) -> str:
     return cleaned
 
 
+# Extracts normalized alphanumeric tokens for lexical overlap matching.
 def _lexical_tokens(text: str) -> set[str]:
     return set(re.findall(r"[^\W_]+", (text or "").casefold(), flags=re.UNICODE))
 
 
+# Splits text into bounded chunks with sentence-boundary awareness and configurable overlap.
 def chunk_text(text: str, *, chunk_size: int | None = None, overlap: int | None = None) -> list[str]:
     normalized = re.sub(r"\s+", " ", text or "").strip()
     if not normalized:
@@ -106,10 +122,12 @@ def chunk_text(text: str, *, chunk_size: int | None = None, overlap: int | None 
     return [chunk for chunk in chunks if chunk]
 
 
+# Computes a vector embedding for input text using the configured embedding provider.
 def generate_embedding(text: str) -> list[float]:
     return get_embedding_provider().embed(text)
 
 
+# Returns metadata dictionary describing active embedding dimensions and model profile.
 def _embedding_profile(dimensions: int) -> dict[str, str | int]:
     provider = settings.embedding_provider.strip().lower()
     model = "hash-token-v1" if provider == "hash" else settings.embedding_model
@@ -120,6 +138,7 @@ def _embedding_profile(dimensions: int) -> dict[str, str | int]:
     }
 
 
+# Computes cosine similarity between two vector embeddings.
 def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
     if len(vec_a) != len(vec_b):
         return 0.0
@@ -147,7 +166,9 @@ _GUIDANCE_POLARITIES = {
 }
 
 
+# Manages clinical document ingestion, vector retrieval, and evidence-grounded context building.
 class RAGService:
+    # Checks whether retrieved reference sources provide opposing emergency or follow-up guidance.
     @staticmethod
     def sources_conflict(hits: list[RAGSearchResult]) -> bool:
         observed: dict[str, dict[str, set[str]]] = {}
@@ -166,6 +187,7 @@ class RAGService:
             for positive_source in polarities["positive"]
         )
 
+    # Validates, stores, chunks, and embeds trusted public-health reference documents.
     def ingest_document(self, db: Session, payload: RAGDocumentInput) -> KnowledgeDocument:
         clean_title = (payload.title or "").strip()
         if not clean_title:
@@ -250,6 +272,7 @@ class RAGService:
         db.flush()
         return document
 
+    # Identifies indexed documents older than the maximum retention age for review or re-indexing.
     def refresh_outdated_documents(self, db: Session, *, max_age_days: int = 180) -> list[KnowledgeDocument]:
         cutoff = datetime.now(timezone.utc)
         if max_age_days < 1:
@@ -262,6 +285,7 @@ class RAGService:
             if (document.updated_at or document.retrieval_date).timestamp() < stale_before
         ]
 
+    # Searches knowledge chunks by vector similarity and keyword boosts for relevant clinical evidence.
     def search(self, db: Session, query: str, *, limit: int = 5, category: str | None = None) -> list[RAGSearchResult]:
         sanitized = sanitize_search_query(query)
         if not sanitized or limit < 1 or not _lexical_tokens(sanitized):
@@ -279,16 +303,31 @@ class RAGService:
         rows = db.execute(stmt).all()
 
         scored: list[tuple[float, KnowledgeChunk, KnowledgeDocument]] = []
+        boost_terms = [k.strip().casefold() for k in settings.rag_boost_keywords.split(",") if k.strip()]
+        query_cf = sanitized.casefold()
+        query_tokens = _lexical_tokens(sanitized)
+
         for chunk, document in rows:
             if not chunk.embedding or not chunk.metadata_json:
                 continue
             if any(chunk.metadata_json.get(key) != value for key, value in embedding_profile.items()):
                 continue
+            chunk_tokens = _lexical_tokens(chunk.content)
             if settings.embedding_provider.strip().lower() == "hash" and not (
-                _lexical_tokens(sanitized) & _lexical_tokens(chunk.content)
+                query_tokens & chunk_tokens
             ):
                 continue
             score = cosine_similarity(query_vector, chunk.embedding)
+
+            # Query keyword boost for critical clinical terms ('ORS', 'SpO2', '14416', '112')
+            chunk_cf = chunk.content.casefold()
+            boost_hits = 0
+            for term in boost_terms:
+                if (term in query_cf or term in query_tokens) and (term in chunk_cf or term in chunk_tokens):
+                    boost_hits += 1
+            if boost_hits > 0:
+                score = min(1.0, score + 0.20 * boost_hits)
+
             if score < 0.12:
                 continue
             scored.append((score, chunk, document))
@@ -322,10 +361,53 @@ class RAGService:
                 break
         return results
 
+    # Retrieves relevant knowledge chunks and evaluates evidence sufficiency and source conflict.
+    def search_with_evaluation(
+        self,
+        db: Session,
+        query: str,
+        *,
+        limit: int = 5,
+        category: str | None = None,
+        min_threshold: float | None = None,
+    ) -> RAGEvaluationResult:
+        if min_threshold is not None:
+            threshold = min_threshold
+        elif settings.embedding_provider.strip().lower() == "hash":
+            threshold = min(settings.rag_min_similarity_threshold, 0.30)
+        else:
+            threshold = settings.rag_min_similarity_threshold
+        hits = self.search(db, query, limit=limit, category=category)
+        top_score = hits[0].score if hits else 0.0
+        insufficient = (not hits) or (top_score < threshold)
+        conflict = self.sources_conflict(hits) if hits else False
+
+        escalation_note: str | None = None
+        if conflict:
+            escalation_note = (
+                "Conflicting Guidance Detected: Retrieved public-health sources provide differing urgent-care or follow-up recommendations. "
+                "Do not synthesize or follow conflicting advice; consult a qualified physician immediately, or call 112/108 if symptoms worsen."
+            )
+        elif insufficient:
+            escalation_note = (
+                "Insufficient Evidence: No verified clinical reference met the required evidence threshold (0.45) for this query. "
+                "Consult a licensed medical provider for personalized guidance."
+            )
+
+        return RAGEvaluationResult(
+            results=hits if not insufficient else [],
+            insufficient_reference_material=insufficient,
+            conflicting_sources=conflict,
+            precautionary_escalation_note=escalation_note,
+            top_score=top_score,
+        )
+
+    # Searches for top evidence chunks and formats them into an educational LLM context string.
     def build_context(self, db: Session, query: str, *, category: str | None = None) -> str:
         hits = self.search(db, query, limit=3, category=category)
         return self.build_context_from_hits(hits)
 
+    # Formats search hits into a structured reference context with conflict alerts and citations.
     @staticmethod
     def build_context_from_hits(hits: list[RAGSearchResult]) -> str:
         if not hits:

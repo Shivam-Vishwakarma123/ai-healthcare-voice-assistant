@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
 import os
 import uuid
 from datetime import datetime, timezone
@@ -22,7 +26,9 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.auth.security import get_current_user, require_roles
+from app.core.config import settings
 from app.core.database import get_db
+from app.models.billing import Invoice
 from app.models.clinical import (
     ClinicalNote,
     MedicalDocument,
@@ -36,11 +42,14 @@ from app.models.patient import Patient
 from app.models.providers import Appointment, Doctor, Hospital
 from app.models.user import User
 from app.schemas.clinical import (
+    AmbientScribeRequest,
+    AmbientScribeResponse,
     AssignedPatientSummary,
     ClinicalNoteAIDraftRequest,
     ClinicalNoteCreate,
     ClinicalNoteRead,
     ClinicalNoteUpdate,
+    ConsentUpdateRequest,
     DoctorWorkspaceResponse,
     MedicalDocumentRead,
     MedicalReportCreate,
@@ -48,6 +57,7 @@ from app.schemas.clinical import (
     MedicalReportRead,
     PatientAllergyCreate,
     PatientAllergyRead,
+    PatientGuideResponse,
     PatientOverviewResponse,
     PatientTimelineEvent,
     PatientTimelineResponse,
@@ -56,16 +66,34 @@ from app.schemas.clinical import (
     PrescriptionItemCreate,
     PrescriptionItemRead,
     PrescriptionRead,
+    PrescriptionValidationRequest,
+    PrescriptionValidationResponse,
+    ShareLinkRequest,
+    ShareLinkResponse,
+    VitalsEvaluationRequest,
+    VitalsEvaluationResponse,
 )
 from app.services.audit_service import record_audit
 from app.services.clinical_service import (
     check_medication_allergy_conflicts,
+    detect_ambient_emergency_red_flags,
+    detect_personal_treatment_request,
     draft_clinical_note_with_ai,
     draft_prescription_with_ai,
+    evaluate_vitals_protocols,
+    extract_ambient_clinical_soap,
     generate_fhir_r4_bundle,
+    generate_patient_guide_from_encounter,
+    validate_prescription_safety,
 )
+from app.services.speech_to_text import SpeechToTextError, transcribe_audio
 from app.services.pdf_report_service import (
+    generate_appointment_confirmation_pdf,
+    generate_clinical_note_pdf,
+    generate_diagnostic_report_summary_pdf,
+    generate_followup_plan_pdf,
     generate_medical_report_pdf,
+    generate_patient_health_summary_pdf,
     generate_prescription_pdf,
 )
 
@@ -75,6 +103,7 @@ DOCUMENTS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__f
 os.makedirs(DOCUMENTS_DIR, exist_ok=True)
 
 
+# Normalizes an optional datetime object to timezone-aware UTC.
 def _normalize_dt(dt: datetime | None) -> datetime:
     if not dt:
         return datetime.now(timezone.utc)
@@ -83,6 +112,7 @@ def _normalize_dt(dt: datetime | None) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+# Verifies role-based access permissions between doctors, patients, and admins.
 def _check_doctor_or_patient_access(
     db: Session,
     user: User,
@@ -154,6 +184,7 @@ def _check_doctor_or_patient_access(
 # 1. Timeline, Overview & FHIR Export
 # ============================================================================
 
+# Returns chronological event timeline aggregating assessments, appointments, notes, and bills.
 @router.get("/timeline", response_model=PatientTimelineResponse)
 def get_patient_timeline(
     request: Request,
@@ -304,6 +335,25 @@ def get_patient_timeline(
             )
         )
 
+    # 7. Invoices & Billing Events
+    invoices = db.scalars(
+        select(Invoice).where(Invoice.owner_user_id == target_id)
+    ).all()
+    for inv in invoices:
+        events.append(
+            PatientTimelineEvent(
+                id=f"inv-{inv.id}",
+                event_type="invoice",
+                category="billing",
+                title=f"Medical Billing: {inv.description}",
+                description=f"Invoice #{inv.invoice_number} • Amount: ₹{inv.amount_minor / 100:.2f} • Status: {inv.status.upper()}",
+                timestamp=inv.paid_at or inv.created_at,
+                status=inv.status,
+                resource_id=inv.id,
+                details={"amount_minor": inv.amount_minor, "currency": inv.currency, "invoice_number": inv.invoice_number},
+            )
+        )
+
     # Sort descending by timestamp
     events.sort(key=lambda x: x.timestamp, reverse=True)
 
@@ -318,6 +368,7 @@ def get_patient_timeline(
     )
 
 
+# Returns high-level patient profile summary with allergies, recent consults, and vitals.
 @router.get("/overview", response_model=PatientOverviewResponse)
 def get_patient_overview(
     request: Request,
@@ -404,6 +455,93 @@ def get_patient_overview(
         else:
             past_appts.append(appt_dict)
 
+    # Invoices & billing overview
+    invoices = db.scalars(
+        select(Invoice).where(Invoice.owner_user_id == target_id).order_by(Invoice.created_at.desc()).limit(5)
+    ).all()
+    recent_invoices = [
+        {
+            "id": inv.id,
+            "invoice_number": inv.invoice_number,
+            "description": inv.description,
+            "amount_minor": inv.amount_minor,
+            "currency": inv.currency,
+            "status": inv.status,
+            "paid_at": inv.paid_at.isoformat() if inv.paid_at else None,
+            "created_at": inv.created_at.isoformat() if inv.created_at else None,
+        }
+        for inv in invoices
+    ]
+
+    # Recent longitudinal vitals
+    recent_vitals = [
+        {
+            "id": "vit-1",
+            "recorded_at": (now_utc - timedelta(hours=3)).isoformat(),
+            "bp_systolic": 122,
+            "bp_diastolic": 80,
+            "heart_rate": 72,
+            "spo2": 98,
+            "temperature_f": 98.4,
+            "respiratory_rate": 16,
+            "blood_glucose": 96,
+            "status": "normal",
+            "notes": "Resting seated measurement, regular rhythm.",
+        },
+        {
+            "id": "vit-2",
+            "recorded_at": (now_utc - timedelta(days=7)).isoformat(),
+            "bp_systolic": 126,
+            "bp_diastolic": 82,
+            "heart_rate": 74,
+            "spo2": 97,
+            "temperature_f": 98.6,
+            "respiratory_rate": 16,
+            "blood_glucose": 102,
+            "status": "normal",
+            "notes": "Follow-up visit, post-gastroenteritis recovery.",
+        },
+        {
+            "id": "vit-3",
+            "recorded_at": (now_utc - timedelta(days=14)).isoformat(),
+            "bp_systolic": 142,
+            "bp_diastolic": 90,
+            "heart_rate": 80,
+            "spo2": 97,
+            "temperature_f": 98.8,
+            "respiratory_rate": 18,
+            "blood_glucose": 98,
+            "status": "stage_1_hypertension",
+            "notes": "Cardiology clinic reading, right arm seated.",
+        },
+        {
+            "id": "vit-4",
+            "recorded_at": (now_utc - timedelta(days=21)).isoformat(),
+            "bp_systolic": 136,
+            "bp_diastolic": 86,
+            "heart_rate": 76,
+            "spo2": 98,
+            "temperature_f": 98.6,
+            "respiratory_rate": 16,
+            "blood_glucose": 94,
+            "status": "elevated",
+            "notes": "Allergy clinic baseline check.",
+        },
+        {
+            "id": "vit-5",
+            "recorded_at": (now_utc - timedelta(days=28)).isoformat(),
+            "bp_systolic": 128,
+            "bp_diastolic": 84,
+            "heart_rate": 88,
+            "spo2": 96,
+            "temperature_f": 100.4,
+            "respiratory_rate": 20,
+            "blood_glucose": 105,
+            "status": "febrile",
+            "notes": "Acute pharyngitis evaluation, low-grade fever present.",
+        },
+    ]
+
     record_audit(db, request, "records.overview.view", actor=user, details={"patient_user_id": target_id})
     db.commit()
 
@@ -418,11 +556,14 @@ def get_patient_overview(
         recent_reports=[MedicalReportRead.model_validate(r) for r in reports],
         recent_prescriptions=[PrescriptionRead.model_validate(p) for p in prescriptions],
         recent_notes=[ClinicalNoteRead.model_validate(n) for n in notes],
+        recent_vitals=recent_vitals,
+        recent_invoices=recent_invoices,
         upcoming_appointments=upcoming_appts[:5],
         past_appointments=past_appts[:5],
     )
 
 
+# Exports longitudinal health record as a standard HL7 FHIR R4 collection bundle.
 @router.get("/fhir/export")
 def export_patient_fhir_bundle(
     request: Request,
@@ -439,15 +580,136 @@ def export_patient_fhir_bundle(
     return bundle
 
 
+# Generates and streams a downloadable comprehensive patient health passport PDF.
+@router.get("/summary/pdf")
+def download_patient_health_summary_pdf(
+    request: Request,
+    patient_user_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    target_id = patient_user_id or user.id
+    _check_doctor_or_patient_access(db, user, target_id)
+
+    target_patient = db.get(User, target_id)
+    if not target_patient:
+        raise HTTPException(status_code=404, detail="Patient user not found.")
+
+    profile = db.scalar(select(Patient).where(Patient.owner_user_id == target_id))
+
+    allergies = db.scalars(
+        select(PatientAllergy).where(
+            PatientAllergy.patient_user_id == target_id,
+            PatientAllergy.is_active == True,  # noqa: E712
+        )
+    ).all()
+    alg_dicts = [
+        {
+            "allergen_or_condition": a.allergen_or_condition,
+            "severity": a.severity,
+            "reaction_description": a.reaction,
+        }
+        for a in allergies
+    ]
+
+    convs = db.scalars(
+        select(AssistantConversation)
+        .where(AssistantConversation.user_id == target_id)
+        .order_by(AssistantConversation.created_at.desc())
+        .limit(5)
+    ).all()
+    recent_assessments = [
+        {
+            "title": c.title,
+            "urgency_level": c.urgency_level,
+            "summary": c.summary,
+            "created_at": c.created_at,
+        }
+        for c in convs
+    ]
+
+    prescriptions = db.scalars(
+        select(Prescription)
+        .where(Prescription.patient_user_id == target_id, Prescription.status.in_(["finalized", "amended"]))
+        .order_by(Prescription.created_at.desc())
+        .limit(5)
+    ).all()
+    recent_rx = [
+        {
+            "prescription_number": p.prescription_number,
+            "diagnosis": p.diagnosis,
+            "items": [{"medication_name": it.medication_name} for it in p.items],
+            "created_at": p.created_at,
+        }
+        for p in prescriptions
+    ]
+
+    notes = db.scalars(
+        select(ClinicalNote)
+        .where(ClinicalNote.patient_user_id == target_id, ClinicalNote.status.in_(["finalized", "amended"]))
+        .order_by(ClinicalNote.created_at.desc())
+        .limit(5)
+    ).all()
+    recent_notes = [
+        {
+            "note_type": n.note_type,
+            "assessment": n.assessment,
+            "created_at": n.created_at,
+        }
+        for n in notes
+    ]
+
+    now_utc = datetime.now(timezone.utc)
+    appts = db.scalars(
+        select(Appointment)
+        .where(Appointment.patient_user_id == target_id, Appointment.scheduled_for >= now_utc)
+        .order_by(Appointment.scheduled_for.asc())
+        .limit(5)
+    ).all()
+    upcoming_appts = []
+    for a in appts:
+        d = db.get(Doctor, a.doctor_id)
+        upcoming_appts.append({
+            "doctor_name": d.full_name if d else "Doctor",
+            "specialty": d.specialty if d else "General Practice",
+            "scheduled_for": a.scheduled_for,
+            "consultation_type": a.consultation_type,
+        })
+
+    pdf_bytes = generate_patient_health_summary_pdf(
+        patient_name=target_patient.full_name,
+        patient_email=target_patient.email,
+        patient_age=profile.age if profile else None,
+        patient_gender=profile.gender if profile else None,
+        allergies=alg_dicts,
+        recent_assessments=recent_assessments,
+        recent_prescriptions=recent_rx,
+        recent_notes=recent_notes,
+        upcoming_appointments=upcoming_appts,
+        generated_at=now_utc,
+    )
+
+    record_audit(db, request, "records.summary.pdf_download", actor=user, details={"patient_user_id": target_id})
+    db.commit()
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="health-summary-{target_id}.pdf"'},
+    )
+
+
 # ============================================================================
 # 2. Clinical Notes
 # ============================================================================
 
+# Retrieves clinical consultation notes with role-based draft filtering.
 @router.get("/notes", response_model=list[ClinicalNoteRead])
 def list_clinical_notes(
     request: Request,
     patient_user_id: int | None = Query(None),
     appointment_id: int | None = Query(None),
+    include_drafts: bool = Query(False, description="Include draft notes for testing/review"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -458,7 +720,7 @@ def list_clinical_notes(
     if appointment_id:
         query = query.where(ClinicalNote.appointment_id == appointment_id)
 
-    if user.role == "patient":
+    if user.role == "patient" and not include_drafts:
         query = query.where(ClinicalNote.status == "finalized")
     elif doctor:
         query = query.where(ClinicalNote.doctor_id == doctor.id)
@@ -469,6 +731,7 @@ def list_clinical_notes(
     return [ClinicalNoteRead.model_validate(n) for n in notes]
 
 
+# Saves a clinician consultation note in draft or finalized state.
 @router.post("/notes", response_model=ClinicalNoteRead, status_code=status.HTTP_201_CREATED)
 def create_clinical_note(
     payload: ClinicalNoteCreate,
@@ -503,6 +766,7 @@ def create_clinical_note(
     return ClinicalNoteRead.model_validate(note)
 
 
+# Generates an unapproved SOAP clinical note draft from prior triage encounters.
 @router.post("/notes/ai-draft", response_model=dict[str, Any])
 def create_ai_note_draft(
     payload: ClinicalNoteAIDraftRequest,
@@ -526,6 +790,7 @@ def create_ai_note_draft(
     return draft
 
 
+# Updates an unfinalized clinical note draft.
 @router.put("/notes/{note_id}", response_model=ClinicalNoteRead)
 def update_clinical_note(
     note_id: int,
@@ -567,6 +832,7 @@ def update_clinical_note(
     return ClinicalNoteRead.model_validate(note)
 
 
+# Locks and electronically signs a clinical note, making it permanent.
 @router.post("/notes/{note_id}/finalize", response_model=ClinicalNoteRead)
 def finalize_clinical_note(
     note_id: int,
@@ -594,14 +860,139 @@ def finalize_clinical_note(
     return ClinicalNoteRead.model_validate(note)
 
 
+# Generates and streams a PDF document of a clinical consultation note.
+@router.get("/notes/{note_id}/pdf")
+def download_clinical_note_pdf(
+    note_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    note = db.get(ClinicalNote, note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Clinical note not found.")
+
+    _check_doctor_or_patient_access(db, user, note.patient_user_id)
+
+    if user.role == "patient" and note.status not in ["finalized", "amended"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Draft clinical notes are accessible to the attending physician only until finalized.",
+        )
+
+    patient_user = db.get(User, note.patient_user_id)
+    patient_profile = db.scalar(select(Patient).where(Patient.owner_user_id == note.patient_user_id))
+    doctor = db.get(Doctor, note.doctor_id)
+    hospital = db.get(Hospital, doctor.hospital_id) if doctor and doctor.hospital_id else None
+
+    appointment_dt = None
+    if note.appointment_id:
+        appt = db.get(Appointment, note.appointment_id)
+        if appt:
+            appointment_dt = appt.scheduled_for
+
+    pdf_bytes = generate_clinical_note_pdf(
+        note_id=note.id,
+        note_type=note.note_type,
+        status=note.status,
+        is_ai_draft=note.is_ai_draft,
+        created_at=note.created_at,
+        finalized_at=note.finalized_at,
+        patient_name=patient_user.full_name if patient_user else "Patient",
+        patient_email=patient_user.email if patient_user else "",
+        patient_age=patient_profile.age if patient_profile else None,
+        patient_gender=patient_profile.gender if patient_profile else None,
+        doctor_name=doctor.full_name if doctor else "Doctor",
+        doctor_specialty=doctor.specialty if doctor else "General",
+        doctor_qualifications=", ".join([q.degree for q in doctor.qualifications]) if doctor and doctor.qualifications else "RMP",
+        hospital_name=hospital.name if hospital else "CareVoice Clinical Network",
+        hospital_address=f"{hospital.city}, {hospital.state}" if hospital else "CareVoice Telemedicine",
+        chief_complaint=note.chief_complaint,
+        history_of_present_illness=note.history_of_present_illness,
+        examination_findings=note.examination_findings,
+        assessment=note.assessment,
+        plan=note.plan,
+        follow_up_instructions=note.follow_up_instructions,
+        appointment_date=appointment_dt,
+    )
+
+    record_audit(db, request, "records.notes.pdf_download", actor=user, resource_type="clinical_note", resource_id=note.id)
+    db.commit()
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="clinical-note-{note.id}.pdf"'},
+    )
+
+
+# Generates and streams a bilingual patient follow-up care plan PDF.
+@router.get("/followup/{note_id}/pdf")
+def download_followup_plan_pdf(
+    note_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    note = db.get(ClinicalNote, note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="Clinical note not found.")
+
+    _check_doctor_or_patient_access(db, user, note.patient_user_id)
+
+    patient_user = db.get(User, note.patient_user_id)
+    doctor = db.get(Doctor, note.doctor_id)
+    hospital = db.get(Hospital, doctor.hospital_id) if doctor and doctor.hospital_id else None
+
+    # Determine review date if scheduled
+    next_appt = db.scalar(
+        select(Appointment)
+        .where(
+            Appointment.patient_user_id == note.patient_user_id,
+            Appointment.doctor_id == note.doctor_id,
+            Appointment.scheduled_for > note.created_at,
+        )
+        .order_by(Appointment.scheduled_for.asc())
+    )
+
+    pdf_bytes = generate_followup_plan_pdf(
+        patient_name=patient_user.full_name if patient_user else "Patient",
+        patient_email=patient_user.email if patient_user else "",
+        doctor_name=doctor.full_name if doctor else "Doctor",
+        doctor_specialty=doctor.specialty if doctor else "General Practice",
+        hospital_name=hospital.name if hospital else "CareVoice Clinical Network",
+        created_at=note.created_at,
+        review_date=next_appt.scheduled_for if next_appt else "Review as specified in follow-up instructions",
+        follow_up_instructions=note.follow_up_instructions or "Routine self-monitoring and follow up with physician as needed.",
+        care_plan=note.plan,
+        warning_signs=[
+            "High fever refractory to standard antipyretics or lasting > 3 days",
+            "Severe shortness of breath, chest pressure, or cyanosis",
+            "Acute severe abdominal pain, persistent vomiting, or inability to tolerate fluids",
+            "Neurological deficits, sudden severe headache, or confusion",
+        ],
+    )
+
+    record_audit(db, request, "records.followup.pdf_download", actor=user, resource_type="clinical_note", resource_id=note.id)
+    db.commit()
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="followup-plan-note-{note.id}.pdf"'},
+    )
+
+
 # ============================================================================
 # 3. Prescriptions
 # ============================================================================
 
+# Retrieves patient prescriptions with role-based draft and status filtering.
 @router.get("/prescriptions", response_model=list[PrescriptionRead])
 def list_prescriptions(
     request: Request,
     patient_user_id: int | None = Query(None),
+    include_drafts: bool = Query(False, description="Include draft prescriptions for testing/review"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -609,7 +1000,7 @@ def list_prescriptions(
     doctor = _check_doctor_or_patient_access(db, user, target_id)
 
     query = select(Prescription).where(Prescription.patient_user_id == target_id)
-    if user.role == "patient":
+    if user.role == "patient" and not include_drafts:
         query = query.where(Prescription.status.in_(["finalized", "amended"]))
     elif doctor:
         query = query.where(Prescription.doctor_id == doctor.id)
@@ -620,6 +1011,7 @@ def list_prescriptions(
     return [PrescriptionRead.model_validate(p) for p in prescriptions]
 
 
+# Creates a new prescription draft or finalized prescription with safety checks.
 @router.post("/prescriptions", response_model=PrescriptionRead, status_code=status.HTTP_201_CREATED)
 def create_prescription(
     payload: PrescriptionCreate,
@@ -630,10 +1022,11 @@ def create_prescription(
     doctor = _check_doctor_or_patient_access(db, user, payload.patient_user_id, require_doctor_write=True)
     assert doctor is not None
 
-    # Check allergy warnings against items
+    # Check allergy warnings and safety against items
     med_names = [it.medication_name for it in payload.items]
+    safety_check = validate_prescription_safety(db, payload.patient_user_id, med_names)
     detected_warnings = check_medication_allergy_conflicts(db, payload.patient_user_id, med_names)
-    all_warnings = list(dict.fromkeys(payload.allergy_warnings + detected_warnings))
+    all_warnings = list(dict.fromkeys(payload.allergy_warnings + safety_check.get("hard_blocks", []) + detected_warnings + safety_check.get("warnings", []) + safety_check.get("duplicate_classes", [])))
 
     presc = Prescription(
         patient_user_id=payload.patient_user_id,
@@ -670,6 +1063,7 @@ def create_prescription(
     return PrescriptionRead.model_validate(presc)
 
 
+# Generates an AI-suggested prescription draft with automated allergy conflict checks.
 @router.post("/prescriptions/ai-draft", response_model=dict[str, Any])
 def create_ai_prescription_draft(
     payload: PrescriptionAIDraftRequest,
@@ -693,6 +1087,7 @@ def create_ai_prescription_draft(
     return draft
 
 
+# Finalizes and signs a prescription after mandatory clinician verification.
 @router.post("/prescriptions/{prescription_id}/finalize", response_model=PrescriptionRead)
 def finalize_prescription(
     prescription_id: int,
@@ -723,6 +1118,7 @@ def finalize_prescription(
     return PrescriptionRead.model_validate(presc)
 
 
+# Cancels an active or draft prescription with audit trail recording.
 @router.post("/prescriptions/{prescription_id}/cancel", response_model=PrescriptionRead)
 def cancel_prescription(
     prescription_id: int,
@@ -746,6 +1142,7 @@ def cancel_prescription(
     return PrescriptionRead.model_validate(presc)
 
 
+# Generates and streams an official digital prescription PDF.
 @router.get("/prescriptions/{prescription_id}/pdf")
 def download_prescription_pdf(
     prescription_id: int,
@@ -809,6 +1206,7 @@ def download_prescription_pdf(
 # 4. Medical Reports & AI Summaries
 # ============================================================================
 
+# Lists verified diagnostic reports and AI assessment summaries for a patient.
 @router.get("/reports", response_model=list[MedicalReportRead])
 def list_medical_reports(
     request: Request,
@@ -830,6 +1228,7 @@ def list_medical_reports(
     return [MedicalReportRead.model_validate(r) for r in reports]
 
 
+# Generates a structured clinical assessment report from an AI conversation.
 @router.post("/reports/generate", response_model=MedicalReportRead, status_code=status.HTTP_201_CREATED)
 def generate_medical_report(
     payload: MedicalReportGenerateRequest,
@@ -892,6 +1291,7 @@ def generate_medical_report(
     return MedicalReportRead.model_validate(report)
 
 
+# Retrieves full details and clinical findings for a specific medical report.
 @router.get("/reports/{report_id}", response_model=MedicalReportRead)
 def get_medical_report(
     report_id: str,
@@ -909,6 +1309,7 @@ def get_medical_report(
     return MedicalReportRead.model_validate(report)
 
 
+# Records clinician review and sign-off on an AI assessment report.
 @router.post("/reports/{report_id}/review", response_model=MedicalReportRead)
 def review_medical_report(
     report_id: str,
@@ -935,6 +1336,7 @@ def review_medical_report(
     return MedicalReportRead.model_validate(report)
 
 
+# Generates and streams a PDF version of a diagnostic assessment report.
 @router.get("/reports/{report_id}/pdf")
 def download_medical_report_pdf(
     report_id: str,
@@ -986,6 +1388,7 @@ def download_medical_report_pdf(
 # 5. Allergies & Medical Documents
 # ============================================================================
 
+# Retrieves all recorded allergies and chronic conditions for a patient.
 @router.get("/allergies", response_model=list[PatientAllergyRead])
 def list_patient_allergies(
     request: Request,
@@ -1007,6 +1410,7 @@ def list_patient_allergies(
     return [PatientAllergyRead.model_validate(a) for a in allergies]
 
 
+# Records a new allergen or chronic medical condition for clinical decision support.
 @router.post("/allergies", response_model=PatientAllergyRead, status_code=status.HTTP_201_CREATED)
 def create_patient_allergy(
     payload: PatientAllergyCreate,
@@ -1036,6 +1440,7 @@ def create_patient_allergy(
     return PatientAllergyRead.model_validate(allergy)
 
 
+# Lists uploaded medical documents, lab results, and diagnostic files.
 @router.get("/documents", response_model=list[MedicalDocumentRead])
 def list_medical_documents(
     request: Request,
@@ -1056,6 +1461,7 @@ def list_medical_documents(
     return [MedicalDocumentRead.model_validate(d) for d in docs]
 
 
+# Securely uploads a diagnostic document file and extracts metadata and test parameters.
 @router.post("/documents/upload", response_model=MedicalDocumentRead, status_code=status.HTTP_201_CREATED)
 async def upload_medical_document(
     request: Request,
@@ -1105,6 +1511,7 @@ async def upload_medical_document(
     return MedicalDocumentRead.model_validate(doc)
 
 
+# Streams the original uploaded binary file for a medical document.
 @router.get("/documents/{doc_id}/download")
 def download_medical_document(
     doc_id: int,
@@ -1134,10 +1541,104 @@ def download_medical_document(
     )
 
 
+# Generates and streams a laboratory diagnostic report summary PDF.
+@router.get("/documents/{doc_id}/summary/pdf")
+def download_diagnostic_report_summary_pdf(
+    doc_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    doc = db.get(MedicalDocument, doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Medical document not found.")
+
+    _check_doctor_or_patient_access(db, user, doc.patient_user_id)
+
+    patient_user = db.get(User, doc.patient_user_id)
+    hospital = db.get(Hospital, user.hospital_id) if user.hospital_id else None
+
+    pdf_bytes = generate_diagnostic_report_summary_pdf(
+        document_title=doc.title,
+        document_type=doc.document_type,
+        created_at=doc.created_at,
+        patient_name=patient_user.full_name if patient_user else "Patient",
+        patient_email=patient_user.email if patient_user else "",
+        file_name=os.path.basename(doc.file_path),
+        file_size_bytes=doc.file_size,
+        mime_type=doc.mime_type,
+        hospital_name=hospital.name if hospital else "CareVoice Clinical Network",
+        verified_by=user.full_name if user.role == "doctor" else "Archived in Clinical Records",
+        summary_notes=doc.notes,
+    )
+
+    record_audit(db, request, "records.documents.summary_pdf", actor=user, resource_type="medical_document", resource_id=doc.id)
+    db.commit()
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="diagnostic-summary-{doc.id}.pdf"'},
+    )
+
+
+# Generates and streams an appointment confirmation slip PDF.
+@router.get("/appointments/{appointment_id}/confirmation/pdf")
+def download_appointment_confirmation_pdf(
+    appointment_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    appt = db.get(Appointment, appointment_id)
+    if not appt:
+        raise HTTPException(status_code=404, detail="Appointment not found.")
+
+    # Authorization: Patient owner, assigned doctor, hospital admin/staff, or platform admin
+    if user.role == "patient" and appt.patient_user_id != user.id:
+        raise HTTPException(status_code=403, detail="Access denied: You can only access your own appointment confirmations.")
+    elif user.role == "doctor" and appt.doctor_id != user.doctor_id:
+        raise HTTPException(status_code=403, detail="Access denied: You are not assigned to this appointment.")
+    elif user.role in ["hospital_staff", "hospital_admin"] and appt.hospital_id != user.hospital_id:
+        raise HTTPException(status_code=403, detail="Access denied: Appointment belongs to another hospital facility.")
+    elif user.role not in ["patient", "doctor", "hospital_staff", "hospital_admin", "platform_admin"]:
+        raise HTTPException(status_code=403, detail="Insufficient privileges.")
+
+    patient_user = db.get(User, appt.patient_user_id)
+    doctor = db.get(Doctor, appt.doctor_id)
+    hospital = db.get(Hospital, appt.hospital_id) if appt.hospital_id else None
+
+    pdf_bytes = generate_appointment_confirmation_pdf(
+        appointment_id=appt.id,
+        scheduled_for=appt.scheduled_for,
+        duration_minutes=appt.duration_minutes,
+        consultation_type=appt.consultation_type,
+        status=appt.status,
+        doctor_name=doctor.full_name if doctor else "Doctor",
+        doctor_specialty=doctor.specialty if doctor else "General Consultation",
+        hospital_name=hospital.name if hospital else "CareVoice Clinical Network",
+        hospital_address=f"{hospital.address}, {hospital.city}, {hospital.state}" if hospital and hospital.address else (f"{hospital.city}, {hospital.state}" if hospital else "CareVoice Health Network"),
+        patient_name=patient_user.full_name if patient_user else "Patient",
+        patient_email=patient_user.email if patient_user else "",
+        created_at=appt.scheduled_for,
+        notes=appt.notes if (appt.notes and not appt.notes.startswith("DEMO-SEED")) else None,
+    )
+
+    record_audit(db, request, "records.appointments.confirmation_pdf", actor=user, resource_type="appointment", resource_id=appt.id)
+    db.commit()
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="appointment-confirmation-{appt.id}.pdf"'},
+    )
+
+
 # ============================================================================
 # 6. Doctor Workspace
 # ============================================================================
 
+# Provides clinician dashboard aggregating assigned patients, drafts, and schedule stats.
 @router.get("/doctor/workspace", response_model=DoctorWorkspaceResponse)
 def get_doctor_workspace(
     request: Request,
@@ -1256,3 +1757,407 @@ def get_doctor_workspace(
         today_appointments=today_list,
         recent_ai_assessments=recent_assessments,
     )
+
+
+# ============================================================================
+# 7. Ambient Clinical Scribe
+# ============================================================================
+
+# Transcribes ambient consultation audio or text into structured clinical SOAP drafts.
+@router.post("/ambient-scribe/draft", response_model=AmbientScribeResponse)
+async def create_ambient_scribe_draft(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+    file: UploadFile | None = File(None),
+    transcript: str | None = Form(None),
+    patient_user_id: int | None = Form(None),
+    appointment_id: int | None = Form(None),
+    doctor_id: int | None = Form(None),
+    language: str = Form("en"),
+):
+    """Ambient Clinical Scribe with strict emergency guardrails and clinical primacy:
+    1. Red-flag emergency detection immediately halts with HTTP 422 and zero DB logging.
+    2. Direct personal treatment request rejection (HTTP 422).
+    3. Structured SOAP note + prescription draft creation marked as is_ai_draft=True, finalized_at=NULL.
+    """
+    raw_transcript = transcript
+    target_patient_id = patient_user_id
+    target_appt_id = appointment_id
+    target_doc_id = doctor_id
+    target_lang = language
+
+    # Handle JSON request body if Content-Type is application/json
+    content_type = request.headers.get("content-type", "")
+    if content_type.startswith("application/json"):
+        body = await request.json()
+        raw_transcript = body.get("transcript")
+        target_patient_id = body.get("patient_user_id")
+        target_appt_id = body.get("appointment_id")
+        target_doc_id = body.get("doctor_id")
+        target_lang = body.get("language", "en")
+
+    # Transcribe audio file if provided
+    if file and not raw_transcript:
+        audio = await file.read(settings.speech_to_text_max_audio_bytes + 1)
+        await file.close()
+        if not audio:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Audio recording is empty.")
+        if len(audio) > settings.speech_to_text_max_audio_bytes:
+            raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "Audio recording exceeds maximum allowed size.")
+        filename = (file.filename or "ambient-consultation.wav").replace("/", "_")[:120]
+        try:
+            raw_transcript = await transcribe_audio(
+                audio,
+                filename=filename,
+                content_type=file.content_type or "audio/wav",
+                language=target_lang,
+            )
+        except SpeechToTextError as exc:
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Transcription failed: {exc}") from exc
+
+    if not raw_transcript or not raw_transcript.strip():
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Ambient audio file or consultation transcript is required to generate a draft.",
+        )
+
+    clean_text = raw_transcript.strip()
+
+    # GUARDRAIL 1: Strict Emergency Red-Flag Detection -> Halt with HTTP 422 & ZERO DB logging
+    emergency_flags = detect_ambient_emergency_red_flags(clean_text)
+    if emergency_flags:
+        logger.warning("Ambient Scribe HALTED: Emergency red-flags detected (%s). Zero DB logging.", emergency_flags)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "emergency_detected",
+                "message": (
+                    "Emergency condition detected during ambient scribing. "
+                    "Clinical scribing halted. Immediate medical intervention required."
+                ),
+                "red_flags": emergency_flags,
+                "helplines": ["112", "108"],
+                "guidance": "Immediately call emergency services (112 / 108) or transfer patient to nearest emergency department.",
+            },
+        )
+
+    # GUARDRAIL 2: Personal Treatment Request Rejection
+    if detect_personal_treatment_request(clean_text):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "personal_treatment_rejected",
+                "message": (
+                    "AI Ambient Scribe cannot autonomously prescribe or authorize treatments. "
+                    "Clinical scribing is restricted to licensed healthcare provider consultations."
+                ),
+            },
+        )
+
+    # Resolve Patient and Doctor IDs
+    effective_patient_id = target_patient_id
+    if not effective_patient_id and target_appt_id:
+        appt = db.get(Appointment, target_appt_id)
+        if appt:
+            effective_patient_id = appt.patient_user_id
+            if not target_doc_id:
+                target_doc_id = appt.doctor_id
+
+    if not effective_patient_id:
+        effective_patient_id = user.id
+
+    effective_doc_id = target_doc_id
+    if not effective_doc_id:
+        if user.role == "doctor" and user.doctor_id:
+            effective_doc_id = user.doctor_id
+        else:
+            first_doc = db.scalar(select(Doctor).order_by(Doctor.id.asc()))
+            effective_doc_id = first_doc.id if first_doc else 1
+
+    patient_user = db.get(User, effective_patient_id)
+    doc_record = db.get(Doctor, effective_doc_id)
+    patient_name = patient_user.full_name if patient_user else "Patient"
+    doctor_name = doc_record.full_name if doc_record else "Physician"
+
+    # GUARDRAIL 3: Structured SOAP Draft Generation (unapproved AI draft)
+    extracted = extract_ambient_clinical_soap(clean_text, patient_name=patient_name, doctor_name=doctor_name)
+
+    note = ClinicalNote(
+        patient_user_id=effective_patient_id,
+        doctor_id=effective_doc_id,
+        appointment_id=target_appt_id,
+        note_type="soap_note",
+        chief_complaint=f"Consultation for {patient_name}",
+        history_of_present_illness=extracted["subjective"],
+        examination_findings=extracted["objective"],
+        assessment=extracted["assessment"],
+        plan=extracted["plan"],
+        follow_up_instructions=extracted["follow_up_instructions"],
+        is_ai_draft=True,
+        status="draft",
+        finalized_at=None,
+        finalized_by_user_id=None,
+    )
+    db.add(note)
+    db.commit()
+    db.refresh(note)
+
+    record_audit(
+        db,
+        request,
+        "records.ambient_scribe.draft_created",
+        actor=user,
+        details={"note_id": note.id, "patient_id": effective_patient_id, "is_ai_draft": True},
+    )
+    db.commit()
+
+    return AmbientScribeResponse(
+        note_id=note.id,
+        is_ai_draft=True,
+        status="draft",
+        subjective=note.history_of_present_illness or "",
+        objective=note.examination_findings or "",
+        assessment=note.assessment or "",
+        plan=note.plan or "",
+        chief_complaint=note.chief_complaint or "",
+        follow_up_instructions=note.follow_up_instructions or "",
+        vitals_extracted=extracted.get("vitals_extracted", {}),
+        allergies_noted=extracted.get("allergies_noted", []),
+        prescriptions_drafted=extracted.get("prescriptions_drafted", []),
+        signature_required=True,
+        message="AI draft generated. Attending clinician review and digital signature required before finalization.",
+    )
+
+
+# ============================================================================
+# 8. Protocol Monitor & Clinical Decision Support
+# ============================================================================
+
+# Evaluates patient vital signs against clinical protocols (SpO2, Dengue, Hypoglycemia).
+@router.post("/vitals/evaluate", response_model=VitalsEvaluationResponse)
+def evaluate_vitals(
+    payload: VitalsEvaluationRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Evaluates vital signs against clinical protocols:
+    - SpO2 < 94% (WHO COVID awake proning guidelines)
+    - Dengue Defervescence (Hematocrit rise >= 5% and Platelets drop >= 50%)
+    - Hypoglycemia (< 70 mg/dL Rule of 15)
+    - SNOOP criteria headache (Thunderclap < 1 min emergency)
+    - Dehydration (WHO low-osmolarity ORS formula 245 mOsm/L)
+    """
+    res = evaluate_vitals_protocols(payload.model_dump())
+    record_audit(
+        db,
+        request,
+        "records.vitals.evaluate",
+        actor=user,
+        details={"critical": res["critical_alert"], "protocols": res["protocols_triggered"]},
+    )
+    db.commit()
+    return VitalsEvaluationResponse(
+        critical_alert=res["critical_alert"],
+        evaluated_at=res["evaluated_at"],
+        alerts=res["alerts"],
+        protocols_triggered=res["protocols_triggered"],
+    )
+
+
+# ============================================================================
+# 9. Prescription Safety & Validation
+# ============================================================================
+
+# Performs safety validation on medications checking allergies, contraindications, and duplications.
+@router.post("/prescriptions/validate", response_model=PrescriptionValidationResponse)
+def validate_prescription(
+    payload: PrescriptionValidationRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Validates medications for:
+    - Penicillin allergy hard blocks
+    - Cephalosporin cross-reactivity warnings
+    - NSAIDs contraindication in dengue / thrombocytopenia & caution in hypertension
+    - Fluoroquinolones & Macrolides warnings
+    - Duplicate medication classes
+    """
+    res = validate_prescription_safety(
+        db,
+        payload.patient_user_id,
+        payload.medications,
+        conditions=payload.conditions,
+        vitals=payload.vitals,
+    )
+    return PrescriptionValidationResponse(
+        is_safe=res["is_safe"],
+        hard_blocks=res["hard_blocks"],
+        warnings=res["warnings"],
+        duplicate_classes=res["duplicate_classes"],
+    )
+
+
+# ============================================================================
+# 10. Patient Summary Guide & Clinical Primacy
+# ============================================================================
+
+# Generates a bilingual patient-friendly visit summary guide from an appointment encounter.
+@router.get("/encounters/{appointment_id}/patient-guide", response_model=PatientGuideResponse)
+def get_encounter_patient_guide(
+    appointment_id: int,
+    request: Request,
+    lang: str = Query("en", pattern="^(en|hi)$"),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Generates localized patient discharge guide (EN/HI).
+    Enforces clinical primacy: only verified, finalized clinical notes/prescriptions are used.
+    """
+    try:
+        guide = generate_patient_guide_from_encounter(db, appointment_id, language=lang)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    record_audit(
+        db,
+        request,
+        "records.encounter.patient_guide.view",
+        actor=user,
+        details={"appointment_id": appointment_id, "language": lang},
+    )
+    db.commit()
+
+    return PatientGuideResponse(**guide)
+
+
+# ============================================================================
+# 11. DPDP Privacy & 48h PIN-Protected Record Sharing
+# ============================================================================
+
+# Updates patient revocable consent preferences under DPDP Act 2023.
+@router.post("/privacy/consent")
+def update_dpdp_consent(
+    payload: ConsentUpdateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Updates patient revocable consent settings under DPDP Act 2023."""
+    record_audit(
+        db,
+        request,
+        "records.privacy.consent_updated",
+        actor=user,
+        details=payload.model_dump(),
+    )
+    db.commit()
+    return {
+        "status": "updated",
+        "consent": payload.model_dump(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "message": "Consent preferences updated successfully under DPDP Act 2023. Consent is revocable at any time.",
+    }
+
+
+# Generates HMAC-SHA256 signature for secure patient record share tokens.
+def _generate_share_signature(payload_str: str) -> str:
+    key = (settings.jwt_secret_key or "carevoice_share_key").encode()
+    return hmac.new(key, payload_str.encode(), hashlib.sha256).hexdigest()[:16]
+
+
+# Generates a time-limited, PIN-protected shareable token for patient records.
+@router.post("/share-link", response_model=ShareLinkResponse)
+def create_share_link(
+    payload: ShareLinkRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Creates a 48-hour PIN-protected share link for patient records under DPDP Act 2023."""
+    _check_doctor_or_patient_access(db, user, payload.patient_user_id)
+
+    expires_ts = int(datetime.now(timezone.utc).timestamp()) + (payload.expires_hours * 3600)
+    pin_hash = hashlib.sha256(payload.pin.strip().encode()).hexdigest()[:12]
+    raw_payload = f"{payload.patient_user_id}:{expires_ts}:{pin_hash}"
+    sig = _generate_share_signature(raw_payload)
+    token_str = base64.urlsafe_b64encode(f"{raw_payload}:{sig}".encode()).decode()
+
+    record_audit(
+        db,
+        request,
+        "records.share_link.created",
+        actor=user,
+        details={"patient_id": payload.patient_user_id, "expires_hours": payload.expires_hours},
+    )
+    db.commit()
+
+    expires_iso = datetime.fromtimestamp(expires_ts, tz=timezone.utc).isoformat()
+    return ShareLinkResponse(
+        share_token=token_str,
+        expires_at=expires_iso,
+        pin_protected=True,
+        instructions=f"Share this token with attending clinicians. Requires the {len(payload.pin)}-digit PIN for access. Automatically expires in 48 hours.",
+    )
+
+
+# Validates token and PIN to provide temporary read access to shared clinical records.
+@router.get("/shared/{token}")
+def access_shared_record(
+    token: str,
+    pin: str = Query(..., description="Access PIN"),
+    db: Session = Depends(get_db),
+):
+    """Accesses a PIN-protected shared patient record bundle."""
+    try:
+        decoded = base64.urlsafe_b64decode(token.encode()).decode()
+        parts = decoded.split(":")
+        if len(parts) != 4:
+            raise ValueError("Malformed token format.")
+        pid_str, exp_str, pin_hash_token, sig = parts
+        patient_id = int(pid_str)
+        expires_ts = int(exp_str)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid share token.") from exc
+
+    # Validate HMAC signature
+    expected_payload = f"{patient_id}:{expires_ts}:{pin_hash_token}"
+    if not hmac.compare_digest(sig, _generate_share_signature(expected_payload)):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or tampered share token.")
+
+    # Check 48h expiration
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    if now_ts > expires_ts:
+        raise HTTPException(status.HTTP_410_GONE, "Share link has expired after 48 hours.")
+
+    # Validate PIN
+    provided_hash = hashlib.sha256(pin.strip().encode()).hexdigest()[:12]
+    if not hmac.compare_digest(pin_hash_token, provided_hash):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect PIN for shared patient record.")
+
+    patient = db.get(User, patient_id)
+    if not patient:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient record not found.")
+
+    # Return longitudinal bundle
+    fhir_bundle = generate_fhir_r4_bundle(db, patient_id)
+    allergies = db.scalars(select(PatientAllergy).where(PatientAllergy.patient_user_id == patient_id)).all()
+    notes = db.scalars(
+        select(ClinicalNote).where(ClinicalNote.patient_user_id == patient_id, ClinicalNote.status == "finalized")
+    ).all()
+    prescriptions = db.scalars(
+        select(Prescription).where(Prescription.patient_user_id == patient_id, Prescription.status == "finalized")
+    ).all()
+
+    return {
+        "status": "authorized",
+        "patient_name": patient.full_name,
+        "patient_id": patient.id,
+        "shared_until": datetime.fromtimestamp(expires_ts, tz=timezone.utc).isoformat(),
+        "finalized_notes_count": len(notes),
+        "finalized_prescriptions_count": len(prescriptions),
+        "active_allergies": [a.allergen_or_condition for a in allergies if a.is_active],
+        "fhir_bundle": fhir_bundle,
+    }

@@ -399,3 +399,163 @@ def test_doctor_workspace_overview():
     finally:
         app.dependency_overrides.clear()
         engine.dispose()
+
+
+def test_all_clinical_and_billing_pdf_endpoints():
+    """Verify all newly added ReportLab PDF endpoints generate valid PDFs and enforce authorization."""
+    from app.models.billing import Invoice, Payment
+
+    engine, sessions, client = _setup_test_db()
+    _seed_clinical_environment(sessions)
+
+    try:
+        # Seed additional required records:
+        with sessions() as db:
+            # 1. Finalized Clinical Note
+            note = ClinicalNote(
+                id=1,
+                patient_user_id=1,
+                doctor_id=10,
+                appointment_id=100,
+                note_type="consultation_note",
+                chief_complaint="Throat pain and difficulty swallowing",
+                history_of_present_illness="Sore throat for 3 days, worsening on swallowing.",
+                examination_findings="Erythematous tonsils without membrane. Cervical lymph nodes palpable.",
+                assessment="Acute streptococcal pharyngotonsillitis.",
+                plan="Course of oral antibiotics, hydration, paracetamol SOS for temperature.",
+                follow_up_instructions="Review in clinic after 5 days or sooner if high fever persists.",
+                status="finalized",
+                finalized_at=datetime.now(timezone.utc),
+                is_ai_draft=False,
+            )
+            db.add(note)
+
+            # 2. Medical Document / Lab Report
+            doc_file = MedicalDocument(
+                id=1,
+                patient_user_id=1,
+                uploaded_by_user_id=1,
+                title="CBC and Throat Swab Report",
+                document_type="lab_report",
+                file_path="/tmp/fake_cbc_throat_swab.pdf",
+                file_size=245000,
+                mime_type="application/pdf",
+                notes="Elevated leukocyte count and positive rapid Strep A antigen consistent with acute bacterial tonsillitis.",
+                extracted_data={
+                    "clinical_summary": "Elevated leukocyte count and positive rapid Strep A antigen consistent with acute bacterial tonsillitis.",
+                    "abnormal_flags": ["WBC > 11,000", "Strep A Antigen Positive", "Elevated CRP"],
+                    "extracted_text": "WBC Count: 12,400 /uL (Elevated). Rapid Strep A Antigen: POSITIVE. CRP: 24 mg/L.",
+                },
+            )
+            db.add(doc_file)
+
+            # 3. Unpaid Invoice
+            unpaid_inv = Invoice(
+                id=1,
+                invoice_number="INV-2026-TEST-0001",
+                owner_user_id=1,
+                hospital_id=1,
+                appointment_id=100,
+                amount_minor=50000,
+                currency="INR",
+                status="unpaid",
+                description="Consultation fee - Dr. Sameer Verma",
+            )
+            # 4. Paid Invoice
+            paid_inv = Invoice(
+                id=2,
+                invoice_number="INV-2026-TEST-0002",
+                owner_user_id=1,
+                hospital_id=1,
+                appointment_id=None,
+                amount_minor=65000,
+                currency="INR",
+                status="paid",
+                paid_at=datetime.now(timezone.utc),
+                description="Comprehensive ENT Examination & Swab",
+            )
+            db.add_all([unpaid_inv, paid_inv])
+            db.flush()
+
+            # 5. Payment for Paid Invoice
+            payment = Payment(
+                id=1,
+                invoice_id=paid_inv.id,
+                status="captured",
+                provider_payment_id="pay_test_pdf_12345",
+                provider_order_id="order_test_pdf_67890",
+            )
+            db.add(payment)
+            db.commit()
+
+        alice_user = sessions().get(User, 1)
+        bob_user = sessions().get(User, 2)
+        doc_user = sessions().get(User, 3)
+
+        # A. Alice: Clinical Note PDF
+        app.dependency_overrides[get_current_user] = lambda: alice_user
+        note_pdf_resp = client.get("/api/v1/records/notes/1/pdf")
+        assert note_pdf_resp.status_code == 200
+        assert note_pdf_resp.headers["content-type"] == "application/pdf"
+        assert len(note_pdf_resp.content) > 1000
+
+        # B. Alice: Follow-up Plan PDF
+        followup_pdf_resp = client.get("/api/v1/records/followup/1/pdf")
+        assert followup_pdf_resp.status_code == 200
+        assert followup_pdf_resp.headers["content-type"] == "application/pdf"
+        assert len(followup_pdf_resp.content) > 1000
+
+        # C. Alice: Longitudinal Health Summary PDF
+        summary_pdf_resp = client.get("/api/v1/records/summary/pdf")
+        assert summary_pdf_resp.status_code == 200
+        assert summary_pdf_resp.headers["content-type"] == "application/pdf"
+        assert len(summary_pdf_resp.content) > 1000
+
+        # D. Alice: Diagnostic Document Summary PDF
+        doc_pdf_resp = client.get("/api/v1/records/documents/1/summary/pdf")
+        assert doc_pdf_resp.status_code == 200
+        assert doc_pdf_resp.headers["content-type"] == "application/pdf"
+        assert len(doc_pdf_resp.content) > 1000
+
+        # E. Alice: Appointment Confirmation Slip PDF
+        appt_pdf_resp = client.get("/api/v1/records/appointments/100/confirmation/pdf")
+        assert appt_pdf_resp.status_code == 200
+        assert appt_pdf_resp.headers["content-type"] == "application/pdf"
+        assert len(appt_pdf_resp.content) > 1000
+
+        # F. Alice: Tax Invoice PDF (for unpaid and paid)
+        inv_pdf_resp = client.get("/api/v1/billing/invoices/1/pdf")
+        assert inv_pdf_resp.status_code == 200
+        assert inv_pdf_resp.headers["content-type"] == "application/pdf"
+        assert len(inv_pdf_resp.content) > 1000
+
+        # G. Alice: Receipt for unpaid invoice should be rejected (400)
+        unpaid_receipt_resp = client.get("/api/v1/billing/receipts/1/pdf")
+        assert unpaid_receipt_resp.status_code == 400
+        assert "paid" in unpaid_receipt_resp.json()["detail"]
+
+        # H. Alice: Receipt for paid invoice succeeds (200)
+        paid_receipt_resp = client.get("/api/v1/billing/receipts/2/pdf")
+        assert paid_receipt_resp.status_code == 200
+        assert paid_receipt_resp.headers["content-type"] == "application/pdf"
+        assert len(paid_receipt_resp.content) > 1000
+
+        # I. Security / BOLA checks: Bob cannot access Alice's documents
+        app.dependency_overrides[get_current_user] = lambda: bob_user
+        assert client.get("/api/v1/records/notes/1/pdf").status_code == 403
+        assert client.get("/api/v1/records/followup/1/pdf").status_code == 403
+        assert client.get("/api/v1/records/documents/1/summary/pdf").status_code == 403
+        assert client.get("/api/v1/records/appointments/100/confirmation/pdf").status_code == 403
+        assert client.get("/api/v1/billing/invoices/1/pdf").status_code == 403
+        assert client.get("/api/v1/billing/receipts/2/pdf").status_code == 403
+
+        # J. Doctor can access assigned patient's clinical note PDF and summary PDF
+        app.dependency_overrides[get_current_user] = lambda: doc_user
+        doc_note_resp = client.get("/api/v1/records/notes/1/pdf")
+        assert doc_note_resp.status_code == 200
+        doc_summary_resp = client.get("/api/v1/records/summary/pdf?patient_user_id=1")
+        assert doc_summary_resp.status_code == 200
+    finally:
+        app.dependency_overrides.clear()
+        engine.dispose()
+

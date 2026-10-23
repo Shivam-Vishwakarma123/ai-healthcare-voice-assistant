@@ -1,5 +1,6 @@
 const IST = "Asia/Kolkata";
 
+// Formats appointment date-time timestamps into localized Indian Standard Time calendar representations.
 export function formatAppointmentDateTime(value, locale = "en-IN") {
   return new Intl.DateTimeFormat(locale, {
     timeZone: IST,
@@ -12,6 +13,7 @@ export function formatAppointmentDateTime(value, locale = "en-IN") {
   }).format(new Date(value));
 }
 
+// Extracts isolated day or month substrings formatted according to IST timezone conventions.
 export function formatAppointmentDatePart(value, part, locale = "en-IN") {
   return new Intl.DateTimeFormat(locale, {
     timeZone: IST,
@@ -20,6 +22,7 @@ export function formatAppointmentDatePart(value, part, locale = "en-IN") {
   }).format(new Date(value));
 }
 
+// Computes ISO calendar date strings (YYYY-MM-DD) anchored to Indian Standard Time with offset day shifts.
 export function getISTDate(offsetDays = 0) {
   const now = new Date();
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -33,6 +36,7 @@ export function getISTDate(offsetDays = 0) {
   return date.toISOString().slice(0, 10);
 }
 
+// Generates unique cryptographic UUIDs or secure fallback strings for API request idempotency keys.
 export function createIdempotencyKey() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   return `appointment-${Date.now()}-${Math.random().toString(36).slice(2)}`;

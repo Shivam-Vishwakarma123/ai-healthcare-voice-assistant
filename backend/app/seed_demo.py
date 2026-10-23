@@ -1,6 +1,8 @@
 """Idempotent development-only CareVoice demo-data seeder."""
 
+import argparse
 import os
+import sys
 import uuid
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -16,7 +18,7 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.auth.security import hash_password
@@ -31,6 +33,7 @@ from app.models.clinical import (
     Prescription,
     PrescriptionItem,
 )
+from app.models.conversation import AssistantConversation, AssistantMessage
 from app.models.patient import Patient
 from app.models.providers import (
     Appointment,
@@ -421,7 +424,10 @@ def _ensure_appointments(
                 or appointment.hospital_id != hospital_id
                 or appointment.patient_user_id != patient.id
             ):
-                raise ValueError(f"Demo appointment marker conflicts with appointment {appointment.id}.")
+                # Sync demo appointment fields if the seed specification evolved
+                appointment.doctor_id = doctor.id
+                appointment.hospital_id = hospital_id
+                appointment.patient_user_id = patient.id
     db.flush()
     return created
 
@@ -463,13 +469,20 @@ def _ensure_invoices_and_payments(db: Session) -> tuple[int, int]:
                 or invoice.hospital_id != appointment.hospital_id
                 or invoice.amount_minor != doctor.fee_minor
             ):
-                raise ValueError(f"Invoice already exists with inconsistent details for demo appointment {appointment.id}.")
+                invoice.owner_user_id = appointment.patient_user_id
+                invoice.hospital_id = appointment.hospital_id
+                invoice.amount_minor = doctor.fee_minor
         elif (
             invoice.appointment_id != appointment.id
             or invoice.owner_user_id != appointment.patient_user_id
             or invoice.amount_minor != doctor.fee_minor
         ):
-            raise ValueError(f"Demo invoice number conflicts with an existing invoice: {invoice_number}")
+            if invoice.invoice_number.startswith(SEED_MARKER):
+                invoice.appointment_id = appointment.id
+                invoice.owner_user_id = appointment.patient_user_id
+                invoice.amount_minor = doctor.fee_minor
+            else:
+                raise ValueError(f"Demo invoice number conflicts with an existing invoice: {invoice_number}")
 
         payment_order_id = f"demo_seed_v1_{invoice.id}"
         payment = db.scalar(select(Payment).where(Payment.provider_order_id == payment_order_id))
@@ -659,6 +672,233 @@ def _create_sample_diagnostic_pdf(
 
     doc.build(story)
     return os.path.getsize(filepath)
+
+
+def _ensure_demo_conversations(
+    db: Session,
+    patients: list[User],
+) -> int:
+    """Seed multi-turn consultation conversations and assistant messages."""
+    if not patients:
+        return 0
+    aarav = patients[0]
+    diya = patients[1] if len(patients) > 1 else None
+    now = datetime.now(timezone.utc)
+    created = 0
+
+    demo_conversations = [
+        {
+            "user": aarav,
+            "conversation_id": f"{SEED_MARKER}-CONV-01",
+            "title": "Acute Pharyngitis & Upper Respiratory Consultation",
+            "category": "ent",
+            "urgency_level": "routine",
+            "summary": "Patient reports 3-day history of scratchy sore throat, difficulty swallowing, and low-grade fever (100.4°F). Documented Penicillin allergy avoided. Warm saline gargles and paracetamol advised.",
+            "days_ago": 28,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Hello CareVoice, I have had a severe scratchy sore throat for 3 days and painful swallowing. My temperature reached 100.4°F this morning. What should I do?",
+                    "structured_data": None,
+                },
+                {
+                    "role": "assistant",
+                    "content": "Hello Aarav. Based on your symptoms of acute sore throat, painful swallowing, and low-grade fever (100.4°F), this presentation is most consistent with viral pharyngitis. Centor criteria calculation indicates low likelihood (Score 2) of streptococcal pharyngitis.\n\n⚠️ ALLERGY NOTICE: You have a documented severe allergy to Penicillins (urticaria/rash). Beta-lactam antibiotics must not be prescribed.\n\nRecommended home care:\n1. Warm saline gargles (1/2 teaspoon salt in 1 cup warm water) 3-4 times daily.\n2. Hydration maintenance with warm broths and water.\n3. Paracetamol 650mg SOS after meals for fever/pain (avoid NSAIDs due to your recorded sensitivity).\n4. Schedule an in-person clinical check if fever >101°F persists >48 hours.",
+                    "structured_data": {
+                        "triage_urgency": "routine",
+                        "citations": [
+                            {"title": "WHO Guidelines on Pharyngitis and Sore Throat Home Management", "source_url": "https://who.int/guidelines/pharyngitis"},
+                            {"title": "NIH MedQuAD Pharyngitis Clinical Care Guide", "source_url": "https://medlineplus.gov/sorethroat.html"},
+                        ],
+                        "red_flags": [],
+                    },
+                },
+                {
+                    "role": "user",
+                    "content": "Thank you. What warning signs should I watch for that would mean I need immediate emergency help?",
+                    "structured_data": None,
+                },
+                {
+                    "role": "assistant",
+                    "content": "Please seek immediate emergency medical care (call 112) if you experience:\n• Stridor, wheezing, or difficulty breathing\n• Inability to swallow saliva or fluids (drooling)\n• Inability to fully open your mouth (trismus)\n• Neck stiffness or high fever above 102°F\n\nDr. Asha Demo has been notified and an encounter note has been prepared for your record.",
+                    "structured_data": {
+                        "emergency_helpline": "112",
+                        "citations": [],
+                    },
+                },
+            ],
+        },
+        {
+            "user": aarav,
+            "conversation_id": f"{SEED_MARKER}-CONV-02",
+            "title": "Stage 1 Hypertension & Lifestyle Evaluation",
+            "category": "cardiology",
+            "urgency_level": "routine",
+            "summary": "Longitudinal evaluation of home blood pressure readings (mean 140/90 mmHg). Patient remains asymptomatic. DASH dietary sodium restriction and cardiology consultation arranged.",
+            "days_ago": 14,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "My home blood pressure monitor has been averaging 140/90 mmHg over the past two weeks. I feel completely fine, but should I be worried?",
+                    "structured_data": None,
+                },
+                {
+                    "role": "assistant",
+                    "content": "A resting blood pressure of 140/90 mmHg falls into the Stage 1 Essential Hypertension category under ACC/AHA clinical guidelines. Because you are currently asymptomatic with no chest tightness or shortness of breath, this is not an acute hypertensive emergency, but it does require proactive clinical management.\n\nRecommended next steps:\n1. Maintain a daily blood pressure log (measure twice daily: morning before breakfast and evening before dinner).\n2. Adopt the Dietary Approaches to Stop Hypertension (DASH) protocol: restrict sodium to <2,000 mg/day.\n3. Engage in 150 minutes of moderate aerobic activity weekly.\n4. Consult attending cardiologist Dr. Kabir Sample for baseline ECG and lipid evaluation.",
+                    "structured_data": {
+                        "triage_urgency": "routine",
+                        "citations": [
+                            {"title": "NIH NHLBI Guidelines on High Blood Pressure in Adults", "source_url": "https://nih.gov/health-topics/high-blood-pressure"}
+                        ],
+                    },
+                },
+            ],
+        },
+        {
+            "user": aarav,
+            "conversation_id": f"{SEED_MARKER}-CONV-03",
+            "title": "Seasonal Allergic Rhinitis & Sinus Congestion",
+            "category": "allergy",
+            "urgency_level": "routine",
+            "summary": "Patient presented with bouts of morning sneezing, ocular pruritus, and clear rhinorrhea. Moderate-to-severe allergic rhinitis confirmed. Antihistamine and nasal corticosteroid plan initiated.",
+            "days_ago": 21,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Every morning I have bouts of 10 to 15 sneezes, my eyes are red and itchy, and my nose runs constantly. Dust seems to trigger it.",
+                    "structured_data": None,
+                },
+                {
+                    "role": "assistant",
+                    "content": "Your symptoms are classic indicators of Seasonal Allergic Rhinitis with allergic rhinoconjunctivitis. Allergen exposure triggers mast cell degranulation, releasing histamines that cause mucosal edema and secretions.\n\nClinical plan:\n1. Second-generation non-sedating H1-antihistamine (Levocetirizine 5mg).\n2. Intranasal corticosteroid spray (Fluticasone Propionate) — use consistently as peak efficacy occurs after 3-5 days.\n3. Environmental mitigations: Keep windows closed during early morning pollen peaks and use a HEPA air purifier.\n4. Avoid oral NSAIDs for associated sinus aches due to your recorded sensitivity.",
+                    "structured_data": {
+                        "triage_urgency": "routine",
+                        "citations": [
+                            {"title": "MedlinePlus Allergic Rhinitis Clinical Reference", "source_url": "https://medlineplus.gov/allergicrhinitis.html"}
+                        ],
+                    },
+                },
+            ],
+        },
+        {
+            "user": aarav,
+            "conversation_id": f"{SEED_MARKER}-CONV-04",
+            "title": "Acute Gastroenteritis & Oral Rehydration Guidance",
+            "category": "gastroenterology",
+            "urgency_level": "routine",
+            "summary": "Sudden onset watery diarrhea and nausea. WHO-standard ORS fluid replacement therapy and 14-day zinc mucosal restoration protocol established.",
+            "days_ago": 7,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "I came down with sudden nausea and 5 loose watery stools since yesterday after eating at a party. No fever or blood, but I feel weak.",
+                    "structured_data": None,
+                },
+                {
+                    "role": "assistant",
+                    "content": "This presentation is typical for acute viral gastroenteritis. Preventing dehydration is the primary clinical goal.\n\nHome rehydration protocol:\n1. WHO-standard Oral Rehydration Salts (ORS): Dissolve 1 sachet in exactly 1 Liter of clean boiled water. Drink 200-400 mL after each loose stool.\n2. Zinc supplementation (20mg daily for 14 days) to accelerate intestinal mucosal healing.\n3. BRAT diet: Bananas, Rice, Applesauce, Toast. Avoid dairy, high-fat foods, and caffeine.\n4. Alert triggers: Seek urgent care if vomiting prevents fluid retention, high fever develops, or stool contains blood.",
+                    "structured_data": {
+                        "triage_urgency": "routine",
+                        "citations": [
+                            {"title": "WHO Clinical Management of Acute Diarrhea & ORS Formulation", "source_url": "https://who.int/publications/diarrhoea-treatment"}
+                        ],
+                    },
+                },
+            ],
+        },
+        {
+            "user": aarav,
+            "conversation_id": f"{SEED_MARKER}-CONV-05",
+            "title": "Nocturnal Wheezing & Asthma Action Plan",
+            "category": "pulmonology",
+            "urgency_level": "urgent",
+            "summary": "Nocturnal dry cough and wheezing following cold exposure. Peak flow monitoring showed 475 L/min (82% personal best, Yellow Zone). Inhaled bronchodilator protocol reviewed.",
+            "days_ago": 2,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "I woke up at 2 AM with a tight chest and audible wheezing. My home peak flow meter reads 475 L/min; my normal best is 580.",
+                    "structured_data": None,
+                },
+                {
+                    "role": "assistant",
+                    "content": "Your peak expiratory flow is at 82% of your baseline, placing you in the Yellow Caution Zone under Global Initiative for Asthma (GINA) guidelines.\n\nImmediate instructions:\n1. Sit upright; do not lie flat. Stay in a warm, dust-free environment.\n2. Administer your prescribed bronchodilator rescue inhaler (2 puffs with a spacer).\n3. Re-check peak flow after 20-30 minutes.\n4. 🚨 EMERGENCY WARNING: If you experience difficulty speaking in full sentences, chest retractions, cyanosis, or if peak flow falls below 50% (< 290 L/min), call 112 immediately or proceed to the nearest emergency room.",
+                    "structured_data": {
+                        "triage_urgency": "urgent",
+                        "red_flags": [
+                            "Notify immediately if unable to speak full sentences, central cyanosis develops, or PEF falls below 50% (Red Zone)"
+                        ],
+                        "citations": [
+                            {"title": "Global Initiative for Asthma (GINA) Management Strategy", "source_url": "https://ginasthma.org/reports"}
+                        ],
+                    },
+                },
+            ],
+        },
+    ]
+
+    if diya:
+        demo_conversations.append({
+            "user": diya,
+            "conversation_id": f"{SEED_MARKER}-CONV-06",
+            "title": "Episodic Migraine Headache with Visual Aura",
+            "category": "neurology",
+            "urgency_level": "routine",
+            "summary": "Patient reports recurring unilateral throbbing headaches preceded by scintillating scotoma and photophobia. SNOOP criteria screened negative.",
+            "days_ago": 10,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "I get severe throbbing headaches on the right side of my head, usually preceded by flashing zigzag lights in my vision for 20 minutes.",
+                    "structured_data": None,
+                },
+                {
+                    "role": "assistant",
+                    "content": "The visual disturbance you describe is a scintillating scotoma, a classic migraine aura. The subsequent unilateral throbbing headache meets the International Headache Society diagnostic criteria for Migraine with Aura.\n\nGuidance:\n1. Rest in a dark, quiet room with cold compress at symptom onset.\n2. Maintain consistent sleep schedule and hydration; keep a headache trigger diary.\n3. Screen for SNOOP red flags (sudden thunderclap onset, systemic symptoms, neurological deficit) — all negative in your report.\n4. Neurological consultation with Dr. Asha arranged.",
+                    "structured_data": {
+                        "triage_urgency": "routine",
+                        "citations": [],
+                    },
+                },
+            ],
+        })
+
+    for c_data in demo_conversations:
+        existing_conv = db.scalar(
+            select(AssistantConversation).where(
+                AssistantConversation.conversation_id == c_data["conversation_id"]
+            )
+        )
+        if existing_conv is None:
+            conv_date = now - timedelta(days=c_data["days_ago"])
+            conv = AssistantConversation(
+                conversation_id=c_data["conversation_id"],
+                user_id=c_data["user"].id,
+                title=c_data["title"],
+                category=c_data["category"],
+                urgency_level=c_data["urgency_level"],
+                summary=c_data["summary"],
+                consent_given=True,
+                is_active=True,
+                created_at=conv_date,
+            )
+            db.add(conv)
+            db.flush()
+
+            for msg_idx, m_data in enumerate(c_data["messages"]):
+                msg_time = conv_date + timedelta(minutes=msg_idx * 2)
+                msg = AssistantMessage(
+                    conversation_id=conv.id,
+                    role=m_data["role"],
+                    content=m_data["content"],
+                    structured_data=m_data.get("structured_data"),
+                    created_at=msg_time,
+                )
+                db.add(msg)
+            created += 1
+
+    db.flush()
+    return created
 
 
 def _ensure_demo_clinical_records(
@@ -936,6 +1176,41 @@ def _ensure_demo_clinical_records(
                 ("Zinc Sulfate Monohydrate", "20 mg elemental zinc", "tablet", "oral", "1-0-0 (Morning)", "14 days", "14 tablets", "Take once daily with breakfast for 14 continuous days"),
             ],
         },
+        {
+            "prescription_number": "RX-20261022-DRAFT01",
+            "days_ago": 1,
+            "doctor": dr_asha,
+            "finalized_by": None,
+            "is_ai_draft": True,
+            "status": "draft",
+            "diagnosis": "AI Draft: Acute Rhino-sinusitis & Bronchospasm",
+            "notes": "AI Generated Draft: Awaiting attending physician review and digital signature. Penicillin allergy confirmed and beta-lactams avoided.",
+            "warnings": [
+                "AI Screening: Documented Penicillin allergy present. Beta-lactams prohibited.",
+                "NSAID warning: Avoid Aspirin and Ibuprofen due to sensitivity reaction.",
+            ],
+            "items": [
+                ("Azithromycin", "500 mg", "tablet", "oral", "1-0-0 (Once daily)", "3 days", "3 tablets", "Take 1 hour before or 2 hours after meals"),
+                ("Levocetirizine", "5 mg", "tablet", "oral", "0-0-1 (Night)", "7 days", "7 tablets", "Take at bedtime with water"),
+            ],
+        },
+        {
+            "prescription_number": "RX-20261023-DRAFT02",
+            "days_ago": 0,
+            "doctor": dr_kabir,
+            "finalized_by": None,
+            "is_ai_draft": True,
+            "status": "draft",
+            "diagnosis": "AI Draft: Essential Hypertension Regimen Review",
+            "notes": "AI Generated Draft: Awaiting serum electrolytes and physician sign-off.",
+            "warnings": [
+                "Allergy profile verified. No contraindications detected.",
+            ],
+            "items": [
+                ("Telmisartan", "40 mg", "tablet", "oral", "1-0-0 (Morning)", "30 days", "30 tablets", "Take in morning after breakfast"),
+                ("Hydrochlorothiazide", "12.5 mg", "tablet", "oral", "1-0-0 (Morning)", "30 days", "30 tablets", "Pending clinician review and baseline serum potassium check"),
+            ],
+        },
     ]
 
     for rx_data in demo_prescriptions:
@@ -947,6 +1222,7 @@ def _ensure_demo_clinical_records(
         )
         if existing_rx is None:
             rx_date = now - timedelta(days=rx_data["days_ago"])
+            is_draft = rx_data.get("is_ai_draft", False) or rx_data.get("status") == "draft"
             rx = Prescription(
                 prescription_number=rx_data["prescription_number"],
                 patient_user_id=aarav.id,
@@ -954,9 +1230,10 @@ def _ensure_demo_clinical_records(
                 diagnosis=rx_data["diagnosis"],
                 notes=rx_data["notes"],
                 allergy_warnings=rx_data["warnings"],
-                status="finalized",
-                finalized_at=rx_date,
-                finalized_by_user_id=rx_data["finalized_by"].id if rx_data["finalized_by"] else aarav.id,
+                is_ai_draft=is_draft,
+                status="draft" if is_draft else rx_data.get("status", "finalized"),
+                finalized_at=None if is_draft else rx_date,
+                finalized_by_user_id=None if is_draft else (rx_data["finalized_by"].id if rx_data.get("finalized_by") else aarav.id),
                 created_at=rx_date,
             )
             for it in rx_data["items"]:
@@ -1036,6 +1313,34 @@ def _ensure_demo_clinical_records(
             "plan": "1. Continue current lifestyle regimen and medication. 2. Routine age-appropriate screening: baseline dental prophylaxis and annual ophthalmological fundus check. 3. Repeat fasting lipid panel and renal parameters in 12 months.",
             "follow_up": "Next annual preventive wellness assessment in 12 months.",
         },
+        {
+            "chief_complaint": "AI Draft: Acute Sinus Congestion and Cough",
+            "days_ago": 1,
+            "doctor": dr_asha,
+            "finalized_by": None,
+            "note_type": "consultation_note",
+            "is_ai_draft": True,
+            "status": "draft",
+            "hpi": "Patient completed AI symptom assessment for acute sinus pressure, facial fullness, and morning dry cough.",
+            "exam": "Pending in-person physical examination and physician encounter.",
+            "assessment": "AI Draft: Acute viral rhino-sinusitis. Differential includes allergic flare-up.",
+            "plan": "Warm saline steam inhalation, hydration, avoidance of environmental allergens. In-person review recommended.",
+            "follow_up": "Awaiting attending physician review and electronic signature.",
+        },
+        {
+            "chief_complaint": "AI Draft: Follow-up on Blood Pressure Readings",
+            "days_ago": 0,
+            "doctor": dr_kabir,
+            "finalized_by": None,
+            "note_type": "progress_note",
+            "is_ai_draft": True,
+            "status": "draft",
+            "hpi": "Patient recorded home blood pressure log averaging 138-142 / 88-92 mmHg over past 7 days.",
+            "exam": "To be verified at upcoming clinical encounter.",
+            "assessment": "AI Draft: Stage 1 Essential Hypertension responding to initial lifestyle modification.",
+            "plan": "Review daily sodium intake log and consider combination therapy if SBP > 140 persists.",
+            "follow_up": "Awaiting clinician electronic review and sign-off.",
+        },
     ]
 
     for n_data in demo_notes:
@@ -1047,6 +1352,7 @@ def _ensure_demo_clinical_records(
         )
         if existing_note is None:
             note_date = now - timedelta(days=n_data["days_ago"])
+            is_draft = n_data.get("is_ai_draft", False) or n_data.get("status") == "draft"
             note = ClinicalNote(
                 patient_user_id=aarav.id,
                 doctor_id=n_data["doctor"].id,
@@ -1057,9 +1363,10 @@ def _ensure_demo_clinical_records(
                 assessment=n_data["assessment"],
                 plan=n_data["plan"],
                 follow_up_instructions=n_data["follow_up"],
-                status="finalized",
-                finalized_at=note_date,
-                finalized_by_user_id=n_data["finalized_by"].id if n_data["finalized_by"] else aarav.id,
+                is_ai_draft=is_draft,
+                status="draft" if is_draft else n_data.get("status", "finalized"),
+                finalized_at=None if is_draft else note_date,
+                finalized_by_user_id=None if is_draft else (n_data["finalized_by"].id if n_data.get("finalized_by") else aarav.id),
                 created_at=note_date,
             )
             db.add(note)
@@ -1203,6 +1510,16 @@ def _ensure_demo_clinical_records(
                 MedicalDocument.title == doc_data["title"],
             )
         )
+        structured_extracted_data = {
+            "category": doc_data["category"],
+            "status": "VERIFIED",
+            "parameters": [
+                {"name": p[0], "value": p[1], "reference_range": p[2], "status": p[3]}
+                for p in doc_data["parameters"]
+            ],
+            "interpretation": doc_data["interpretation"],
+            "signing_doctor": doc_data["doctor"],
+        }
         if existing_doc is None:
             doc_date = now - timedelta(days=doc_data["days_ago"])
             doc = MedicalDocument(
@@ -1214,11 +1531,13 @@ def _ensure_demo_clinical_records(
                 file_size=file_size,
                 mime_type="application/pdf",
                 notes=f"Synthetic diagnostic record for {doc_data['title']}.",
-                extracted_data={"category": doc_data["category"], "status": "VERIFIED"},
+                extracted_data=structured_extracted_data,
                 created_at=doc_date,
             )
             db.add(doc)
             counts["documents_created"] += 1
+        elif not (existing_doc.extracted_data or {}).get("parameters"):
+            existing_doc.extracted_data = structured_extracted_data
 
     db.flush()
     return counts
@@ -1235,6 +1554,7 @@ def seed_demo_data(db: Session) -> dict[str, int]:
     doctor_accounts_created = _ensure_doctor_accounts(db, doctors, hospitals)
     appointments_created = _ensure_appointments(db, doctors, patients, hospitals)
     invoices_created, payments_created = _ensure_invoices_and_payments(db)
+    conversations_created = _ensure_demo_conversations(db, patients)
     clinical_counts = _ensure_demo_clinical_records(db, patients, doctors, hospitals)
     return {
         "hospitals_created": hospitals_created,
@@ -1246,16 +1566,272 @@ def seed_demo_data(db: Session) -> dict[str, int]:
         "appointments_created": appointments_created,
         "invoices_created": invoices_created,
         "payments_created": payments_created,
+        "conversations_created": conversations_created,
         **clinical_counts,
     }
 
 
-def main() -> None:
+def clean_demo_data(db: Session) -> dict[str, int]:
+    """Safely remove synthetic demo records without affecting real user data."""
     if settings.app_env.strip().lower() not in {"development", "test"}:
-        raise SystemExit("Demo seeding is disabled unless APP_ENV is development or test.")
+        raise RuntimeError("Demo cleaning is disabled unless APP_ENV is development or test.")
+
+    cleaned_counts: dict[str, int] = {
+        "prescription_items_removed": 0,
+        "prescriptions_removed": 0,
+        "clinical_notes_removed": 0,
+        "medical_reports_removed": 0,
+        "medical_documents_removed": 0,
+        "allergies_removed": 0,
+        "messages_removed": 0,
+        "conversations_removed": 0,
+        "payments_removed": 0,
+        "invoices_removed": 0,
+        "appointment_events_removed": 0,
+        "appointments_removed": 0,
+        "doctor_schedules_removed": 0,
+        "doctor_qualifications_removed": 0,
+        "doctors_removed": 0,
+        "patients_removed": 0,
+        "users_removed": 0,
+        "hospitals_removed": 0,
+    }
+
+    demo_emails = [
+        "patient01@demo.carevoice.test",
+        "patient02@demo.carevoice.test",
+        "doctor01@demo.carevoice.test",
+        "doctor02@demo.carevoice.test",
+        "admin01@demo.carevoice.test",
+        "admin02@demo.carevoice.test",
+    ]
+    demo_users = db.scalars(
+        select(User).where(
+            User.email.in_(demo_emails) | User.email.like("%@demo.carevoice.test")
+        )
+    ).all()
+    demo_user_ids = [u.id for u in demo_users]
+
+    demo_doctors = (
+        db.scalars(
+            select(Doctor).where(
+                Doctor.id.in_([u.doctor_id for u in demo_users if u.doctor_id is not None])
+                | Doctor.bio.like(f"{SEED_MARKER}: fictional clinician %")
+            )
+        ).all()
+        if demo_users
+        else []
+    )
+    demo_doctor_ids = [d.id for d in demo_doctors]
+
+    # 1. Prescription items & Prescriptions
+    demo_prescriptions = (
+        db.scalars(
+            select(Prescription).where(
+                (Prescription.patient_user_id.in_(demo_user_ids))
+                | (Prescription.prescription_number.like("RX-DEMO-%"))
+                | (Prescription.prescription_number.like("RX-202610%"))
+            )
+        ).all()
+        if demo_user_ids
+        else []
+    )
+    demo_rx_ids = [rx.id for rx in demo_prescriptions]
+    if demo_rx_ids:
+        deleted_items = db.execute(
+            delete(PrescriptionItem).where(PrescriptionItem.prescription_id.in_(demo_rx_ids))
+        ).rowcount
+        cleaned_counts["prescription_items_removed"] = deleted_items
+        deleted_rxs = db.execute(
+            delete(Prescription).where(Prescription.id.in_(demo_rx_ids))
+        ).rowcount
+        cleaned_counts["prescriptions_removed"] = deleted_rxs
+
+    # 2. Clinical Notes
+    if demo_user_ids or demo_doctor_ids:
+        deleted_notes = db.execute(
+            delete(ClinicalNote).where(
+                ClinicalNote.patient_user_id.in_(demo_user_ids)
+                | ClinicalNote.doctor_id.in_(demo_doctor_ids)
+            )
+        ).rowcount
+        cleaned_counts["clinical_notes_removed"] = deleted_notes
+
+    # 3. Medical Reports
+    if demo_user_ids:
+        deleted_reports = db.execute(
+            delete(MedicalReport).where(
+                MedicalReport.patient_user_id.in_(demo_user_ids)
+                | MedicalReport.report_id.like("REP-DEMO-%")
+            )
+        ).rowcount
+        cleaned_counts["medical_reports_removed"] = deleted_reports
+
+    # 4. Medical Documents
+    if demo_user_ids:
+        demo_docs = db.scalars(
+            select(MedicalDocument).where(MedicalDocument.patient_user_id.in_(demo_user_ids))
+        ).all()
+        for d in demo_docs:
+            if d.file_path and os.path.exists(d.file_path) and "sample_" in os.path.basename(d.file_path):
+                try:
+                    os.remove(d.file_path)
+                except OSError:
+                    pass
+        deleted_docs = db.execute(
+            delete(MedicalDocument).where(MedicalDocument.patient_user_id.in_(demo_user_ids))
+        ).rowcount
+        cleaned_counts["medical_documents_removed"] = deleted_docs
+
+    # 5. Patient Allergies
+    if demo_user_ids:
+        deleted_allergies = db.execute(
+            delete(PatientAllergy).where(PatientAllergy.patient_user_id.in_(demo_user_ids))
+        ).rowcount
+        cleaned_counts["allergies_removed"] = deleted_allergies
+
+    # 6. Assistant Messages & Conversations
+    demo_conversations = (
+        db.scalars(
+            select(AssistantConversation).where(
+                (AssistantConversation.user_id.in_(demo_user_ids))
+                | (AssistantConversation.conversation_id.like("conv-aarav-demo-%"))
+                | (AssistantConversation.conversation_id.like("conv-diya-demo-%"))
+            )
+        ).all()
+        if demo_user_ids
+        else []
+    )
+    demo_conv_ids = [c.id for c in demo_conversations]
+    if demo_conv_ids:
+        deleted_msgs = db.execute(
+            delete(AssistantMessage).where(AssistantMessage.conversation_id.in_(demo_conv_ids))
+        ).rowcount
+        cleaned_counts["messages_removed"] = deleted_msgs
+        deleted_convs = db.execute(
+            delete(AssistantConversation).where(AssistantConversation.id.in_(demo_conv_ids))
+        ).rowcount
+        cleaned_counts["conversations_removed"] = deleted_convs
+
+    # 7. Payments & Invoices
+    demo_invoices = (
+        db.scalars(
+            select(Invoice).where(
+                (Invoice.owner_user_id.in_(demo_user_ids))
+                | (Invoice.invoice_number.like("INV-DEMO-%"))
+            )
+        ).all()
+        if demo_user_ids
+        else []
+    )
+    demo_inv_ids = [inv.id for inv in demo_invoices]
+    if demo_inv_ids:
+        deleted_payments = db.execute(
+            delete(Payment).where(Payment.invoice_id.in_(demo_inv_ids))
+        ).rowcount
+        cleaned_counts["payments_removed"] = deleted_payments
+        deleted_invoices = db.execute(
+            delete(Invoice).where(Invoice.id.in_(demo_inv_ids))
+        ).rowcount
+        cleaned_counts["invoices_removed"] = deleted_invoices
+
+    # 8. Appointments & Events
+    demo_appointments = (
+        db.scalars(
+            select(Appointment).where(
+                (Appointment.patient_user_id.in_(demo_user_ids))
+                | (Appointment.doctor_id.in_(demo_doctor_ids))
+            )
+        ).all()
+        if demo_user_ids
+        else []
+    )
+    demo_appt_ids = [a.id for a in demo_appointments]
+    if demo_appt_ids:
+        deleted_locks = db.execute(
+            delete(AppointmentSlotLock).where(
+                AppointmentSlotLock.appointment_id.in_(demo_appt_ids)
+                | AppointmentSlotLock.doctor_id.in_(demo_doctor_ids)
+            )
+        ).rowcount
+        deleted_events = db.execute(
+            delete(AppointmentEvent).where(AppointmentEvent.appointment_id.in_(demo_appt_ids))
+        ).rowcount
+        cleaned_counts["appointment_events_removed"] = deleted_events
+        deleted_appts = db.execute(
+            delete(Appointment).where(Appointment.id.in_(demo_appt_ids))
+        ).rowcount
+        cleaned_counts["appointments_removed"] = deleted_appts
+
+    # 9. Doctor Schedules, Qualifications & Doctors
+    if demo_doctor_ids:
+        deleted_schedules = db.execute(
+            delete(DoctorSchedule).where(DoctorSchedule.doctor_id.in_(demo_doctor_ids))
+        ).rowcount
+        cleaned_counts["doctor_schedules_removed"] = deleted_schedules
+        deleted_quals = db.execute(
+            delete(DoctorQualification).where(DoctorQualification.doctor_id.in_(demo_doctor_ids))
+        ).rowcount
+        cleaned_counts["doctor_qualifications_removed"] = deleted_quals
+        deleted_docs = db.execute(
+            delete(Doctor).where(Doctor.id.in_(demo_doctor_ids))
+        ).rowcount
+        cleaned_counts["doctors_removed"] = deleted_docs
+
+    # 10. Patients
+    if demo_user_ids:
+        deleted_patients = db.execute(
+            delete(Patient).where(Patient.owner_user_id.in_(demo_user_ids))
+        ).rowcount
+        cleaned_counts["patients_removed"] = deleted_patients
+
+    # 11. Demo Users
+    if demo_user_ids:
+        deleted_users = db.execute(
+            delete(User).where(User.id.in_(demo_user_ids))
+        ).rowcount
+        cleaned_counts["users_removed"] = deleted_users
+
+    # 12. Demo Hospitals (only if no remaining doctors)
+    demo_hospital_names = [
+        "CareVoice Model Hospital - Indiranagar",
+        "CareVoice Health Center - Koramangala",
+    ]
+    demo_hospitals = db.scalars(
+        select(Hospital).where(Hospital.name.in_(demo_hospital_names))
+    ).all()
+    for hosp in demo_hospitals:
+        remaining_doctors = db.scalar(
+            select(Doctor).where(Doctor.hospital_id == hosp.id)
+        )
+        if not remaining_doctors:
+            db.delete(hosp)
+            cleaned_counts["hospitals_removed"] += 1
+
+    db.flush()
+    return cleaned_counts
+
+
+def main(argv: list[str] | None = None) -> None:
+    if settings.app_env.strip().lower() not in {"development", "test"}:
+        raise SystemExit("Demo operations are disabled unless APP_ENV is development or test.")
+
+    parser = argparse.ArgumentParser(description="CareVoice Demo Data Seeder and Cleaner")
+    parser.add_argument(
+        "--clean",
+        "--remove",
+        action="store_true",
+        help="Safely remove all synthetic demo records without affecting real user data.",
+    )
+    args, _ = parser.parse_known_args(argv)
+
     with SessionLocal.begin() as db:
-        counts = seed_demo_data(db)
-    print(f"CareVoice fictional demo data seeded: {counts}")
+        if args.clean:
+            counts = clean_demo_data(db)
+            print(f"CareVoice synthetic demo data safely cleaned: {counts}")
+        else:
+            counts = seed_demo_data(db)
+            print(f"CareVoice fictional demo data seeded: {counts}")
 
 
 if __name__ == "__main__":

@@ -70,10 +70,12 @@ _CONSULTATION_TYPES = {"in_person", "online", "phone"}
 _IST = ZoneInfo("Asia/Kolkata")
 
 
+# Normalizes text strings by stripping leading/trailing whitespace and converting to lowercase.
 def _safe_lower(value: str | None) -> str:
     return (value or "").strip().lower()
 
 
+# Formats an internal doctor ORM model into a standardized client-facing doctor read schema.
 def _doctor_read(doctor: Doctor, hospital: Hospital | None = None) -> DoctorRead:
     legacy_languages = [item.strip() for item in (doctor.languages or "").split(",") if item.strip()]
     return DoctorRead(
@@ -97,10 +99,12 @@ def _doctor_read(doctor: Doctor, hospital: Hospital | None = None) -> DoctorRead
     )
 
 
+# Converts a hospital database model into a validated API response schema.
 def _hospital_read(hospital: Hospital) -> HospitalRead:
     return HospitalRead.model_validate(hospital)
 
 
+# Enforces role-based facility boundary checks for hospital administration and staff access.
 def _hospital_access(user: User, hospital_id: int, db: Session, *, manage: bool = False) -> Hospital:
     hospital = db.get(Hospital, hospital_id)
     if hospital is None:
@@ -112,6 +116,7 @@ def _hospital_access(user: User, hospital_id: int, db: Session, *, manage: bool 
     return hospital
 
 
+# Verifies that the caller has administrative or self-management permissions for a clinician record.
 def _doctor_access(user: User, doctor_id: int, db: Session, *, manage: bool = False) -> Doctor:
     doctor = db.get(Doctor, doctor_id)
     if doctor is None:
@@ -128,6 +133,7 @@ def _doctor_access(user: User, doctor_id: int, db: Session, *, manage: bool = Fa
     return doctor
 
 
+# Detects overlapping active time intervals within a set of weekly schedule inputs.
 def _schedule_conflicts(schedules: list[ScheduleInput]) -> bool:
     for left, right in combinations(schedules, 2):
         if (
@@ -141,6 +147,7 @@ def _schedule_conflicts(schedules: list[ScheduleInput]) -> bool:
     return False
 
 
+# Computes matching scores and explainability rationale comparing doctor attributes against patient criteria.
 def _score_for_request(payload: RecommendationRequest, doctor: Doctor, hospital: Hospital | None) -> tuple[float, list[str]]:
     text = _safe_lower(payload.symptoms)
     wanted_specialties = {_safe_lower(payload.specialty)} if payload.specialty else set()
@@ -185,6 +192,7 @@ def _score_for_request(payload: RecommendationRequest, doctor: Doctor, hospital:
     return (round(weighted_score / total_weight, 2) if total_weight else 0.0), reasons
 
 
+# Queries verified healthcare facilities with text search and location filters.
 @router.get("/hospitals", response_model=HospitalPage)
 def list_hospitals(
     search: str | None = Query(default=None, max_length=120),
@@ -218,6 +226,7 @@ def list_hospitals(
     return HospitalPage(items=[_hospital_read(hospital) for hospital in rows], total=total, limit=limit, offset=offset)
 
 
+# Retrieves verified hospital facility metadata, departments, and location details.
 @router.get("/hospitals/{hospital_id}", response_model=HospitalRead)
 def get_hospital(hospital_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     del user
@@ -229,6 +238,7 @@ def get_hospital(hospital_id: int, db: Session = Depends(get_db), user: User = D
     return _hospital_read(hospital)
 
 
+# Searches verified doctors by clinical specialty, city, spoken language, and consultation mode.
 @router.get("/doctors", response_model=DoctorPage)
 def list_doctors(
     search: str | None = Query(default=None, max_length=120),
@@ -281,6 +291,7 @@ def list_doctors(
     return DoctorPage(items=[_doctor_read(doctor, hospital) for doctor, hospital in rows], total=total, limit=limit, offset=offset)
 
 
+# Retrieves verified doctor profile including credentials, active schedules, and consultation fees.
 @router.get("/doctors/{doctor_id}", response_model=DoctorRead)
 def get_doctor(doctor_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     del user
@@ -300,6 +311,7 @@ def get_doctor(doctor_id: int, db: Session = Depends(get_db), user: User = Depen
     return _doctor_read(*row)
 
 
+# Matches patient symptoms, location, and language to ranked doctor recommendations.
 @router.post("/recommendations", response_model=list[DoctorRecommendation])
 def doctor_recommendations(
     payload: RecommendationRequest,
@@ -340,6 +352,7 @@ def doctor_recommendations(
     return candidates[:6]
 
 
+# Returns operational metrics, facility profile, or verification counts for care provider roles.
 @router.get("/dashboard")
 def provider_dashboard(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     if user.role == "doctor":
@@ -377,6 +390,7 @@ def provider_dashboard(db: Session = Depends(get_db), user: User = Depends(get_c
     raise HTTPException(status.HTTP_403_FORBIDDEN, "This workspace is only available to care providers.")
 
 
+# Registers a new healthcare facility in pending verification state for administrator review.
 @router.post("/hospitals", response_model=HospitalRead, status_code=status.HTTP_201_CREATED)
 def create_hospital(
     payload: HospitalCreate,
@@ -393,6 +407,7 @@ def create_hospital(
     return _hospital_read(hospital)
 
 
+# Updates hospital profile attributes and triggers re-verification when modified by facility staff.
 @router.patch("/hospitals/{hospital_id}", response_model=HospitalRead)
 def update_hospital(
     hospital_id: int,
@@ -413,6 +428,7 @@ def update_hospital(
     return _hospital_read(hospital)
 
 
+# Onboards a doctor to a hospital in pending verification status for administrator review.
 @router.post("/hospitals/{hospital_id}/doctors", response_model=DoctorRead, status_code=status.HTTP_201_CREATED)
 def create_doctor(
     hospital_id: int,
@@ -443,6 +459,7 @@ def create_doctor(
     return _doctor_read(doctor, db.get(Hospital, hospital_id))
 
 
+# Updates doctor profile, qualifications, and consultation types, resetting verification for staff edits.
 @router.patch("/doctors/{doctor_id}", response_model=DoctorRead)
 def update_doctor(
     doctor_id: int,
@@ -494,6 +511,7 @@ def update_doctor(
     return _doctor_read(doctor, db.get(Hospital, doctor.hospital_id))
 
 
+# Replaces doctor recurring weekly consultation availability after checking for schedule overlaps.
 @router.put("/doctors/{doctor_id}/schedules", response_model=list[ScheduleRead])
 def replace_doctor_schedules(
     doctor_id: int,
@@ -515,6 +533,7 @@ def replace_doctor_schedules(
     return doctor.schedules
 
 
+# Approves, rejects, or requests changes on doctor credentials with email notification dispatch.
 @router.patch("/doctors/{doctor_id}/verification", response_model=DoctorRead)
 def update_doctor_verification(
     doctor_id: int,
@@ -542,6 +561,7 @@ def update_doctor_verification(
     return _doctor_read(doctor, db.get(Hospital, doctor.hospital_id))
 
 
+# Sets hospital verification status and notifies hospital administrators of the outcome.
 @router.patch("/hospitals/{hospital_id}/verification", response_model=HospitalRead)
 def update_hospital_verification(
     hospital_id: int,
@@ -571,6 +591,7 @@ def update_hospital_verification(
     return _hospital_read(hospital)
 
 
+# Updates credential verification status for a specific degree or fellowship qualification.
 @router.patch("/qualifications/{qualification_id}/verification", response_model=QualificationRead)
 def update_qualification_verification(
     qualification_id: int,
@@ -597,6 +618,7 @@ def update_qualification_verification(
     return qualification
 
 
+# Lists unverified hospitals, doctors, and qualifications pending administrative review.
 @router.get("/review-queue")
 def provider_review_queue(
     db: Session = Depends(get_db),
@@ -632,11 +654,13 @@ APPOINTMENT_MINUTES = 30
 SLOT_BUCKET_SECONDS = APPOINTMENT_MINUTES * 60
 
 
+# Computes deterministic SHA-256 request payload hash for idempotency validation and duplicate detection.
 def _request_fingerprint(operation: str, values: dict) -> str:
     data = json.dumps({"operation": operation, **values}, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(data.encode("utf-8")).hexdigest()
 
 
+# Dispatches SMS/email transactional notification to the patient for booking, rescheduling, or cancellation.
 def _notify_appointment_patient(db: Session, appointment: Appointment, event_type: str) -> None:
     patient = db.get(User, appointment.patient_user_id)
     if patient is None:
@@ -649,6 +673,7 @@ def _notify_appointment_patient(db: Session, appointment: Appointment, event_typ
     )
 
 
+# Enforces idempotency replay semantics when identical command parameters and idempotency key are supplied.
 def _same_command(db: Session, actor: User, key: str, operation: str, fingerprint: str) -> Appointment | None:
     command = db.scalar(
         select(AppointmentCommand).where(
@@ -666,6 +691,7 @@ def _same_command(db: Session, actor: User, key: str, operation: str, fingerprin
     return appointment
 
 
+# Verifies doctor credentials, facility verification status, and scheduling alignment prior to booking.
 def _validate_booking_target(db: Session, doctor_id: int, scheduled_for: datetime, consultation_type: str) -> Doctor:
     doctor = db.scalar(
         select(Doctor)
@@ -693,6 +719,7 @@ def _validate_booking_target(db: Session, doctor_id: int, scheduled_for: datetim
     return doctor
 
 
+# Validates that a requested timestamp aligns with published doctor availability blocks and 30-minute slot boundaries.
 def _fits_published_schedule(start: datetime, doctor: Doctor, consultation_type: str) -> bool:
     for schedule in doctor.schedules:
         if not schedule.is_active or schedule.consultation_type != consultation_type:
@@ -717,6 +744,7 @@ def _fits_published_schedule(start: datetime, doctor: Doctor, consultation_type:
     return False
 
 
+# Hydrates appointment entity with doctor, facility, and linked invoice/payment status attributes.
 def _appointment_read(db: Session, appointment: Appointment) -> AppointmentRead:
     doctor = db.get(Doctor, appointment.doctor_id)
     hospital = db.get(Hospital, appointment.hospital_id) if appointment.hospital_id else None
@@ -753,6 +781,7 @@ def _appointment_read(db: Session, appointment: Appointment) -> AppointmentRead:
     )
 
 
+# Enforces role-based row-level security ensuring patients, doctors, and staff only access permitted appointments.
 def _appointment_access(db: Session, appointment_id: int, user: User, *, lock: bool = False) -> Appointment:
     query = select(Appointment).where(Appointment.id == appointment_id)
     if lock:
@@ -771,10 +800,12 @@ def _appointment_access(db: Session, appointment_id: int, user: User, *, lock: b
     return appointment
 
 
+# Releases database slot reservation locks when an appointment is rescheduled or cancelled.
 def _release_appointment_slots(db: Session, appointment: Appointment) -> None:
     db.execute(delete(AppointmentSlotLock).where(AppointmentSlotLock.appointment_id == appointment.id))
 
 
+# Acquires exclusive 30-minute bucket slot locks in the database to prevent concurrent double-booking.
 def _claim_appointment_slot(db: Session, appointment: Appointment, start: datetime) -> None:
     epoch_start = int(start.timestamp())
     epoch_end = epoch_start + appointment.duration_minutes * 60
@@ -790,6 +821,7 @@ def _claim_appointment_slot(db: Session, appointment: Appointment, start: dateti
         bucket_start += SLOT_BUCKET_SECONDS
 
 
+# Computes available 30-minute booking intervals for a doctor on a target day excluding occupied slot locks.
 @router.get("/doctors/{doctor_id}/available-slots", response_model=list[AppointmentSlotRead])
 def list_available_slots(
     doctor_id: int,
@@ -858,6 +890,7 @@ def list_available_slots(
     ]
 
 
+# Lists consultations filtered by user role (patient, doctor, facility staff, or platform admin).
 @router.get("/appointments", response_model=list[AppointmentRead])
 def list_appointments(
     request: Request,
@@ -911,6 +944,7 @@ def list_appointments(
     ]
 
 
+# Books a doctor appointment with distributed slot reservation locks and idempotency replay safety.
 @router.post("/appointments", response_model=AppointmentRead, status_code=status.HTTP_201_CREATED)
 def create_appointment(
     payload: AppointmentCreate,
@@ -984,6 +1018,7 @@ def create_appointment(
     return _appointment_read(db, appointment)
 
 
+# Retrieves detailed consultation information subject to role-based access control.
 @router.get("/appointments/{appointment_id}", response_model=AppointmentRead)
 def get_appointment(
     appointment_id: int,
@@ -994,6 +1029,7 @@ def get_appointment(
     return _appointment_read(db, appointment)
 
 
+# Confirms a scheduled consultation appointment and notifies the patient.
 @router.post("/appointments/{appointment_id}/confirm", response_model=AppointmentRead)
 def confirm_appointment(
     appointment_id: int,
@@ -1025,6 +1061,7 @@ def confirm_appointment(
     return _appointment_read(db, appointment)
 
 
+# Cancels an appointment, releases reserved slot locks, and cancels unpaid linked invoices.
 @router.patch("/appointments/{appointment_id}/cancel", response_model=AppointmentRead)
 def cancel_appointment(
     appointment_id: int,
@@ -1065,6 +1102,7 @@ def cancel_appointment(
     return _appointment_read(db, appointment)
 
 
+# Reschedules an existing consultation to a new valid slot with atomic lock re-assignment and event recording.
 @router.patch("/appointments/{appointment_id}/reschedule", response_model=AppointmentRead)
 def reschedule_appointment(
     appointment_id: int,
@@ -1140,6 +1178,7 @@ def reschedule_appointment(
     return _appointment_read(db, appointment)
 
 
+# Returns chronological lifecycle audit event logs for a specific consultation appointment.
 @router.get("/appointments/{appointment_id}/history", response_model=list[AppointmentEventRead])
 def appointment_history(
     appointment_id: int,

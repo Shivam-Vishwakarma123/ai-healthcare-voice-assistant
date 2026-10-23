@@ -24,10 +24,12 @@ _SPECIALTY_KEYWORDS = {
 }
 
 
+# Normalizes input strings by stripping whitespace and converting to lowercase.
 def _safe_lower(value: str | None) -> str:
     return (value or "").strip().lower()
 
 
+# Computes a weighted match score and explanation list comparing a doctor to patient requirements.
 def score_doctor_for_request(
     symptoms: str,
     specialty: str | None,
@@ -87,6 +89,7 @@ def score_doctor_for_request(
     return score, reasons
 
 
+# Queries verified active doctors and returns top-ranked clinical recommendations.
 def get_verified_doctor_recommendations(
     db: Session,
     *,

@@ -1,6 +1,7 @@
 import Modal from "./Modal";
 import { formatAppointmentDateTime } from "../services/appointments";
 
+// Modal displaying historical lifecycle audit trail and status change reasons for a specific appointment.
 export default function AppointmentHistoryModal({ isOpen, onClose, appointment, history = [], loading, language = "en" }) {
   const hi = language === "hi";
 

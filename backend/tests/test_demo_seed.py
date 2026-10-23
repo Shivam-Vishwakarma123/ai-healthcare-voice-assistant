@@ -19,7 +19,7 @@ from app.models.providers import (
     Hospital,
 )
 from app.models.user import User
-from app.seed_demo import DEMO_PASSWORD, SEED_MARKER, main, seed_demo_data
+from app.seed_demo import DEMO_PASSWORD, SEED_MARKER, clean_demo_data, main, seed_demo_data
 
 
 def _seeded_database():
@@ -58,10 +58,11 @@ def test_demo_seed_is_repeatable_and_relationships_are_consistent():
             "appointments_created": 30,
             "invoices_created": 20,
             "payments_created": 20,
+            "conversations_created": 6,
             "allergies_created": 2,
             "ai_reports_created": 5,
-            "prescriptions_created": 4,
-            "notes_created": 5,
+            "prescriptions_created": 6,
+            "notes_created": 7,
             "documents_created": 6,
         }
         assert all(value == 0 for value in second_run.values())
@@ -246,3 +247,53 @@ def test_demo_seed_uses_slots_in_the_past_and_future():
             assert upcoming == 10
     finally:
         engine.dispose()
+
+
+def test_clean_demo_data_safely_removes_demo_data_and_preserves_user_records():
+    engine, sessions = _seeded_database()
+    try:
+        with sessions.begin() as db:
+            real_user = User(
+                full_name="Real Patient Sneha",
+                email="sneha@gmail.com",
+                password_hash=hash_password("RealSecret123!"),
+                role="patient",
+            )
+            db.add(real_user)
+            db.flush()
+            real_invoice = Invoice(
+                owner_user_id=real_user.id,
+                invoice_number="INV-REAL-2026-001",
+                currency="inr",
+                amount_minor=150000,
+                status="paid",
+                description="Real consultation fee",
+            )
+            db.add(real_invoice)
+            seed_demo_data(db)
+
+        # Verify demo data exists alongside real user
+        with sessions() as db:
+            assert db.scalar(select(func.count()).select_from(User)) > 2
+            assert db.scalar(select(User).where(User.email == "sneha@gmail.com")) is not None
+            assert db.scalar(select(User).where(User.email == "patient01@demo.carevoice.test")) is not None
+
+        # Clean demo data
+        with sessions.begin() as db:
+            clean_counts = clean_demo_data(db)
+
+        # Verify demo records are removed while real user records persist
+        with sessions() as db:
+            assert clean_counts["users_removed"] > 0
+            assert db.scalar(select(User).where(User.email == "patient01@demo.carevoice.test")) is None
+            persisting_user = db.scalar(select(User).where(User.email == "sneha@gmail.com"))
+            assert persisting_user is not None
+            assert persisting_user.full_name == "Real Patient Sneha"
+            persisting_invoice = db.scalar(
+                select(Invoice).where(Invoice.owner_user_id == persisting_user.id)
+            )
+            assert persisting_invoice is not None
+            assert persisting_invoice.invoice_number == "INV-REAL-2026-001"
+    finally:
+        engine.dispose()
+

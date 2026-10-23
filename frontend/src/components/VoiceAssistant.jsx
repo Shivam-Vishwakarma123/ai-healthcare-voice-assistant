@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../services/api";
 import { useToast } from "./ToastProvider";
 
+// Interactive AI voice and text health assistant providing clinical triage, RAG evidence citations, and doctor discovery.
 export default function VoiceAssistant({ token, language = "en", onNavigate }) {
   const toast = useToast();
   const [messages, setMessages] = useState([]);
@@ -81,6 +82,7 @@ export default function VoiceAssistant({ token, language = "en", onNavigate }) {
     };
   }, [token, consentToStore]);
 
+  // Updates user consent for conversation transcript persistence under DPDP Act 2023.
   function handleConsentChange(e) {
     const nextConsent = e.target.checked;
     setConsentToStore(nextConsent);
@@ -94,6 +96,7 @@ export default function VoiceAssistant({ token, language = "en", onNavigate }) {
     }
   }
 
+  // Fetches a prior consultation session transcript with clinical citations and urgency classification.
   async function loadConversation(convId) {
     if (!convId) {
       setActiveConversationId(null);
@@ -118,6 +121,7 @@ export default function VoiceAssistant({ token, language = "en", onNavigate }) {
     }
   }
 
+  // Permanently clears all saved user consultation history from client state and backend database.
   async function clearAllHistory() {
     if (!token) return;
     const confirmed = window.confirm(
@@ -140,12 +144,14 @@ export default function VoiceAssistant({ token, language = "en", onNavigate }) {
     }
   }
 
+  // Resets active conversation thread to start a clean triage and medical information consultation.
   function startNewConsultation() {
     setActiveConversationId(null);
     setMessages([]);
     setDraft("");
   }
 
+  // Dispatches user prompt to AI assistant with triage classification, RAG retrieval, and recommendation extraction.
   async function sendMessage(event) {
     event?.preventDefault();
     const content = draft.trim();
@@ -183,6 +189,10 @@ export default function VoiceAssistant({ token, language = "en", onNavigate }) {
         citations: result.citations || [],
         urgency: result.urgency || "routine",
         recommended_doctors: result.recommended_doctors || [],
+        conflicting_sources: result.conflicting_sources || result.source_conflict || false,
+        insufficient_reference_material: result.insufficient_reference_material || false,
+        precautionary_escalation_note: result.precautionary_escalation_note || null,
+        retrieval_confidence: result.retrieval_confidence ?? null,
       };
       setMessages((current) => [...current, answer]);
     } catch (requestError) {
@@ -194,6 +204,7 @@ export default function VoiceAssistant({ token, language = "en", onNavigate }) {
     }
   }
 
+  // Initiates microphone capture routing to browser Web Speech API or server-side Whisper transcription.
   function startListening() {
     setError("");
     if (!speechConfig) {
@@ -233,6 +244,7 @@ export default function VoiceAssistant({ token, language = "en", onNavigate }) {
     }
   }
 
+  // Records audio chunks via MediaRecorder API for upstream backend speech-to-text transcription.
   async function startServerRecording() {
     if (!speechConfig?.transcription_enabled) {
       setError(hi ? "कॉन्फ़िगर किया गया वॉइस प्रदाता उपलब्ध नहीं है। आप लिखकर जारी रख सकते हैं।" : "The configured speech provider is unavailable. You can continue by typing.");
@@ -280,11 +292,13 @@ export default function VoiceAssistant({ token, language = "en", onNavigate }) {
     }
   }
 
+  // Releases hardware microphone media stream tracks when voice capture terminates.
   function stopMediaStream() {
     mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
     mediaStreamRef.current = null;
   }
 
+  // Sends audio binary payload to backend speech-to-text endpoint for clinical transcription.
   async function transcribeRecording(mimeType) {
     const audio = new Blob(recordedChunksRef.current, { type: mimeType });
     recordedChunksRef.current = [];
@@ -319,6 +333,7 @@ export default function VoiceAssistant({ token, language = "en", onNavigate }) {
     }
   }
 
+  // Synthesizes voice assistant text responses into spoken audio using browser SpeechSynthesis API.
   function speak(content) {
     if (!("speechSynthesis" in window)) {
       setError("Speech playback is not supported in this browser.");
@@ -437,11 +452,43 @@ export default function VoiceAssistant({ token, language = "en", onNavigate }) {
 
               <p>{message.content}</p>
 
-              {/* Expandable citations with provenance and verified source links */}
+              {/* Module 4: Conflicting Clinical Guidance Alert */}
+              {message.role === "assistant" && message.conflicting_sources && (
+                <div className="cv-alert cv-alert-warning" style={{ margin: "8px 0" }}>
+                  <div style={{ fontWeight: "700" }}>⚠️ Conflicting Clinical Guidance Detected:</div>
+                  <div style={{ fontSize: "0.88rem", marginTop: "2px" }}>
+                    Retrieved public-health sources provide differing urgent-care or triage recommendations. CareVoice does not select or synthesize conflicting guidance. Please consult a qualified clinician immediately, or call 112/108 if symptoms worsen.
+                  </div>
+                </div>
+              )}
+
+              {/* Module 4: Insufficient Reference Material Notice */}
+              {message.role === "assistant" && message.insufficient_reference_material && (
+                <div className="cv-alert cv-alert-warning" style={{ margin: "8px 0", background: "var(--cv-surface-tint)", borderColor: "var(--cv-accent-soft)" }}>
+                  <div style={{ fontWeight: "700" }}>ℹ️ Clinical Reference Gap (Threshold &lt; 0.45):</div>
+                  <div style={{ fontSize: "0.88rem", marginTop: "2px" }}>
+                    No verified public-health source reached the required clinical evidence threshold for this query. This response is limited to general educational orientation, not clinical guidance.
+                  </div>
+                </div>
+              )}
+
+              {/* Module 4: Precautionary Escalation Note */}
+              {message.role === "assistant" && message.precautionary_escalation_note && (
+                <div style={{ padding: "8px 12px", background: "var(--cv-surface-soft)", borderRadius: "6px", margin: "8px 0", fontSize: "0.85rem", borderLeft: "3px solid var(--cv-accent)" }}>
+                  <strong>Precautionary Escalation:</strong> {message.precautionary_escalation_note}
+                </div>
+              )}
+
+              {/* Expandable Clinical Evidence & Uncertainty Panel */}
               {message.role === "assistant" && message.citations?.length > 0 && (
                 <details className="chat-citations" open>
-                  <summary style={{ cursor: "pointer", fontWeight: "600", color: "var(--cv-accent-text)", marginBottom: "0.5rem" }}>
-                    📚 {hi ? "सत्यापित स्रोत साक्ष्य" : "Verified Evidence Sources"} ({message.citations.length})
+                  <summary style={{ cursor: "pointer", fontWeight: "600", color: "var(--cv-accent-text)", marginBottom: "0.5rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span>📚 {hi ? "सत्यापित स्रोत साक्ष्य व अनिश्चितता" : "Clinical Evidence & Uncertainty"} ({message.citations.length})</span>
+                    {message.retrieval_confidence !== null && message.retrieval_confidence !== undefined && (
+                      <span className={`cv-badge ${message.retrieval_confidence >= 0.45 ? "cv-badge-routine" : "cv-badge-urgent"}`} style={{ fontSize: "0.75rem" }}>
+                        Confidence: {(message.retrieval_confidence * 100).toFixed(0)}%
+                      </span>
+                    )}
                   </summary>
                   <ul>
                     {message.citations.map((citation) => (

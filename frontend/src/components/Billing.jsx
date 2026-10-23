@@ -7,6 +7,7 @@ import { razorpayPaymentDisplayConfig } from "../services/razorpayCheckoutConfig
 
 let razorpaySdkPromise;
 
+// Dynamically injects and caches Razorpay Checkout JavaScript SDK in the browser DOM.
 function loadRazorpay() {
   if (typeof window.Razorpay === "function") return Promise.resolve();
   if (razorpaySdkPromise) return razorpaySdkPromise;
@@ -30,6 +31,7 @@ function loadRazorpay() {
   return razorpaySdkPromise;
 }
 
+// Healthcare billing dashboard managing patient invoices, Razorpay checkout, receipts, and refund requests.
 export default function Billing({ token, user, language = "en", target, onTargetHandled }) {
   const [invoices, setInvoices] = useState([]);
   const [payments, setPayments] = useState([]);
@@ -52,6 +54,7 @@ export default function Billing({ token, user, language = "en", target, onTarget
   const toast = useToast();
   const isStaff = ["hospital_staff", "hospital_admin", "platform_admin"].includes(user?.role);
 
+  // Fetches invoices, gateway configuration, transaction logs, refunds, and billable encounters.
   async function load() {
     setLoading(true);
     setLoaded(false);
@@ -79,6 +82,7 @@ export default function Billing({ token, user, language = "en", target, onTarget
 
   useEffect(() => { load().catch(() => toast(hi ? "बिलिंग जानकारी लोड नहीं हो सकी। फिर से प्रयास करें।" : "Billing information could not be loaded. Please try again.", "error")); }, [token]);
 
+  // Creates a clinical service invoice linked to a patient account and optional appointment.
   async function createInvoice(event) {
     event.preventDefault();
     if (creatingInvoice) return;
@@ -103,6 +107,7 @@ export default function Billing({ token, user, language = "en", target, onTarget
     }
   }
 
+  // Initiates Razorpay checkout flow with HMAC-SHA256 signature verification upon completion.
   async function payInvoice(invoice) {
     if (paymentActionBusyRef.current) return;
     paymentActionBusyRef.current = true;
@@ -225,6 +230,7 @@ export default function Billing({ token, user, language = "en", target, onTarget
     onTargetHandled?.();
   }, [target, loaded, loading, invoices]);
 
+  // Finalizes a synthetic mock transaction in sandbox mode without contacting external payment gateways.
   async function completeDemoPayment(outcome) {
     if (!demoCheckout) return;
     setBusyId(demoCheckout.order_id);
@@ -249,6 +255,7 @@ export default function Billing({ token, user, language = "en", target, onTarget
     }
   }
 
+  // Dispatches an administrative refund request to payment service with unique idempotency key.
   async function requestRefund(payment) {
     const reason = window.prompt("Record the administrator-approved refund reason:");
     if (!reason || reason.trim().length < 3) return;
@@ -269,6 +276,7 @@ export default function Billing({ token, user, language = "en", target, onTarget
     }
   }
 
+  // Auto-populates invoice creation form fields from selected billable clinical appointment.
   function selectAppointment(appointmentId) {
     const appointment = billableAppointments.find((item) => String(item.appointment_id) === appointmentId);
     setInvoiceForm((current) => ({
@@ -385,6 +393,7 @@ export default function Billing({ token, user, language = "en", target, onTarget
         onClose={() => setSelectedReceipt(null)}
         invoice={selectedReceipt?.invoice}
         payment={selectedReceipt?.payment}
+        token={token}
         language={language}
       />
 
@@ -441,6 +450,7 @@ export default function Billing({ token, user, language = "en", target, onTarget
   );
 }
 
+// Renders a high-level statistical KPI summary card with metric label, value, and explanatory caption.
 function Metric({ label, value, note }) {
   return <div className="metric"><span className="metric-label">{label}</span><b>{value}</b><small>{note}</small></div>;
 }

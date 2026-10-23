@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -22,11 +22,13 @@ from app.services.audit_service import record_audit
 from app.services.appointment_payment_eligibility import appointment_payment_block_reason
 from app.services.notification_service import notify_user
 from app.services.payment_service import PaymentProviderError, PaymentService, RazorpayPaymentService
+from app.services.pdf_report_service import generate_invoice_pdf, generate_payment_receipt_pdf
 
 router = APIRouter(prefix="/billing", tags=["Billing"])
 logger = logging.getLogger(__name__)
 
 
+# Instantiates a configured Razorpay payment service client using current application settings.
 def _payment_service() -> PaymentService:
     return RazorpayPaymentService(
         settings.razorpay_key_id,
@@ -35,6 +37,7 @@ def _payment_service() -> PaymentService:
     )
 
 
+# Validates request data for issuing a medical invoice to a patient or appointment.
 class InvoiceCreate(BaseModel):
     patient_user_id: int = Field(gt=0)
     hospital_id: int | None = Field(default=None, gt=0)
@@ -57,6 +60,7 @@ class InvoiceCreate(BaseModel):
         return self
 
 
+# Serializes medical invoice details, settlement status, and timestamps.
 class InvoiceRead(BaseModel):
     id: int
     invoice_number: str
@@ -71,10 +75,12 @@ class InvoiceRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# Specifies the invoice identifier to initiate a payment checkout session.
 class CheckoutCreate(BaseModel):
     invoice_id: int = Field(gt=0)
 
 
+# Returns payment gateway checkout parameters and order credentials for client SDKs.
 class CheckoutOrder(BaseModel):
     order_id: str
     key_id: str | None = None
@@ -85,6 +91,7 @@ class CheckoutOrder(BaseModel):
     mode: str
 
 
+# Encapsulates Razorpay signature verification parameters returned after client payment.
 class CheckoutVerify(BaseModel):
     invoice_id: int = Field(gt=0)
     razorpay_order_id: str = Field(min_length=1, max_length=80)
@@ -92,11 +99,13 @@ class CheckoutVerify(BaseModel):
     razorpay_signature: str = Field(min_length=1, max_length=256)
 
 
+# Carries the user-chosen outcome for a simulated demo payment transaction.
 class DemoCheckoutComplete(BaseModel):
     order_id: str = Field(min_length=1, max_length=80)
     outcome: Literal["success", "failed", "cancelled"]
 
 
+# Returns the resulting invoice and payment status following a demo checkout execution.
 class DemoPaymentResult(BaseModel):
     invoice_id: int
     invoice_number: str
@@ -109,12 +118,14 @@ class DemoPaymentResult(BaseModel):
     demo: Literal[True] = True
 
 
+# Validates refund creation requests including payment reference and clinical justification.
 class RefundCreate(BaseModel):
     payment_id: int = Field(gt=0)
     amount_minor: int = Field(gt=0, le=100_000_000)
     reason: str = Field(min_length=3, max_length=500)
 
 
+# Serializes refund transaction status, amounts, and audit timestamps.
 class RefundRead(BaseModel):
     id: int
     payment_id: int
@@ -128,6 +139,7 @@ class RefundRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# Formats an invoice and payment record into a client-facing checkout order model.
 def _checkout_order(invoice: Invoice, payment: Payment) -> CheckoutOrder:
     return CheckoutOrder(
         order_id=payment.provider_order_id,
@@ -140,11 +152,13 @@ def _checkout_order(invoice: Invoice, payment: Payment) -> CheckoutOrder:
     )
 
 
+# Enforces that the current authenticated user possesses clinical or administrative staff permissions.
 def _require_staff(user: User) -> None:
     if user.role not in {"hospital_staff", "hospital_admin", "platform_admin"}:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Clinic staff access is required.")
 
 
+# Exposes payment gateway mode, test status, and checkout capabilities to frontend clients.
 @router.get("/config")
 def billing_config(_: User = Depends(get_current_user)):
     provider_checkout_enabled = (
@@ -162,6 +176,7 @@ def billing_config(_: User = Depends(get_current_user)):
     }
 
 
+# Lists medical invoices scoped to patient ownership or hospital staff facility boundaries.
 @router.get("/invoices", response_model=list[InvoiceRead])
 def list_invoices(request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     query = select(Invoice).order_by(Invoice.created_at.desc(), Invoice.id.desc())
@@ -177,6 +192,148 @@ def list_invoices(request: Request, db: Session = Depends(get_db), user: User = 
     return invoices
 
 
+# Generates and downloads a print-ready binary PDF invoice with hospital details and fee breakdowns.
+@router.get("/invoices/{invoice_id}/pdf")
+def download_invoice_pdf(
+    invoice_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    invoice = db.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found.")
+
+    if user.role == "patient" and invoice.owner_user_id != user.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied: You can only access your own invoices.")
+    elif user.role in {"hospital_staff", "hospital_admin"} and invoice.hospital_id != user.hospital_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied: Invoice belongs to another facility.")
+    elif user.role not in {"patient", "hospital_staff", "hospital_admin", "platform_admin"}:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permissions to download invoices.")
+
+    patient_user = db.get(User, invoice.owner_user_id)
+    hospital = db.get(Hospital, invoice.hospital_id) if invoice.hospital_id else None
+
+    doctor_name = None
+    appt_ref = None
+    if invoice.appointment_id:
+        appt = db.get(Appointment, invoice.appointment_id)
+        if appt:
+            appt_ref = str(appt.id)
+            doc = db.get(Doctor, appt.doctor_id)
+            if doc:
+                doctor_name = doc.full_name
+
+    pdf_bytes = generate_invoice_pdf(
+        invoice_number=invoice.invoice_number,
+        created_at=invoice.created_at,
+        patient_name=patient_user.full_name if patient_user else "Patient",
+        patient_email=patient_user.email if patient_user else "",
+        hospital_name=hospital.name if hospital else "CareVoice Clinical Network",
+        hospital_address=f"{hospital.address}, {hospital.city}, {hospital.state}" if hospital and hospital.address else (f"{hospital.city}, {hospital.state}" if hospital else "CareVoice Health Network"),
+        description=invoice.description,
+        amount_minor=invoice.amount_minor,
+        currency=invoice.currency,
+        status=invoice.status,
+        paid_at=invoice.paid_at,
+        appointment_reference=appt_ref,
+        doctor_name=doctor_name,
+    )
+
+    record_audit(db, request, "billing.invoice.pdf_download", actor=user, resource_type="invoice", resource_id=invoice.id)
+    db.commit()
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="invoice-{invoice.invoice_number}.pdf"'},
+    )
+
+
+# Generates and downloads an authenticated payment receipt PDF with transaction identifier and tax details.
+@router.get("/receipts/{invoice_id}/pdf")
+def download_payment_receipt_pdf(
+    invoice_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    invoice = db.get(Invoice, invoice_id)
+    if not invoice:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found.")
+
+    if user.role == "patient" and invoice.owner_user_id != user.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied: You can only access your own payment receipts.")
+    elif user.role in {"hospital_staff", "hospital_admin"} and invoice.hospital_id != user.hospital_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access denied: Receipt belongs to another facility.")
+    elif user.role not in {"patient", "hospital_staff", "hospital_admin", "platform_admin"}:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permissions to download receipts.")
+
+    if invoice.status != "paid":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Payment receipt is available only for paid and verified invoices.",
+        )
+
+    # Find the verified payment record
+    payment = db.scalar(
+        select(Payment)
+        .where(Payment.invoice_id == invoice.id, Payment.status == "paid")
+        .order_by(Payment.updated_at.desc())
+    )
+    if not payment:
+        payment = db.scalar(
+            select(Payment)
+            .where(Payment.invoice_id == invoice.id)
+            .order_by(Payment.updated_at.desc())
+        )
+
+    patient_user = db.get(User, invoice.owner_user_id)
+    hospital = db.get(Hospital, invoice.hospital_id) if invoice.hospital_id else None
+
+    doctor_name = None
+    appt_ref = None
+    if invoice.appointment_id:
+        appt = db.get(Appointment, invoice.appointment_id)
+        if appt:
+            appt_ref = str(appt.id)
+            doc = db.get(Doctor, appt.doctor_id)
+            if doc:
+                doctor_name = doc.full_name
+
+    transaction_id = (payment.provider_payment_id if payment else None) or (payment.provider_order_id if payment else None) or invoice.invoice_number
+    is_demo = payment.provider_order_id.startswith("demo_") if payment else (settings.payment_mode == "demo")
+    receipt_no = f"REC-{invoice.invoice_number.replace('DEMO-SEED-V1-', '').replace('INV-', '')}"
+
+    pdf_bytes = generate_payment_receipt_pdf(
+        receipt_number=receipt_no,
+        transaction_id=transaction_id,
+        invoice_number=invoice.invoice_number,
+        payment_date=invoice.paid_at or invoice.created_at,
+        amount_minor=invoice.amount_minor,
+        currency=invoice.currency,
+        patient_name=patient_user.full_name if patient_user else "Patient",
+        patient_email=patient_user.email if patient_user else "",
+        hospital_name=hospital.name if hospital else "CareVoice Clinical Network",
+        hospital_address=f"{hospital.address}, {hospital.city}, {hospital.state}" if hospital and hospital.address else (f"{hospital.city}, {hospital.state}" if hospital else "CareVoice Telemedicine"),
+        description=invoice.description,
+        payment_method="CareVoice Razorpay Online" if not is_demo else "CareVoice Demo Simulator",
+        is_demo=is_demo,
+        appointment_reference=appt_ref,
+        doctor_name=doctor_name,
+    )
+
+    record_audit(db, request, "billing.receipt.pdf_download", actor=user, resource_type="invoice", resource_id=invoice.id)
+    db.commit()
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="receipt-{invoice.invoice_number}.pdf"'},
+    )
+
+
+# Lists payment transaction history including appointment doctor metadata and gateway transaction identifiers.
 @router.get("/payments")
 def list_payments(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     query = (
@@ -215,6 +372,7 @@ def list_payments(db: Session = Depends(get_db), user: User = Depends(get_curren
     ]
 
 
+# Lists issued refund records filtered according to the caller's role and facility association.
 @router.get("/refunds", response_model=list[RefundRead])
 def list_refunds(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     query = select(Refund, Payment, Invoice).join(Payment, Payment.id == Refund.payment_id).join(Invoice, Invoice.id == Payment.invoice_id)
@@ -227,6 +385,7 @@ def list_refunds(db: Session = Depends(get_db), user: User = Depends(get_current
     return [refund for refund, _, _ in db.execute(query.order_by(Refund.created_at.desc(), Refund.id.desc())).all()]
 
 
+# Processes an authorized refund request against a captured payment with strict idempotency and balance validation.
 @router.post("/refunds", response_model=RefundRead, status_code=status.HTTP_202_ACCEPTED)
 async def create_refund(
     payload: RefundCreate,
@@ -309,6 +468,7 @@ async def create_refund(
     return refund
 
 
+# Retrieves pending hospital appointments that lack an associated invoice for billing creation.
 @router.get("/billable-appointments")
 def list_billable_appointments(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     _require_staff(user)
@@ -336,6 +496,7 @@ def list_billable_appointments(db: Session = Depends(get_db), user: User = Depen
     ]
 
 
+# Creates a new medical invoice for a patient or consultation appointment.
 @router.post("/invoices", response_model=InvoiceRead, status_code=status.HTTP_201_CREATED)
 def create_invoice(payload: InvoiceCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     _require_staff(user)
@@ -402,6 +563,7 @@ def create_invoice(payload: InvoiceCreate, request: Request, db: Session = Depen
     return invoice
 
 
+# Generates or fetches an upcoming consultation invoice initiated directly by the patient.
 @router.post("/appointments/{appointment_id}/invoice", response_model=InvoiceRead)
 def create_patient_appointment_invoice(
     appointment_id: int,
@@ -459,6 +621,7 @@ def create_patient_appointment_invoice(
     return invoice
 
 
+# Initiates a gateway checkout session and creates a tracking payment record.
 @router.post("/checkout", response_model=CheckoutOrder)
 async def create_checkout(payload: CheckoutCreate, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     if user.role != "patient":
@@ -584,6 +747,7 @@ async def create_checkout(payload: CheckoutCreate, request: Request, db: Session
     return _checkout_order(invoice, payment)
 
 
+# Simulates patient checkout completion in local demo environments without contacting Razorpay.
 @router.post("/demo/complete", response_model=DemoPaymentResult)
 def complete_demo_checkout(
     payload: DemoCheckoutComplete,
@@ -677,6 +841,7 @@ def complete_demo_checkout(
     )
 
 
+# Verifies Razorpay checkout HMAC signatures and captures the authorized payment transaction.
 @router.post("/verify", response_model=InvoiceRead)
 async def verify_checkout(payload: CheckoutVerify, request: Request, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     if user.role != "patient":
@@ -754,6 +919,7 @@ async def verify_checkout(payload: CheckoutVerify, request: Request, db: Session
     return invoice
 
 
+# Ingests and processes asynchronous Razorpay payment and refund webhook notifications with HMAC authentication.
 @router.post("/webhooks/razorpay", status_code=status.HTTP_204_NO_CONTENT)
 async def razorpay_webhook(
     request: Request,

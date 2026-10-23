@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 
+// Accessible modal dialog primitive managing keyboard navigation, focus trap, and background scroll locking.
 export default function Modal({ isOpen, onClose, title, children, size = "medium", language = "en" }) {
   const dialogRef = useRef(null);
   const hi = language === "hi";

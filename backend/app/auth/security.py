@@ -21,10 +21,12 @@ dummy_password_hash = password_hash.hash("not-a-real-user-password")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 
+# Hashes a plaintext password securely using the recommended Argon2 algorithm.
 def hash_password(password: str) -> str:
     return password_hash.hash(password)
 
 
+# Verifies that a plaintext password matches an existing secure hash.
 def verify_password(password: str, hashed: str) -> bool:
     try:
         return password_hash.verify(password, hashed)
@@ -32,6 +34,7 @@ def verify_password(password: str, hashed: str) -> bool:
         return False
 
 
+# Encodes a signed JWT bearer token containing user identity and session claims.
 def create_access_token(user_id: int, role: str, session_id: str) -> str:
     now = datetime.now(timezone.utc)
     payload = {
@@ -45,6 +48,7 @@ def create_access_token(user_id: int, role: str, session_id: str) -> str:
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=ALGORITHM)
 
 
+# Creates a persistent database authentication session and returns its signed JWT.
 def issue_access_token(db: Session, user: User) -> str:
     now = datetime.now(timezone.utc)
     session = AuthSession(
@@ -57,6 +61,7 @@ def issue_access_token(db: Session, user: User) -> str:
     return create_access_token(user.id, user.role, session.id)
 
 
+# Revokes all active database authentication sessions for the specified user.
 def revoke_user_sessions(db: Session, user_id: int, now: datetime | None = None) -> None:
     revoked_at = now or datetime.now(timezone.utc)
     sessions = db.scalars(
@@ -66,6 +71,7 @@ def revoke_user_sessions(db: Session, user_id: int, now: datetime | None = None)
         session.revoked_at = revoked_at
 
 
+# Validates the bearer token, session revocation status, and user authorization.
 def get_current_user(
     request: Request,
     token: str = Depends(oauth2_scheme),
@@ -113,6 +119,7 @@ def get_current_user(
     return user
 
 
+# Returns a FastAPI dependency that enforces role-based access control for endpoints.
 def require_roles(*roles: str):
     invalid = set(roles) - ROLE_NAMES
     if invalid:
@@ -126,6 +133,7 @@ def require_roles(*roles: str):
     return dependency
 
 
+# Normalizes any datetime object into an explicit UTC timezone representation.
 def as_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)

@@ -1,3 +1,4 @@
+// Evaluates appointment invoice and transaction attributes to determine unified payment status.
 export function getAppointmentPaymentState(appointment) {
   if (appointment.invoice_status === "paid") return "paid";
   if (appointment.invoice_status === "refunded") return "refunded";
@@ -16,6 +17,7 @@ export function getAppointmentPaymentState(appointment) {
   return "not_due";
 }
 
+// Maps the current payment state to the relevant user action (pay, retry, view receipt, or check status).
 export function getAppointmentPaymentAction(paymentState) {
   if (paymentState === "paid") return "receipt";
   if (["refunded", "partially_refunded"].includes(paymentState)) return "details";

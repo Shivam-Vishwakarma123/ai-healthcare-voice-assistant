@@ -268,6 +268,8 @@ class PatientOverviewResponse(BaseModel):
     recent_reports: list[MedicalReportRead] = Field(default_factory=list)
     recent_prescriptions: list[PrescriptionRead] = Field(default_factory=list)
     recent_notes: list[ClinicalNoteRead] = Field(default_factory=list)
+    recent_vitals: list[dict[str, Any]] = Field(default_factory=list)
+    recent_invoices: list[dict[str, Any]] = Field(default_factory=list)
     upcoming_appointments: list[dict[str, Any]] = Field(default_factory=list)
     past_appointments: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -295,3 +297,109 @@ class DoctorWorkspaceResponse(BaseModel):
     assigned_patients: list[AssignedPatientSummary]
     today_appointments: list[dict[str, Any]]
     recent_ai_assessments: list[dict[str, Any]]
+
+
+# ============================================================================
+# Ambient Scribe & Protocol Monitor
+# ============================================================================
+
+class AmbientScribeRequest(BaseModel):
+    transcript: str | None = None
+    patient_user_id: int | None = None
+    doctor_id: int | None = None
+    appointment_id: int | None = None
+    language: str = "en"
+
+
+class AmbientScribeResponse(BaseModel):
+    note_id: int
+    is_ai_draft: bool = True
+    status: str = "draft"
+    subjective: str
+    objective: str
+    assessment: str
+    plan: str
+    chief_complaint: str
+    follow_up_instructions: str
+    vitals_extracted: dict[str, str] = Field(default_factory=dict)
+    allergies_noted: list[str] = Field(default_factory=list)
+    prescriptions_drafted: list[dict[str, Any]] = Field(default_factory=list)
+    signature_required: bool = True
+    message: str
+
+
+class VitalsEvaluationRequest(BaseModel):
+    spo2: float | None = None
+    heart_rate: int | None = None
+    systolic_bp: int | None = None
+    diastolic_bp: int | None = None
+    blood_glucose: float | None = None
+    temperature: float | None = None
+    respiratory_rate: int | None = None
+    hematocrit: float | None = None
+    hematocrit_baseline: float | None = None
+    platelet_count: int | None = None
+    platelet_count_baseline: int | None = None
+    dengue_diagnosed: bool = False
+    headache_present: bool = False
+    headache_onset_minutes: float | None = None
+    headache_snoop_criteria: list[str] = Field(default_factory=list)
+    dehydration_signs: list[str] = Field(default_factory=list)
+    dehydration_present: bool = False
+
+
+class VitalsEvaluationResponse(BaseModel):
+    critical_alert: bool
+    evaluated_at: str
+    alerts: list[dict[str, Any]] = Field(default_factory=list)
+    protocols_triggered: list[str] = Field(default_factory=list)
+
+
+class PrescriptionValidationRequest(BaseModel):
+    patient_user_id: int
+    medications: list[str]
+    conditions: list[str] = Field(default_factory=list)
+    vitals: dict[str, Any] = Field(default_factory=dict)
+
+
+class PrescriptionValidationResponse(BaseModel):
+    is_safe: bool
+    hard_blocks: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    duplicate_classes: list[str] = Field(default_factory=list)
+
+
+class PatientGuideResponse(BaseModel):
+    appointment_id: int
+    patient_name: str
+    doctor_name: str
+    specialty: str
+    language: str
+    title: str
+    overview: str
+    medications: list[dict[str, str]] = Field(default_factory=list)
+    follow_up_instructions: str
+    red_flag_warnings: list[str] = Field(default_factory=list)
+    emergency_contacts: list[str] = Field(default_factory=list)
+    disclaimer: str
+    finalized_at: str
+
+
+class ConsentUpdateRequest(BaseModel):
+    consent_to_store: bool = True
+    consent_to_share_with_doctors: bool = True
+    consent_anonymized_research: bool = False
+
+
+class ShareLinkRequest(BaseModel):
+    patient_user_id: int
+    pin: str = Field(min_length=4, max_length=8)
+    expires_hours: int = 48
+
+
+class ShareLinkResponse(BaseModel):
+    share_token: str
+    expires_at: str
+    pin_protected: bool = True
+    instructions: str
+

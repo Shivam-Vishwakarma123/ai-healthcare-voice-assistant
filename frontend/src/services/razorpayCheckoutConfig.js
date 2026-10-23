@@ -3,6 +3,7 @@
  * This is a display preference only; Razorpay still enforces the methods
  * activated for the merchant account.
  */
+// Configures Razorpay Standard Checkout modal UI display preferences for UPI, cards, netbanking, and wallets.
 export function razorpayPaymentDisplayConfig() {
   return {
     display: {

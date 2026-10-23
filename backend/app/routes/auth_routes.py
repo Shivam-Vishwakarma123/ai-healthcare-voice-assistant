@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
+# Validates registration details for new patient account self-enrollment.
 class RegisterIn(BaseModel):
     full_name: str = Field(min_length=2, max_length=120)
     email: str
@@ -57,6 +58,7 @@ class RegisterIn(BaseModel):
         return normalize_email(value)
 
 
+# Validates initial platform administrator initialization credentials and pre-shared token.
 class BootstrapAdminIn(BaseModel):
     full_name: str = Field(min_length=2, max_length=120)
     email: str
@@ -85,6 +87,7 @@ class BootstrapAdminIn(BaseModel):
         return validate_password_confirmation(info.data.get("password"), value)
 
 
+# Validates user login credentials supporting either email or alphanumeric username authentication.
 class LoginIn(BaseModel):
     email: str | None = None
     username: str | None = Field(
@@ -115,6 +118,7 @@ class LoginIn(BaseModel):
         return self.username
 
 
+# Ingests user email address for initiating an automated password reset workflow.
 class PasswordResetRequest(BaseModel):
     email: str
 
@@ -124,11 +128,13 @@ class PasswordResetRequest(BaseModel):
         return normalize_email(value)
 
 
+# Validates a one-time password reset token along with the replacement strong password.
 class PasswordResetConfirm(BaseModel):
     token: str = Field(min_length=32, max_length=256)
     new_password: str = Field(min_length=10, max_length=128)
 
 
+# Serializes public user profile fields, role attributes, and contact information.
 class UserOut(BaseModel):
     id: int
     full_name: str
@@ -138,10 +144,12 @@ class UserOut(BaseModel):
     phone_number: str | None = None
 
 
+# Validates phone number updates formatted in E.164 international standard.
 class UserContactUpdate(BaseModel):
     phone_number: str | None = Field(default=None, pattern=r"^\+[1-9]\d{7,14}$")
 
 
+# Packages issued JWT access tokens, expiration durations, and associated user profiles.
 class TokenOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -149,10 +157,12 @@ class TokenOut(BaseModel):
     user: UserOut
 
 
+# Returns generic confirmation messages for password reset actions to prevent account enumeration.
 class ResetRequestOut(BaseModel):
     message: str
 
 
+# Checks whether initial platform administrator bootstrap provisioning is pending or already finalized.
 @router.get("/bootstrap/status")
 def admin_bootstrap_status(db: Session = Depends(get_db)):
     state = db.get(AdminBootstrapState, 1)
@@ -168,6 +178,7 @@ def admin_bootstrap_status(db: Session = Depends(get_db)):
     return {"setup_available": reason == "available", "reason": reason}
 
 
+# Provisions the initial platform administrator account during first-time system bootstrap.
 @router.post("/bootstrap/platform-admin", response_model=TokenOut, status_code=status.HTTP_201_CREATED)
 def bootstrap_platform_admin(
     payload: BootstrapAdminIn,
@@ -207,6 +218,7 @@ def bootstrap_platform_admin(
     return _token_response(user, access_token)
 
 
+# Self-registers a new patient user account and issues an authenticated session token.
 @router.post("/register", response_model=TokenOut, status_code=status.HTTP_201_CREATED)
 def register(payload: RegisterIn, request: Request, db: Session = Depends(get_db)):
     email = str(payload.email).lower()
@@ -230,6 +242,7 @@ def register(payload: RegisterIn, request: Request, db: Session = Depends(get_db
     return _token_response(user, access_token)
 
 
+# Authenticates user credentials with timing-safe hash comparison and role validation.
 @router.post("/login", response_model=TokenOut)
 def login(payload: LoginIn, request: Request, db: Session = Depends(get_db)):
     identifier = payload.login_identifier
@@ -265,6 +278,7 @@ def login(payload: LoginIn, request: Request, db: Session = Depends(get_db)):
     return _token_response(user, access_token)
 
 
+# Revokes the active session token and records a sign-out audit trail entry.
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(
     request: Request,
@@ -280,6 +294,7 @@ def logout(
     return None
 
 
+# Initiates a password reset workflow by dispatching a time-limited one-time link via email.
 @router.post("/password-reset/request", response_model=ResetRequestOut, status_code=status.HTTP_202_ACCEPTED)
 def request_password_reset(
     payload: PasswordResetRequest,
@@ -340,6 +355,7 @@ def request_password_reset(
     return ResetRequestOut(message=_reset_request_message())
 
 
+# Verifies the one-time reset token, updates the password hash, and revokes prior active sessions.
 @router.post("/password-reset/confirm", response_model=ResetRequestOut)
 def confirm_password_reset(payload: PasswordResetConfirm, request: Request, db: Session = Depends(get_db)):
     enforce_auth_rate_limit(request, "reset-confirm")
@@ -379,11 +395,13 @@ def confirm_password_reset(payload: PasswordResetConfirm, request: Request, db: 
     return ResetRequestOut(message="Password changed. Sign in with your new password.")
 
 
+# Returns the current authenticated user's profile and assigned role.
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)):
     return user
 
 
+# Updates the current user's contact telephone number for notification dispatch.
 @router.patch("/me", response_model=UserOut)
 def update_my_contact(
     payload: UserContactUpdate,
@@ -406,6 +424,7 @@ def update_my_contact(
     return user
 
 
+# Constructs a formatted dictionary response containing bearer access token and user metadata.
 def _token_response(user: User, access_token: str) -> dict:
     return {
         "access_token": access_token,
@@ -414,14 +433,17 @@ def _token_response(user: User, access_token: str) -> dict:
     }
 
 
+# Computes a SHA-256 cryptographic digest of a reset token string for secure database storage.
 def _token_digest(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+# Returns a consistent confirmation string to prevent account discovery via password reset endpoints.
 def _reset_request_message() -> str:
     return "If an active account matches that address, reset instructions will be sent if email delivery succeeds. If they do not arrive, contact support."
 
 
+# Sends transactional password recovery email containing a secure one-time reset link.
 def _send_password_reset_email(email: str, token: str) -> None:
     reset_url = f"{settings.app_public_url.rstrip('/')}/reset-password?{urlencode({'token': token})}"
     message = EmailMessage()

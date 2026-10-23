@@ -1,5 +1,6 @@
 import Modal from "./Modal";
 
+// Modal dialog allowing patients or providers to reschedule an appointment with slot availability picker.
 export default function AppointmentRescheduleModal({
   isOpen,
   onClose,

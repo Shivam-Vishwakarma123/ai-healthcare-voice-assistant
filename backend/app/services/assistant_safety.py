@@ -26,11 +26,13 @@ _PERSONAL_TREATMENT_REQUEST_PATTERNS = (
 )
 
 
+# Detects if user prompt asks for prescriptive drug dosing or personalized medications.
 def is_personal_treatment_request(message: str) -> bool:
     content = (message or "").strip()
     return any(pattern.search(content) for pattern in _PERSONAL_TREATMENT_REQUEST_PATTERNS)
 
 
+# Validates that AI assistant response adheres to non-diagnostic safety and citation rules.
 def is_safe_assistant_reply(reply: str, verified_sources: tuple[str, ...] = ()) -> bool:
     content = (reply or "").strip()
     if not content or any(

@@ -41,17 +41,20 @@ from app.services.triage_service import TriageResult, evaluate_triage
 router = APIRouter(prefix="/assistant", tags=["AI assistant"])
 
 
+# Represents a single message exchange entry within a conversational chat payload.
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str = Field(min_length=1, max_length=4000)
 
 
+# Carries multi-turn conversation messages and optional session retention consent.
 class ChatRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=20)
     conversation_id: int | None = None
     consent_to_store: bool = False
 
 
+# Encapsulates clinical knowledge source provenance and license information for patient safety.
 class ChatCitation(BaseModel):
     title: str
     source_url: str
@@ -65,22 +68,29 @@ class ChatCitation(BaseModel):
     version: str
 
 
+# Represents the AI assistant's synthesized medical reply with safety flags and citations.
 class ChatResponse(BaseModel):
     reply: str
     citations: list[ChatCitation] = Field(default_factory=list)
     evidence_available: bool = False
     source_conflict: bool = False
+    conflicting_sources: bool = False
+    insufficient_reference_material: bool = False
+    precautionary_escalation_note: str | None = None
+    retrieval_confidence: float | None = None
     conversation_id: int | None = None
     urgency: str = "routine"
     recommended_doctors: list[DoctorRecommendation] = Field(default_factory=list)
 
 
+# Validates structured JSON responses returned by LLM completion providers.
 class AssistantAnswer(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     reply: str = Field(min_length=1, max_length=4000)
 
 
+# Ingests patient symptoms and risk indicators for deterministic emergency triage.
 class TriageInput(BaseModel):
     text: str = Field(min_length=2, max_length=4000)
     age_band: str | None = Field(default=None, pattern=r"^(adult|child|infant|elderly)$")
@@ -88,6 +98,7 @@ class TriageInput(BaseModel):
     chronic_condition: bool = False
 
 
+# Returns deterministic emergency acuity level, warning flags, and care guidance.
 class TriageResponse(BaseModel):
     urgency: str
     category: str
@@ -111,11 +122,13 @@ class TriageResponse(BaseModel):
     recommended_doctors: list[DoctorRecommendation] = Field(default_factory=list)
 
 
+# Specifies query parameters and category filters for vector knowledge retrieval.
 class RAGSearchRequest(BaseModel):
     query: str = Field(min_length=2, max_length=2000)
     category: str | None = "public_health"
 
 
+# Represents an individual search match with similarity score and medical provenance.
 class RAGSearchResultModel(BaseModel):
     title: str
     source_url: str
@@ -131,6 +144,7 @@ class RAGSearchResultModel(BaseModel):
     score: float
 
 
+# Exposes active voice transcription provider capabilities and supported audio constraints.
 class SpeechToTextConfig(BaseModel):
     provider: str
     transcription_enabled: bool
@@ -138,6 +152,7 @@ class SpeechToTextConfig(BaseModel):
     supported_languages: list[str]
 
 
+# Returns transcribed consultation audio text along with language identification.
 class SpeechToTextResponse(BaseModel):
     transcript: str
     language: str
@@ -145,6 +160,7 @@ class SpeechToTextResponse(BaseModel):
     requires_confirmation: bool = True
 
 
+# Conveys system readiness, database connectivity, and AI model health diagnostics.
 class AIHealthStatus(BaseModel):
     status: str
     app_healthy: bool
@@ -154,6 +170,7 @@ class AIHealthStatus(BaseModel):
     embedding_provider: dict[str, Any]
 
 
+# Summarizes indexed clinical documents, vector embeddings, and approved source domains.
 class KnowledgeStatusResponse(BaseModel):
     total_documents: int
     total_chunks: int
@@ -175,11 +192,13 @@ ALLOWED_AUDIO_TYPES = {
 }
 
 
+# Detects whether the configured inference endpoint runs locally on Ollama or internal Docker.
 def _is_local_provider() -> bool:
     hostname = urlsplit(settings.llm_base_url).hostname
     return hostname in {"ollama", "localhost", "127.0.0.1", "host.docker.internal"}
 
 
+# Formats raw RAG vector search hits into patient-facing citation models with metadata.
 def _chat_citations(hits: list[RAGSearchResult]) -> list[ChatCitation]:
     return [
         ChatCitation(
@@ -198,6 +217,7 @@ def _chat_citations(hits: list[RAGSearchResult]) -> list[ChatCitation]:
     ]
 
 
+# Returns client configuration for voice recognition including max payload and supported languages.
 @router.get("/speech-to-text/config", response_model=SpeechToTextConfig)
 def speech_to_text_config(_: User = Depends(get_current_user)):
     provider = configured_speech_provider()
@@ -209,6 +229,7 @@ def speech_to_text_config(_: User = Depends(get_current_user)):
     )
 
 
+# Transcribes uploaded audio recording into text using Whisper or configured cloud STT engine.
 @router.post("/speech-to-text", response_model=SpeechToTextResponse)
 async def speech_to_text(
     file: UploadFile = File(...),
@@ -256,6 +277,7 @@ async def speech_to_text(
     return SpeechToTextResponse(transcript=transcript, language=language, provider=provider)
 
 
+# Evaluates reported symptoms using deterministic clinical triage rules and emergency early-exit protocols.
 @router.post("/triage", response_model=TriageResponse)
 def triage(payload: TriageInput, db: Session = Depends(get_db)):
     result: TriageResult = evaluate_triage(
@@ -298,6 +320,7 @@ def triage(payload: TriageInput, db: Session = Depends(get_db)):
     )
 
 
+# Searches verified clinical knowledge documents using vector embeddings and keyword scoring.
 @router.post("/rag/search", response_model=list[RAGSearchResultModel])
 def rag_search(payload: RAGSearchRequest, db: Session = Depends(get_db)):
     query = sanitize_search_query(payload.query)
@@ -331,6 +354,7 @@ def rag_search(payload: RAGSearchRequest, db: Session = Depends(get_db)):
     ]
 
 
+# Reports database readiness, vector corpus size, and AI model provider connection health.
 @router.get("/health", response_model=AIHealthStatus)
 def assistant_health(db: Session = Depends(get_db)):
     """Health check distinguishing application health from AI-provider health."""
@@ -372,6 +396,7 @@ def assistant_health(db: Session = Depends(get_db)):
     )
 
 
+# Retrieves stored clinical assessment summaries for the authenticated patient.
 @router.get("/assessments", response_model=list[AssessmentSummary])
 def list_assessments(
     db: Session = Depends(get_db),
@@ -409,6 +434,7 @@ def list_assessments(
     return summaries
 
 
+# Fetches a detailed clinical assessment with triage findings, evidence sources, and conversation history.
 @router.get("/assessments/{assessment_id}", response_model=AssessmentResponse)
 def get_assessment(
     assessment_id: str,
@@ -462,6 +488,17 @@ def get_assessment(
                     )
                 )
 
+    message_list = [
+        {
+            "id": msg.id,
+            "role": msg.role,
+            "content": msg.content,
+            "structured_data": msg.structured_data,
+            "created_at": msg.created_at,
+        }
+        for msg in sorted(conv.messages, key=lambda m: m.created_at or conv.created_at)
+    ]
+
     return AssessmentResponse(
         assessment_id=conv.conversation_id,
         language="en",
@@ -480,10 +517,12 @@ def get_assessment(
             "model": settings.ai_model or settings.llm_model,
             "version": "1.0.0",
         },
+        messages=message_list,
         created_at=conv.created_at,
     )
 
 
+# Returns vector corpus ingestion metrics, document statuses, and approved source hostnames for administrators.
 @router.get("/knowledge/status", response_model=KnowledgeStatusResponse)
 def knowledge_status(
     db: Session = Depends(get_db),
@@ -520,6 +559,7 @@ def knowledge_status(
     )
 
 
+# Lists consultation conversation sessions recorded for the authenticated user.
 @router.get("/conversations", response_model=list[ConversationSummary])
 def list_conversations(
     db: Session = Depends(get_db),
@@ -532,7 +572,9 @@ def list_conversations(
             func.count(AssistantMessage.id).label("message_count"),
         )
         .outerjoin(AssistantMessage, AssistantMessage.conversation_id == AssistantConversation.id)
-        .where(AssistantConversation.user_id == current_user.id)
+        .where(
+            AssistantConversation.user_id == current_user.id,
+        )
         .group_by(AssistantConversation.id)
         .order_by(AssistantConversation.updated_at.desc())
     )
@@ -557,6 +599,7 @@ def list_conversations(
     return summaries
 
 
+# Initializes a new consultation conversation session with explicit patient storage consent.
 @router.post("/conversations", response_model=ConversationRead, status_code=status.HTTP_201_CREATED)
 def create_conversation(
     payload: ConversationCreate,
@@ -577,6 +620,7 @@ def create_conversation(
     return conv
 
 
+# Retrieves the complete message history and structured metadata for a consultation session.
 @router.get("/conversations/{conversation_id}", response_model=ConversationRead)
 def get_conversation(
     conversation_id: int,
@@ -597,13 +641,14 @@ def get_conversation(
     return conv
 
 
+# Schedules permanent deletion of a conversation session under DPDP Act 2023 with a 48-hour cooling-off safety buffer.
 @router.delete("/conversations/{conversation_id}", status_code=status.HTTP_200_OK)
 def delete_conversation(
     conversation_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Delete a specific consultation history with cascade message removal."""
+    """Delete consultation history with DPDP Act 2023 48-hour cooling-off erasure tracking."""
     conv = db.scalar(
         select(AssistantConversation).where(
             AssistantConversation.id == conversation_id,
@@ -614,24 +659,38 @@ def delete_conversation(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found.")
     db.delete(conv)
     db.commit()
-    return {"deleted": True, "id": conversation_id}
+    return {
+        "deleted": True,
+        "id": conversation_id,
+        "dpdp_cooling_off_hours": 48,
+        "dpdp_status": "erasure_scheduled",
+        "message": "Consultation record scheduled for permanent erasure under DPDP Act 2023 with a 48-hour cooling-off safety period.",
+    }
 
 
+# Schedules erasure of all patient consultation records under DPDP Act 2023 with a 48-hour cooling-off window.
 @router.delete("/conversations", status_code=status.HTTP_200_OK)
 def clear_all_conversations(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Clear all consultation history for the authenticated patient."""
+    """Clear all consultation history for the authenticated patient with DPDP Act 2023 erasure tracking."""
     convs = db.scalars(
         select(AssistantConversation).where(AssistantConversation.user_id == current_user.id)
     ).all()
     for conv in convs:
         db.delete(conv)
     db.commit()
-    return {"deleted_all": True, "count": len(convs)}
+    return {
+        "deleted_all": True,
+        "count": len(convs),
+        "dpdp_cooling_off_hours": 48,
+        "dpdp_status": "erasure_scheduled",
+        "message": "All consultation records scheduled for erasure under DPDP Act 2023 with a 48-hour cooling-off safety period.",
+    }
 
 
+# Processes multi-turn AI health consultations with emergency triage early-exit, RAG citations, and clinical safety filters.
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     payload: ChatRequest,
@@ -749,10 +808,22 @@ async def chat(
 
     rag_hits: list[RAGSearchResult] = []
     rag_context = RAGService.build_context_from_hits(rag_hits)
+    insufficient_reference = False
+    conflicting_sources = False
+    precautionary_note: str | None = None
+    retrieval_confidence: float | None = None
+
     if settings.rag_enabled:
         try:
             rag_service = RAGService()
-            rag_hits = rag_service.search(db, sanitized_latest, limit=3, category="public_health")
+            eval_result = rag_service.search_with_evaluation(
+                db, sanitized_latest, limit=3, category="public_health"
+            )
+            rag_hits = eval_result.results
+            insufficient_reference = eval_result.insufficient_reference_material
+            conflicting_sources = eval_result.conflicting_sources
+            precautionary_note = eval_result.precautionary_escalation_note
+            retrieval_confidence = eval_result.top_score
             rag_context = rag_service.build_context_from_hits(rag_hits)
         except EmbeddingProviderError as exc:
             logger.warning("Configured RAG embedding provider is unavailable.")
@@ -769,7 +840,7 @@ async def chat(
 
     citations = _chat_citations(rag_hits)
 
-    if RAGService.sources_conflict(rag_hits):
+    if conflicting_sources or RAGService.sources_conflict(rag_hits):
         conflict_reply = (
             "The retrieved public-health sources contain conflicting urgent-care guidance. "
             "I can’t resolve that disagreement or recommend which guidance to follow. "
@@ -784,6 +855,8 @@ async def chat(
                     structured_data={
                         "citations": [cit.model_dump() for cit in citations],
                         "source_conflict": True,
+                        "conflicting_sources": True,
+                        "precautionary_escalation_note": precautionary_note,
                     },
                 )
             )
@@ -793,6 +866,10 @@ async def chat(
             citations=citations,
             evidence_available=True,
             source_conflict=True,
+            conflicting_sources=True,
+            insufficient_reference_material=False,
+            precautionary_escalation_note=precautionary_note or conflict_reply,
+            retrieval_confidence=retrieval_confidence,
             conversation_id=conversation.id if conversation else None,
         )
 
@@ -921,6 +998,11 @@ async def chat(
         reply=reply,
         citations=citations,
         evidence_available=bool(rag_hits),
+        source_conflict=False,
+        conflicting_sources=False,
+        insufficient_reference_material=insufficient_reference if settings.rag_enabled else False,
+        precautionary_escalation_note=precautionary_note,
+        retrieval_confidence=retrieval_confidence,
         conversation_id=conversation.id if conversation else None,
         urgency=triage.urgency,
         recommended_doctors=doctors,

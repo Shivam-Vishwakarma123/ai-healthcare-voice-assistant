@@ -9,6 +9,7 @@ EMERGENCY_CONTACTS = {
 }
 
 
+# Structured result container for emergency triage assessment and clinical guidance.
 @dataclass
 class TriageResult:
     urgency: str
@@ -32,6 +33,7 @@ class TriageResult:
     )
     specialty_hint: str | None = None
 
+    # Normalizes urgency levels and attaches default emergency warnings for critical triages.
     def __post_init__(self):
         if not self.urgency_level:
             self.urgency_level = self.urgency
@@ -41,6 +43,7 @@ class TriageResult:
                 "Immediate in-person clinical assessment is recommended. Do not delay emergency care."
             )
 
+    # Formats the triage outcome into a patient-facing emergency guidance response string.
     def to_reply(self) -> str:
         prefix = "Emergency guidance: " if self.urgency == "emergency" else "Safety guidance: "
         contacts = ", ".join(self.emergency_numbers) if self.emergency_numbers else "contact a local emergency service"
@@ -50,14 +53,17 @@ class TriageResult:
         )
 
 
+# Normalizes symptom text by collapsing whitespace and converting to lowercase.
 def _normalise_text(value: str) -> str:
     return re.sub(r"\s+", " ", value or "").strip().lower()
 
 
+# Checks if any of the specified target substrings exist within the input text.
 def _contains_any(text: str, needles: Iterable[str]) -> bool:
     return any(needle in text for needle in needles)
 
 
+# Returns multi-lingual patterns identifying self-harm and acute mental health crises.
 def _self_harm_patterns() -> tuple[str, ...]:
     return (
         "want to die",
@@ -84,6 +90,7 @@ def _self_harm_patterns() -> tuple[str, ...]:
     )
 
 
+# Returns pattern strings used to detect system prompt injection attempts.
 def _prompt_injection_patterns() -> tuple[str, ...]:
     return (
         "ignore all previous instructions",
@@ -95,6 +102,7 @@ def _prompt_injection_patterns() -> tuple[str, ...]:
     )
 
 
+# Identifies acute life-threatening emergency red flags across English and Hindi inputs.
 def _obvious_red_flags(text: str) -> list[str]:
     lower = _normalise_text(text)
     flags: list[str] = []
@@ -183,6 +191,7 @@ SPECIALTY_HINTS = {
 }
 
 
+# Maps patient input text to recognized clinical symptoms using the symptom dictionary.
 def _extract_symptoms(lower: str) -> list[str]:
     extracted: list[str] = []
     for symptom, terms in SYMPTOM_DICTIONARY.items():
@@ -191,6 +200,7 @@ def _extract_symptoms(lower: str) -> list[str]:
     return extracted
 
 
+# Suggests a primary medical specialty based on detected clinical keywords.
 def _infer_specialty(lower: str) -> str:
     for specialty, terms in SPECIALTY_HINTS.items():
         if _contains_any(lower, terms):
@@ -198,6 +208,7 @@ def _infer_specialty(lower: str) -> str:
     return "General Medicine"
 
 
+# Evaluates patient inputs against clinical red flags and returns emergency triage guidance.
 def evaluate_triage(text: str, *, age_band: str | None = None, pregnancy: bool = False, chronic_condition: bool = False) -> TriageResult:
     lower = _normalise_text(text)
     flags = _obvious_red_flags(lower)

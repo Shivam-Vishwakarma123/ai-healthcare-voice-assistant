@@ -4258,6 +4258,10 @@ body.cv-menu-open {
   background: #8b5cf6;
 }
 
+.timeline-dot.billing {
+  background: #10b981;
+}
+
 /* Record Card Enhancements */
 .record-card {
   padding: 20px;
@@ -4320,6 +4324,52 @@ body.cv-menu-open {
     height: 12px;
   }
 }
+
+/* Record Card Actions & UI Utilities */
+.record-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.record-source-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cv-text-muted);
+  background: var(--cv-surface-soft);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--cv-border);
+}
+
+.record-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.record-detail-section {
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--cv-surface-soft);
+  border: 1px solid var(--cv-border);
+  margin-bottom: 12px;
+}
+
+.record-detail-label {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--cv-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
 
 
 

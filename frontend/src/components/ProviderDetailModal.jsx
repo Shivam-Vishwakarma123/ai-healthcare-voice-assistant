@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import Modal from "./Modal";
 import { apiRequest, formatMoney } from "../services/api";
 
+// Accessible loading placeholder with spinning indicator for modal dialogues.
 function LoadingState({ label = "Loading…" }) {
   return (
     <div className="cv-loading" role="status">
@@ -11,6 +12,7 @@ function LoadingState({ label = "Loading…" }) {
   );
 }
 
+// Renders structured doctor qualifications, bios, schedules, or hospital facility departments.
 function ProviderDetailContent({ type, detail, language }) {
   const hi = language === "hi";
 
@@ -116,6 +118,7 @@ function ProviderDetailContent({ type, detail, language }) {
   );
 }
 
+// Modal dialog fetching and presenting comprehensive verification credentials and schedule for a provider.
 export default function ProviderDetailModal({ isOpen, onClose, type, profileId, token, language }) {
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(false);

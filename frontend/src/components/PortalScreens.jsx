@@ -9,6 +9,9 @@ import { createIdempotencyKey, formatAppointmentDatePart, formatAppointmentDateT
 import { getAppointmentPaymentAction, getAppointmentPaymentState } from "../services/appointmentPayments";
 import NotificationContactForm from "./NotificationContactForm";
 
+const API_BASE = (import.meta.env?.VITE_API_BASE_URL || "http://localhost:8000/api/v1").replace(/\/+$/, "");
+
+// Standardized portal page header rendering eyebrow category, primary heading, description, and action button.
 export function ScreenTitle({ eyebrow = "CAREVOICE PORTAL", title, description, action }) {
   return (
     <div className="cv-page-title">
@@ -22,6 +25,7 @@ export function ScreenTitle({ eyebrow = "CAREVOICE PORTAL", title, description, 
   );
 }
 
+// Visual placeholder rendered when a query or list returns zero records with actionable CTA.
 export function EmptyState({ icon = "◇", title, description, action }) {
   return (
     <div className="cv-empty">
@@ -33,10 +37,12 @@ export function EmptyState({ icon = "◇", title, description, action }) {
   );
 }
 
+// Accessible loading spinner with localized textual status message.
 function LoadingState({ label = "Loading…" }) {
   return <div className="cv-loading" role="status"><span className="cv-spinner" aria-hidden="true" />{label}</div>;
 }
 
+// Expandable inline drawer displaying clinician or hospital profile details, verified degrees, and hours.
 function ProviderInlineDetails({ type, detail, loading, error, onRetry, language }) {
   const hi = language === "hi";
   if (loading) return <LoadingState label={hi ? "विवरण लोड हो रहे हैं…" : "Loading details…"} />;
@@ -84,6 +90,7 @@ function ProviderInlineDetails({ type, detail, loading, error, onRetry, language
   );
 }
 
+// Queries backend availability engine and renders selectable IST appointment time slot buckets.
 function AppointmentSlotPicker({ token, doctorId, consultationType, value, onChange, language }) {
   const [day, setDay] = useState(() => getISTDate(1));
   const [slots, setSlots] = useState([]);
@@ -127,6 +134,7 @@ function AppointmentSlotPicker({ token, doctorId, consultationType, value, onCha
   );
 }
 
+// In-place alert banner displaying data retrieval failures with optional retry trigger.
 function InlineError({ message, onRetry }) {
   if (!message) return null;
   return (
@@ -137,6 +145,7 @@ function InlineError({ message, onRetry }) {
   );
 }
 
+// Public emergency symptom safety checker and triage portal with hotlines and voice consultation.
 export function TriagePage({ language = "en", token, onNavigate }) {
   const hi = language === "hi";
   return (
@@ -167,6 +176,7 @@ export function TriagePage({ language = "en", token, onNavigate }) {
   );
 }
 
+// Real-time activity notifications feed tracking appointments, billing receipts, and contact channels.
 export function NotificationsPage({ token, user, onUserUpdated, language = "en" }) {
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -265,7 +275,7 @@ export function NotificationsPage({ token, user, onUserUpdated, language = "en" 
   );
 }
 
-
+// Patient and clinical staff home dashboard displaying high-level metrics, upcoming visits, and shortcuts.
 export function DashboardPage({ user, patient, token, onNavigate, language = "en" }) {
   const [data, setData] = useState({ appointments: [], doctors: [], hospitals: [] });
   const [loading, setLoading] = useState(true);
@@ -360,6 +370,7 @@ export function DashboardPage({ user, patient, token, onNavigate, language = "en
   );
 }
 
+// Healthcare provider management console for editing biography, publishing schedules, and managing qualifications.
 export function ProviderDashboardPage({ user, token, onUserUpdated, language = "en" }) {
   const hi = language === "hi";
   const [dashboard, setDashboard] = useState(null);
@@ -653,6 +664,7 @@ export function ProviderDashboardPage({ user, token, onUserUpdated, language = "
   );
 }
 
+// Searchable directory of verified doctors and hospitals with AI matching and slot booking workflows.
 export function CareDirectoryPage({ token, onNavigate, onAppointmentBooked, language = "en", canBook = true }) {
   const [doctors, setDoctors] = useState([]);
   const [hospitals, setHospitals] = useState([]);
@@ -986,6 +998,7 @@ export function CareDirectoryPage({ token, onNavigate, onAppointmentBooked, lang
   );
 }
 
+// Appointment lifecycle view managing visit scheduling, rescheduling, cancellations, slips, and payment flows.
 export function AppointmentsPage({ token, language = "en", user, recentAppointment, onNavigate }) {
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1069,6 +1082,26 @@ export function AppointmentsPage({ token, language = "en", user, recentAppointme
     }
   }
 
+  async function downloadAppointmentSlip(appointmentId) {
+    try {
+      const resp = await fetch(`${API_BASE}/records/appointments/${appointmentId}/confirmation/pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!resp.ok) throw new Error(`Download failed: ${resp.status}`);
+      const blob = await resp.blob();
+      const objUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objUrl;
+      a.download = `appointment-confirmation-${appointmentId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(objUrl);
+    } catch (err) {
+      alert(`Could not download appointment slip: ${err.message}`);
+    }
+  }
+
   async function loadAppointmentHistory(appointment) {
     setSelectedHistoryAppointment(appointment);
     setHistoryLoadingId(appointment.id);
@@ -1134,6 +1167,9 @@ export function AppointmentsPage({ token, language = "en", user, recentAppointme
           {paymentState === "paid" ? <><span className="cv-status cv-status-paid">{appointment.payment_is_demo ? (hi ? "डेमो भुगतान · वास्तविक भुगतान नहीं" : "DEMO paid · not a real payment") : (hi ? "भुगतान हुआ" : "Paid")}</span><button className="cv-button cv-button-quiet" type="button" onClick={() => onNavigate?.("Billing", { invoiceId: appointment.invoice_id, action: "receipt" })}>{hi ? "रसीद देखें" : "View receipt"}</button></> : ["refunded", "partially_refunded"].includes(paymentState) ? <><span className="cv-status">{paymentState === "refunded" ? (hi ? "रिफंड हुआ" : "Refunded") : (hi ? "आंशिक रिफंड" : "Partially refunded")}</span><button className="cv-button cv-button-quiet" type="button" onClick={() => onNavigate?.("Billing", { invoiceId: appointment.invoice_id, action: "receipt" })}>{hi ? "विवरण देखें" : "View details"}</button></> : paymentState === "invoice_cancelled" ? <span className="cv-subtle">{hi ? "इनवॉइस रद्द" : "Invoice cancelled"}</span> : paymentAction ? <><span className="cv-subtle">{paymentState === "pending" ? (hi ? "भुगतान लंबित" : "Payment pending") : paymentState === "failed" ? (hi ? "भुगतान विफल" : "Payment failed") : paymentState === "cancelled" ? (hi ? "भुगतान रद्द" : "Payment cancelled") : (hi ? "भुगतान बाकी" : "Payment due")}</span><button className={`cv-button ${paymentAction === "pay" ? "cv-button-primary" : "cv-button-quiet"}`} type="button" disabled={paymentAction === "check_status" ? loading : paymentStartId !== null} onClick={() => paymentAction === "check_status" ? loadAppointments() : startAppointmentPayment(appointment)}>{paymentAction === "check_status" ? (loading ? (hi ? "जाँच रहे हैं…" : "Checking…") : (hi ? "भुगतान स्थिति जाँचें" : "Check payment status")) : paymentStartId === appointment.id ? (hi ? "तैयार हो रहा है…" : "Preparing…") : paymentAction === "retry" ? (hi ? "फिर भुगतान करें" : "Retry payment") : (hi ? "अभी भुगतान करें" : "Pay now")}</button></> : <span className="cv-subtle">{paymentState === "not_due" ? (appointment.payment_block_reason === "past" ? (hi ? "बीते हुए अपॉइंटमेंट के लिए भुगतान उपलब्ध नहीं है" : "Payment unavailable for a past appointment") : appointment.payment_block_reason === "cancelled" ? (hi ? "रद्द अपॉइंटमेंट के लिए भुगतान उपलब्ध नहीं है" : "Payment unavailable for a cancelled appointment") : (hi ? "इस अपॉइंटमेंट के लिए नया भुगतान उपलब्ध नहीं है" : "New payment is unavailable for this appointment")) : (hi ? "क्लिनिक का इनवॉइस अभी जारी नहीं हुआ" : "Clinic invoice not issued yet")}</span>}
         </div>}
         <div className="cv-appointment-actions">
+          <button className="cv-button cv-button-quiet" type="button" onClick={() => downloadAppointmentSlip(appointment.id)} title="Download appointment confirmation slip PDF">
+            📄 {hi ? "स्लिप (PDF)" : "Slip (PDF)"}
+          </button>
           {appointment.status === "scheduled" && canConfirm && <button className="cv-button cv-button-quiet" disabled={confirmingId === appointment.id} onClick={() => confirmAppointment(appointment)}>{confirmingId === appointment.id ? (hi ? "पुष्टि हो रही है…" : "Confirming…") : (hi ? "पुष्टि करें" : "Confirm")}</button>}
           {["scheduled", "confirmed"].includes(appointment.status) && new Date(appointment.scheduled_for) >= new Date() && <button className="cv-button cv-button-quiet" disabled={rescheduleBusy} onClick={() => { setSelectedRescheduleAppointment(appointment); setRescheduleTime(""); setRescheduleType(appointment.consultation_type); setError(""); }}>{hi ? "समय बदलें" : "Reschedule"}</button>}
           {["scheduled", "confirmed"].includes(appointment.status) && new Date(appointment.scheduled_for) >= new Date() && <button className="cv-button cv-button-quiet" disabled={cancellingId === appointment.id} onClick={() => cancelAppointment(appointment)}>{cancellingId === appointment.id ? (hi ? "रद्द हो रहा है…" : "Cancelling…") : (hi ? "रद्द करें" : "Cancel")}</button>}
@@ -1186,6 +1222,7 @@ export function AppointmentsPage({ token, language = "en", user, recentAppointme
   );
 }
 
+// Patient demographic profile editor for managing personal identity, contact details, and account deletion.
 export function ProfilePage({ profile, setProfile, patient, busy, onSave, onDelete, language = "en", token, user, onUserUpdated }) {
   const hi = language === "hi";
   const update = (key, value) => setProfile({ ...profile, [key]: value });
@@ -1218,14 +1255,17 @@ export function ProfilePage({ profile, setProfile, patient, busy, onSave, onDele
   );
 }
 
+// Fallback placeholder screen for features or routes currently under development or unconfigured.
 export function UnavailablePage({ title, description }) {
   return <><ScreenTitle title={title} description={description} /><section className="cv-card"><EmptyState icon="⧖" title="Not available in this version" description="This area is not connected to a backend service yet. No records or notifications are being simulated." /></section></>;
 }
 
+// Compact dashboard KPI widget displaying an icon, label, primary numerical value, and note.
 function MetricCard({ icon, label, value, note }) {
   return <article className="cv-metric"><span className="cv-icon-tile" aria-hidden="true">{icon}</span><span className="cv-metric-label">{label}</span><strong>{value}</strong><small>{note}</small></article>;
 }
 
+// Card snippet summarizing an upcoming appointment's date, doctor, specialty, and status.
 function AppointmentSummary({ appointment }) {
   return <article className="cv-upcoming-item">
     <span className="cv-date-chip"><b>{formatAppointmentDatePart(appointment.scheduled_for, "day")}</b><small>{formatAppointmentDatePart(appointment.scheduled_for, "month")}</small></span>
@@ -1234,6 +1274,7 @@ function AppointmentSummary({ appointment }) {
   </article>;
 }
 
+// Actionable navigation tile linking directly to key portal workflows and clinical tools.
 function QuickLink({ icon, title, detail, onClick }) {
   return <button className="cv-quick-link" onClick={onClick}><span aria-hidden="true">{icon}</span><span><strong>{title}</strong><small>{detail}</small></span><b aria-hidden="true">→</b></button>;
 }

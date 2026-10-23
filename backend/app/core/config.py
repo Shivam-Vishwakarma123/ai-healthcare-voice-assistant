@@ -4,6 +4,7 @@ from urllib.parse import urlsplit
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Application configuration and environment variables for CareVoice AI.
 class Settings(BaseSettings):
     app_name: str = "AI Healthcare Voice Assistant"
     app_env: str = "development"
@@ -42,9 +43,12 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_base_url: str = "http://ollama:11434/v1"
     llm_model: str = "llama3.2:1b-instruct-q4_K_M"
-    llm_temperature: float = 0.4
+    llm_primary_model: str = "gpt-6-astra"
+    llm_fallback_model: str = "llama3.2:1b-instruct-q4_K_M"
+    llm_alternative_model: str = "mistral:7b-instruct-v0.3-q4_K_M"
+    llm_temperature: float = 0.2
     llm_max_tokens: int = 512
-    llm_timeout_seconds: float = 45.0
+    llm_timeout_seconds: float = 15.0
     llm_max_retries: int = 2
     speech_to_text_provider: str = "browser"
     speech_to_text_base_url: str = ""
@@ -58,7 +62,9 @@ class Settings(BaseSettings):
     embedding_timeout_seconds: float = 15.0
     embedding_dimensions: int = 384
     rag_chunk_size: int = 500
-    rag_chunk_overlap: int = 100
+    rag_chunk_overlap: int = 50
+    rag_min_similarity_threshold: float = 0.45
+    rag_boost_keywords: str = "ORS,SpO2,14416,112"
     rag_approved_source_hosts: str = "who.int,mohfw.gov.in,mohfw.nic.in,nhs.uk,cdc.gov,medlineplus.gov,nih.gov,nlm.nih.gov,niddk.nih.gov,nhlbi.nih.gov"
     provider_match_specialty_weight: float = 0.55
     provider_match_city_weight: float = 0.2
@@ -73,6 +79,7 @@ class Settings(BaseSettings):
     appointment_refund_policy: str = "manual_review"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
 
+    # Ensures cryptographically secure JWT secrets and production database requirements.
     @model_validator(mode="after")
     def validate_production_secrets(self):
         if self.app_env.lower() == "production":
@@ -87,6 +94,7 @@ class Settings(BaseSettings):
                 raise ValueError("PAYMENT_MODE=demo and PAYMENT_MODE=test are not permitted in production.")
         return self
 
+    # Validates Razorpay payment mode settings and refund policy restrictions.
     @model_validator(mode="after")
     def validate_payment_mode(self):
         self.payment_mode = self.payment_mode.strip().lower()
@@ -105,6 +113,7 @@ class Settings(BaseSettings):
             raise ValueError("APPOINTMENT_REFUND_POLICY must be manual_review or no_refunds.")
         return self
 
+    # Synchronizes AI and LLM parameter settings and validates operational constraints.
     @model_validator(mode="after")
     def validate_ai_limits(self):
         # Sync AI_* and LLM_* settings
@@ -179,6 +188,7 @@ class Settings(BaseSettings):
             raise ValueError("SPEECH_TO_TEXT_MAX_AUDIO_BYTES must be between 1024 and 26214400.")
         return self
 
+    # Validates authentication expiration windows, rate-limit thresholds, and SMTP/SMS settings.
     @model_validator(mode="after")
     def validate_auth_configuration(self):
         if not 1 <= self.access_token_minutes <= 1440:
@@ -202,6 +212,7 @@ class Settings(BaseSettings):
                 raise ValueError("SMS_API_URL must be an HTTPS URL without embedded credentials.")
         return self
 
+    # Ensures provider recommendation scoring weights fall within normalized boundaries.
     @model_validator(mode="after")
     def validate_provider_match_weights(self):
         weights = (
@@ -214,6 +225,7 @@ class Settings(BaseSettings):
             raise ValueError("Provider match weights must be between 0 and 1 with a positive total.")
         return self
 
+    # Parses and validates allowed CORS origins for browser security.
     @property
     def cors_origins(self) -> list[str]:
         origins = [origin.strip().rstrip("/") for origin in self.backend_cors_origins.split(",") if origin.strip()]
@@ -225,6 +237,7 @@ class Settings(BaseSettings):
                 raise ValueError(f"Invalid CORS origin: {origin}")
         return origins
 
+# Returns cached application settings instance.
 @lru_cache
 def get_settings() -> Settings:
     return Settings()

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { apiRequest } from "../services/api";
 
+// Public unauthenticated triage widget running deterministic red-flag evaluations on patient symptom input.
 export default function PublicTriage({ language = "en", onNavigate }) {
   const [symptoms, setSymptoms] = useState("");
   const [result, setResult] = useState(null);
@@ -8,6 +9,7 @@ export default function PublicTriage({ language = "en", onNavigate }) {
   const [error, setError] = useState("");
   const hi = language === "hi";
 
+  // Evaluates symptom text against clinical emergency triage rules without requiring an authenticated account.
   async function checkSymptoms(event) {
     event?.preventDefault();
     if (busy || symptoms.trim().length < 2) return;
@@ -27,6 +29,7 @@ export default function PublicTriage({ language = "en", onNavigate }) {
     }
   }
 
+  // Appends clinical clarifying question prompt to active symptoms input field for follow-up evaluation.
   function handleQuestionClick(questionText) {
     setSymptoms((prev) => (prev ? `${prev} ${questionText}` : questionText));
   }

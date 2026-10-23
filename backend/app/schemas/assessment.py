@@ -35,6 +35,7 @@ class AssessmentResponse(BaseModel):
         "It does not provide a definitive medical diagnosis or replace consultation with a qualified clinician."
     )
     model_metadata: dict[str, Any] = Field(default_factory=dict)
+    messages: list[dict[str, Any]] = Field(default_factory=list)
     created_at: datetime | None = None
 
 

@@ -1,5 +1,6 @@
 const API_BASE = (import.meta.env?.VITE_API_BASE_URL || "http://localhost:8000/api/v1").replace(/\/+$/, "");
 
+// Normalizes request headers into an object preserving Title-Case casing conventions for HTTP headers.
 function normalizeHeaders(headers) {
   if (!headers) return {};
   // Headers normalizes names to lowercase; restore conventional casing so callers
@@ -18,6 +19,7 @@ function normalizeHeaders(headers) {
   return {};
 }
 
+// Dispatches authenticated HTTP requests to CareVoice backend with error unwrapping and CORS diagnostics.
 export async function apiRequest(path, token, options = {}) {
   const isMultipart = typeof FormData !== "undefined" && options.body instanceof FormData;
   const headers = {
@@ -65,6 +67,7 @@ export async function apiRequest(path, token, options = {}) {
   return data;
 }
 
+// Safely parses stored user profile data from localStorage with corrupted JSON fallback cleanup.
 export function readCachedUser() {
   try {
     const value = localStorage.getItem("ahva_user");
@@ -79,6 +82,7 @@ export function readCachedUser() {
   }
 }
 
+// Formats minor currency units (paise/cents) into localized currency strings with standard symbol formatting.
 export function formatMoney(amountMinor, currency = "INR") {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency }).format(amountMinor / 100);
 }

@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 
+# Determines whether an appointment is eligible for online payment or returns the blocking reason.
 def appointment_payment_block_reason(appointment, fee_minor: int, *, now: datetime | None = None) -> str | None:
     """Return why a new consultation payment cannot be started, using UTC-aware time."""
     if appointment.status == "cancelled":

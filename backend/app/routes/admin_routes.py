@@ -26,6 +26,7 @@ router = APIRouter(prefix="/admin", tags=["Administration"])
 ADMIN_ROLES = {"platform_admin", "hospital_admin"}
 
 
+# Validates administrative account modification payloads for role, affiliation, or active state changes.
 class UserAdminUpdate(BaseModel):
     role: str | None = None
     hospital_id: int | None = Field(default=None, gt=0)
@@ -46,6 +47,7 @@ class UserAdminUpdate(BaseModel):
         return self
 
 
+# Validates credential parameters and organization linkages for newly provisioned staff or clinician accounts.
 class AccountCreate(BaseModel):
     full_name: str = Field(min_length=2, max_length=120)
     email: str
@@ -82,12 +84,14 @@ class AccountCreate(BaseModel):
         return self
 
 
+# Resolves the caller's hospital tenancy constraint or permits platform-wide visibility for platform admins.
 def _admin_hospital(user: User) -> int | None:
     if user.role not in ADMIN_ROLES:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Administration access is required.")
     return user.hospital_id if user.role == "hospital_admin" else None
 
 
+# Lists hospitals accessible within the calling administrator's operational jurisdiction.
 @router.get("/hospitals")
 def list_account_hospitals(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     hospital_id = _admin_hospital(user)
@@ -100,6 +104,7 @@ def list_account_hospitals(db: Session = Depends(get_db), user: User = Depends(g
     ]
 
 
+# Lists doctors affiliated with the administrator's authorized hospital or across all facilities.
 @router.get("/doctors")
 def list_account_doctors(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     hospital_id = _admin_hospital(user)
@@ -118,6 +123,7 @@ def list_account_doctors(db: Session = Depends(get_db), user: User = Depends(get
     ]
 
 
+# Provisions new doctor or hospital administrator accounts with tenancy boundaries and audit trail recording.
 @router.post("/accounts", status_code=status.HTTP_201_CREATED)
 def create_managed_account(
     payload: AccountCreate,
@@ -183,10 +189,12 @@ def create_managed_account(
     }
 
 
+# Suppresses low cell counts (<5) in administrative aggregate statistics to protect patient privacy.
 def _visible_count(value: int) -> dict[str, int | bool | None]:
     return {"count": None if 0 < value < 5 else value, "suppressed": 0 < value < 5}
 
 
+# Aggregates model status counts scoped to a specific facility or the entire platform with privacy masking.
 def _status_counts(db: Session, model, column, hospital_id: int | None) -> dict[str, dict[str, int | bool | None]]:
     query = select(column, func.count()).select_from(model)
     if hospital_id is not None:
@@ -199,6 +207,7 @@ def _status_counts(db: Session, model, column, hospital_id: int | None) -> dict[
     return {str(key or "unknown"): _visible_count(count) for key, count in db.execute(query.group_by(column))}
 
 
+# Returns high-level operational statistics including user roles, appointments, payments, and verifications.
 @router.get("/overview")
 def admin_overview(
     db: Session = Depends(get_db),
@@ -224,6 +233,7 @@ def admin_overview(
     }
 
 
+# Queries managed user accounts with role filtering within the administrator's authorized facility scope.
 @router.get("/users")
 def list_admin_users(
     limit: int = Query(default=50, ge=1, le=100),
@@ -263,6 +273,7 @@ def list_admin_users(
     }
 
 
+# Updates user roles, facility associations, or active states with last-admin protection and session invalidation.
 @router.patch("/users/{user_id}")
 def update_admin_user(
     user_id: int,
@@ -398,6 +409,7 @@ def update_admin_user(
     }
 
 
+# Lists consultation appointments across the administrative scope with doctor info and status filters.
 @router.get("/appointments")
 def list_admin_appointments(
     limit: int = Query(default=50, ge=1, le=100),
@@ -436,6 +448,7 @@ def list_admin_appointments(
     }
 
 
+# Lists billing payments and associated invoices for financial auditing within the administrative scope.
 @router.get("/payments")
 def list_admin_payments(
     limit: int = Query(default=50, ge=1, le=100),
@@ -473,6 +486,7 @@ def list_admin_payments(
     }
 
 
+# Queries immutable system audit trail records filtered by action, date range, or facility tenancy.
 @router.get("/audit-logs")
 def list_admin_audit_logs(
     request: Request,
@@ -526,6 +540,7 @@ def list_admin_audit_logs(
     }
 
 
+# Lists SMS and email notification dispatch logs with delivery status and failure reasons.
 @router.get("/notifications")
 def list_admin_notification_deliveries(
     limit: int = Query(default=50, ge=1, le=100),

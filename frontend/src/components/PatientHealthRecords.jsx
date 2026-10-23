@@ -2,9 +2,12 @@ import { useEffect, useState } from "react";
 import { apiRequest } from "../services/api";
 import { getUrgencyBadgeConfig } from "../services/assistantHelpers";
 import { EmptyState, ScreenTitle } from "./PortalScreens";
+import Modal from "./Modal";
+import { DPDPPrivacyCenter } from "./DPDPPrivacyCenter";
 
 const API_BASE = (import.meta.env?.VITE_API_BASE_URL || "http://localhost:8000/api/v1").replace(/\/+$/, "");
 
+// Formats binary byte counts into human-readable kilobytes or megabytes.
 function formatFileSize(bytes) {
   if (!bytes || typeof bytes !== "number") return "0 KB";
   if (bytes < 1024 * 1024) {
@@ -13,6 +16,7 @@ function formatFileSize(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// Converts ISO-8601 timestamps into Indian localized date strings (DD MMM YYYY).
 function formatDate(isoString) {
   if (!isoString) return "";
   try {
@@ -26,6 +30,7 @@ function formatDate(isoString) {
   }
 }
 
+// Patient health records dashboard organizing longitudinal timelines, doctor notes, prescriptions, and FHIR exports.
 export function PatientHealthRecords({ token, language = "en", onNavigate }) {
   const isHindi = language === "hi";
   const [activeTab, setActiveTab] = useState("timeline");
@@ -40,7 +45,36 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
   const [notes, setNotes] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [allergies, setAllergies] = useState([]);
+  const [overview, setOverview] = useState(null);
+  const [conversations, setConversations] = useState([]);
+  const [invoices, setInvoices] = useState([]);
+
+  // Search and filter states across tabs
   const [filterType, setFilterType] = useState("all");
+  const [timelineSearch, setTimelineSearch] = useState("");
+  const [reportFilter, setReportFilter] = useState("all");
+  const [reportSearch, setReportSearch] = useState("");
+  const [rxFilter, setRxFilter] = useState("all");
+  const [rxSearch, setRxSearch] = useState("");
+  const [noteFilter, setNoteFilter] = useState("all");
+  const [noteSearch, setNoteSearch] = useState("");
+  const [docCategoryFilter, setDocCategoryFilter] = useState("all");
+  const [docSearch, setDocSearch] = useState("");
+  const [convSearch, setConvSearch] = useState("");
+  const [billingFilter, setBillingFilter] = useState("all");
+  const [billingSearch, setBillingSearch] = useState("");
+
+  // Modals
+  const [selectedRecordModal, setSelectedRecordModal] = useState(null);
+  const [selectedConversation, setSelectedConversation] = useState(null);
+  const [loadingConversation, setLoadingConversation] = useState(false);
+
+  // Patient Care Guide State
+  const [guideApptId, setGuideApptId] = useState("");
+  const [guideLang, setGuideLang] = useState("en");
+  const [careGuide, setCareGuide] = useState(null);
+  const [loadingGuide, setLoadingGuide] = useState(false);
+  const [guideError, setGuideError] = useState("");
 
   // Document upload state
   const [uploadTitle, setUploadTitle] = useState("");
@@ -55,18 +89,22 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
     loadAllRecords();
   }, [token]);
 
+  // Fetches timeline events, clinical notes, prescriptions, lab reports, allergies, and billing invoices.
   async function loadAllRecords() {
     if (!token) return;
     setLoading(true);
     setError("");
     try {
-      const [tlData, repData, rxData, noteData, docData, algData] = await Promise.all([
+      const [tlData, repData, rxData, noteData, docData, algData, ovData, convData, invData] = await Promise.all([
         apiRequest("/records/timeline", token).catch(() => ({ events: [] })),
         apiRequest("/records/reports", token).catch(() => []),
-        apiRequest("/records/prescriptions", token).catch(() => []),
-        apiRequest("/records/notes", token).catch(() => []),
+        apiRequest("/records/prescriptions?include_drafts=true", token).catch(() => []),
+        apiRequest("/records/notes?include_drafts=true", token).catch(() => []),
         apiRequest("/records/documents", token).catch(() => []),
         apiRequest("/records/allergies", token).catch(() => []),
+        apiRequest("/records/overview", token).catch(() => null),
+        apiRequest("/assistant/assessments", token).catch(() => []),
+        apiRequest("/billing/invoices", token).catch(() => []),
       ]);
       setTimeline(tlData?.events || []);
       setReports(repData || []);
@@ -74,6 +112,9 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
       setNotes(noteData || []);
       setDocuments(docData || []);
       setAllergies(algData || []);
+      setOverview(ovData);
+      setConversations(convData || []);
+      setInvoices(invData || []);
     } catch (err) {
       setError(err.message || "Failed to load clinical records.");
     } finally {
@@ -81,6 +122,21 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
     }
   }
 
+  // Retrieves full multi-turn dialogue transcript and clinical findings for an AI consultation session.
+  async function fetchConversationTranscript(convId) {
+    if (!convId) return;
+    setLoadingConversation(true);
+    try {
+      const data = await apiRequest(`/assistant/assessments/${convId}`, token);
+      setSelectedConversation(data);
+    } catch (err) {
+      alert(`Could not load conversation: ${err.message}`);
+    } finally {
+      setLoadingConversation(false);
+    }
+  }
+
+  // Streams authenticated binary PDF reports, invoices, or prescriptions directly to client device.
   async function downloadBinary(urlPath, filename, downloadKey) {
     setDownloadingId(downloadKey);
     try {
@@ -106,6 +162,23 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
     }
   }
 
+  // Retrieves bilingual patient aftercare guidance synthesized from finalized clinician encounter notes.
+  async function fetchCareGuide(apptId, lang) {
+    if (!apptId) return;
+    setLoadingGuide(true);
+    setGuideError("");
+    setCareGuide(null);
+    try {
+      const g = await apiRequest(`/records/encounters/${apptId}/patient-guide?lang=${lang}`, token);
+      setCareGuide(g);
+    } catch (err) {
+      setGuideError(err.message || "Failed to load patient guide. Ensure note is finalized by attending clinician.");
+    } finally {
+      setLoadingGuide(false);
+    }
+  }
+
+  // Validates file size and MIME format for clinical document uploads before staging in state.
   function handleFileSelection(file) {
     setUploadError("");
     setUploadNotice("");
@@ -130,6 +203,7 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
     }
   }
 
+  // Uploads diagnostic lab report or medical document binary to backend with metadata tags.
   async function handleUploadDocument(event) {
     event.preventDefault();
     if (!uploadFile || !uploadTitle.trim()) {
@@ -163,6 +237,7 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
     }
   }
 
+  // Exports patient's complete longitudinal record as an HL7 FHIR R4 standard JSON collection bundle.
   async function exportFHIRBundle() {
     try {
       const bundle = await apiRequest("/records/fhir/export", token);
@@ -181,8 +256,89 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
   }
 
   const filteredEvents = timeline.filter((ev) => {
-    if (filterType === "all") return true;
-    return ev.event_type === filterType;
+    const matchesType = filterType === "all" || ev.event_type === filterType;
+    const q = timelineSearch.trim().toLowerCase();
+    const matchesSearch =
+      !q ||
+      (ev.title && ev.title.toLowerCase().includes(q)) ||
+      (ev.description && ev.description.toLowerCase().includes(q)) ||
+      (ev.actor_name && ev.actor_name.toLowerCase().includes(q)) ||
+      (ev.category && ev.category.toLowerCase().includes(q));
+    return matchesType && matchesSearch;
+  });
+
+  const filteredReports = reports.filter((rep) => {
+    const matchesFilter = reportFilter === "all" || rep.urgency_level?.toLowerCase() === reportFilter.toLowerCase();
+    const q = reportSearch.trim().toLowerCase();
+    const matchesSearch =
+      !q ||
+      (rep.title && rep.title.toLowerCase().includes(q)) ||
+      (rep.symptom_summary && rep.symptom_summary.toLowerCase().includes(q)) ||
+      (rep.triage_level && rep.triage_level.toLowerCase().includes(q));
+    return matchesFilter && matchesSearch;
+  });
+
+  const filteredConversations = conversations.filter((c) => {
+    const q = convSearch.trim().toLowerCase();
+    return (
+      !q ||
+      (c.title && c.title.toLowerCase().includes(q)) ||
+      (c.category && c.category.toLowerCase().includes(q)) ||
+      (c.urgency_level && c.urgency_level.toLowerCase().includes(q))
+    );
+  });
+
+  const filteredPrescriptions = prescriptions.filter((rx) => {
+    const isDraft = rx.status === "draft" || rx.is_ai_draft;
+    const matchesFilter =
+      rxFilter === "all" ||
+      (rxFilter === "finalized" && !isDraft) ||
+      (rxFilter === "draft" && isDraft);
+    const q = rxSearch.trim().toLowerCase();
+    const matchesSearch =
+      !q ||
+      (rx.prescription_number && rx.prescription_number.toLowerCase().includes(q)) ||
+      (rx.diagnosis && rx.diagnosis.toLowerCase().includes(q)) ||
+      (rx.doctor_name && rx.doctor_name.toLowerCase().includes(q)) ||
+      rx.items?.some((it) => it.medication_name?.toLowerCase().includes(q));
+    return matchesFilter && matchesSearch;
+  });
+
+  const filteredNotes = notes.filter((n) => {
+    const isDraft = n.status === "draft" || n.is_ai_draft;
+    const matchesFilter =
+      noteFilter === "all" ||
+      (noteFilter === "finalized" && !isDraft) ||
+      (noteFilter === "draft" && isDraft);
+    const q = noteSearch.trim().toLowerCase();
+    const matchesSearch =
+      !q ||
+      (n.chief_complaint && n.chief_complaint.toLowerCase().includes(q)) ||
+      (n.assessment && n.assessment.toLowerCase().includes(q)) ||
+      (n.plan && n.plan.toLowerCase().includes(q)) ||
+      (n.doctor_name && n.doctor_name.toLowerCase().includes(q));
+    return matchesFilter && matchesSearch;
+  });
+
+  const filteredDocs = documents.filter((d) => {
+    const matchesFilter = docCategoryFilter === "all" || d.document_type === docCategoryFilter;
+    const q = docSearch.trim().toLowerCase();
+    const matchesSearch =
+      !q ||
+      (d.title && d.title.toLowerCase().includes(q)) ||
+      (d.notes && d.notes.toLowerCase().includes(q)) ||
+      (d.document_type && d.document_type.toLowerCase().includes(q));
+    return matchesFilter && matchesSearch;
+  });
+
+  const filteredInvoices = invoices.filter((inv) => {
+    const matchesFilter = billingFilter === "all" || inv.status === billingFilter;
+    const q = billingSearch.trim().toLowerCase();
+    const matchesSearch =
+      !q ||
+      (inv.invoice_number && inv.invoice_number.toLowerCase().includes(q)) ||
+      (inv.description && inv.description.toLowerCase().includes(q));
+    return matchesFilter && matchesSearch;
   });
 
   return (
@@ -232,11 +388,18 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
       {/* Record Navigation Tabs */}
       <div className="health-records-tabs" role="tablist">
         {[
-          { id: "timeline", label: isHindi ? "कालक्रम" : "Timeline", icon: "⏱", count: timeline.length },
+          { id: "timeline", label: isHindi ? "कालक्रम" : "Health Timeline", icon: "⏱", count: timeline.length },
           { id: "reports", label: isHindi ? "AI आकलन रिपोर्ट" : "AI Reports", icon: "📑", count: reports.length },
+          { id: "conversations", label: isHindi ? "AI परामर्श" : "AI Conversations", icon: "💬", count: conversations.length },
           { id: "prescriptions", label: isHindi ? "डॉक्टर के पर्चे (Rx)" : "Prescriptions", icon: "℞", count: prescriptions.length },
           { id: "notes", label: isHindi ? "क्लिनिकल नोट्स" : "Doctor Notes", icon: "🩺", count: notes.length },
-          { id: "documents", label: isHindi ? "दस्तावेज़ व लैब रिपोर्ट" : "Documents", icon: "📁", count: documents.length },
+          { id: "documents", label: isHindi ? "दस्तावेज़ व लैब रिपोर्ट" : "Lab & Diagnostic Reports", icon: "🔬", count: documents.length },
+          { id: "vitals", label: isHindi ? "वाइटल्स व प्रोटोकॉल" : "Vitals & Protocols", icon: "❤️", count: overview?.recent_vitals?.length || 0 },
+          { id: "allergies", label: isHindi ? "रोग व एलर्जी" : "Conditions & Allergies", icon: "⚠️", count: allergies.length },
+          { id: "billing", label: isHindi ? "बिलिंग व रसीदें" : "Invoices & Receipts", icon: "💳", count: invoices.length },
+          { id: "guides", label: isHindi ? "मरीज केयर गाइड" : "Care Guides (EN/HI)", icon: "📖", count: notes.length },
+          { id: "careteam", label: isHindi ? "देखभाल टीम" : "Care Team", icon: "👨‍⚕️" },
+          { id: "privacy", label: isHindi ? "DPDP गोपनीयता" : "DPDP Privacy", icon: "🔒" },
         ].map((tab) => (
           <button
             key={tab.id}
@@ -267,8 +430,18 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
           {activeTab === "timeline" && (
             <div>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px", flexWrap: "wrap", gap: "10px" }}>
-                <div style={{ fontSize: "13px", color: "var(--cv-text-muted)", fontWeight: "600" }}>
-                  {isHindi ? `कुल ${filteredEvents.length} प्रविष्टियां` : `Showing ${filteredEvents.length} chronological events`}
+                <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap", flex: 1 }}>
+                  <input
+                    className="cv-input"
+                    style={{ maxWidth: "260px", padding: "6px 12px", fontSize: "13px" }}
+                    type="text"
+                    placeholder={isHindi ? "इवेंट्स खोजें…" : "Search timeline events…"}
+                    value={timelineSearch}
+                    onChange={(e) => setTimelineSearch(e.target.value)}
+                  />
+                  <div style={{ fontSize: "13px", color: "var(--cv-text-muted)", fontWeight: "600" }}>
+                    {isHindi ? `कुल ${filteredEvents.length} प्रविष्टियां` : `Showing ${filteredEvents.length} chronological events`}
+                  </div>
                 </div>
                 <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                   {[
@@ -277,6 +450,8 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                     { id: "prescription", label: isHindi ? "पर्चे" : "Prescriptions" },
                     { id: "note", label: isHindi ? "क्लिनिकल नोट्स" : "Notes" },
                     { id: "appointment", label: isHindi ? "अपॉइंटमेंट" : "Appointments" },
+                    { id: "invoice", label: isHindi ? "बिलिंग" : "Billing & Invoices" },
+                    { id: "document", label: isHindi ? "दस्तावेज़" : "Documents" },
                   ].map((f) => (
                     <button
                       key={f.id}
@@ -299,7 +474,13 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                 <div className="timeline-flow">
                   {filteredEvents.map((ev) => {
                     const badge = ev.urgency_level ? getUrgencyBadgeConfig(ev.urgency_level) : null;
-                    const dotClass = ev.category === "clinician" ? "clinician" : (ev.category === "ai" ? "ai" : "patient");
+                    const dotClass = ev.category === "clinician"
+                      ? "clinician"
+                      : ev.category === "ai"
+                      ? "ai"
+                      : ev.category === "billing" || ev.event_type === "invoice"
+                      ? "billing"
+                      : "patient";
                     return (
                       <div key={ev.id} className="timeline-item">
                         <div className={`timeline-dot ${dotClass}`} />
@@ -336,6 +517,32 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                               <strong style={{ color: "var(--cv-text-primary)" }}>{ev.actor_name}</strong>
                             </div>
                           )}
+
+                          <div style={{ marginTop: "10px", display: "flex", justifyContent: "flex-end" }}>
+                            <button
+                              type="button"
+                              className="cv-btn cv-btn-xs cv-btn-outline"
+                              onClick={() =>
+                                setSelectedRecordModal({
+                                  title: ev.title,
+                                  type: ev.event_type?.replace("_", " "),
+                                  category: ev.category,
+                                  date: formatDate(ev.timestamp),
+                                  actor: ev.actor_name || "CareVoice Health System",
+                                  description: ev.description,
+                                  details: [
+                                    { label: "Event Type", value: ev.event_type?.replace("_", " ").toUpperCase() },
+                                    { label: "Category", value: ev.category?.toUpperCase() },
+                                    { label: "Urgency Level", value: ev.urgency_level || "Routine" },
+                                    { label: "Recorded Timestamp", value: formatDate(ev.timestamp) },
+                                  ],
+                                })
+                              }
+                            >
+                              <span>👁️</span>
+                              <span>{isHindi ? "विवरण देखें" : "View Details"}</span>
+                            </button>
+                          </div>
                         </div>
                       </div>
                     );
@@ -359,15 +566,43 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                 </span>
               </div>
 
-              {reports.length === 0 ? (
+              {/* Search & Urgency Filters */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
+                <input
+                  className="cv-input"
+                  style={{ maxWidth: "260px", padding: "6px 12px", fontSize: "13px" }}
+                  type="text"
+                  placeholder={isHindi ? "रिपोर्ट खोजें…" : "Search AI reports…"}
+                  value={reportSearch}
+                  onChange={(e) => setReportSearch(e.target.value)}
+                />
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                  {[
+                    { id: "all", label: isHindi ? "सभी" : "All" },
+                    { id: "routine", label: isHindi ? "रूटीन" : "Routine" },
+                    { id: "urgent", label: isHindi ? "तत्काल" : "Urgent" },
+                    { id: "emergency", label: isHindi ? "आपातकाल" : "Emergency" },
+                  ].map((f) => (
+                    <button
+                      key={f.id}
+                      className={`cv-btn cv-btn-xs ${reportFilter === f.id ? "cv-btn-secondary" : "cv-btn-ghost"}`}
+                      onClick={() => setReportFilter(f.id)}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {filteredReports.length === 0 ? (
                 <EmptyState
                   icon="📑"
-                  title={isHindi ? "कोई AI रिपोर्ट नहीं है" : "No AI reports generated"}
-                  description={isHindi ? "CareVoice सहायक के साथ परामर्श के बाद आप रिपोर्ट तैयार कर सकते हैं।" : "You can generate structured AI reports after completing a symptom assessment with CareVoice."}
+                  title={isHindi ? "कोई AI रिपोर्ट नहीं मिली" : "No matching AI reports"}
+                  description={isHindi ? "खोज या फ़िल्टर मानदंड बदलकर पुनः प्रयास करें।" : "Try clearing search filters or generate a new assessment."}
                 />
               ) : (
                 <div style={{ display: "grid", gap: "16px" }}>
-                  {reports.map((rep) => {
+                  {filteredReports.map((rep) => {
                     const badge = getUrgencyBadgeConfig(rep.urgency_level);
                     const isDownloading = downloadingId === `rep-${rep.report_id}`;
                     return (
@@ -390,20 +625,49 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                               {rep.title}
                             </h3>
                           </div>
-                          <button
-                            className="cv-btn cv-btn-sm cv-btn-outline"
-                            disabled={isDownloading}
-                            onClick={() =>
-                              downloadBinary(
-                                `/records/reports/${rep.report_id}/pdf`,
-                                `report-${rep.report_id.slice(0, 8)}.pdf`,
-                                `rep-${rep.report_id}`
-                              )
-                            }
-                          >
-                            <span>📄</span>
-                            <span>{isDownloading ? (isHindi ? "डाउनलोड हो रहा है…" : "Downloading…") : (isHindi ? "PDF डाउनलोड" : "Download PDF")}</span>
-                          </button>
+                          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              className="cv-btn cv-btn-sm cv-btn-ghost"
+                              onClick={() =>
+                                setSelectedRecordModal({
+                                  title: rep.title,
+                                  type: "AI Clinical Assessment Report",
+                                  date: formatDate(rep.created_at),
+                                  actor: rep.reviewed_at ? "Attending Clinician (Verified)" : "CareVoice AI Triage Engine",
+                                  description: rep.summary,
+                                  details: [
+                                    { label: "Reference ID", value: `REP-${rep.report_id.slice(0, 8).toUpperCase()}` },
+                                    { label: "Clinical Urgency", value: rep.urgency_level?.toUpperCase() },
+                                    { label: "Key Findings", value: rep.findings?.map((f) => f.finding || f.title || f).join("; ") || "None documented" },
+                                    { label: "Red Flags", value: rep.red_flags?.join("; ") || "No acute red flags detected" },
+                                    { label: "Next Steps", value: rep.recommended_next_steps?.join("; ") || "Standard follow-up" },
+                                    { label: "Clinical Disclaimer", value: rep.disclaimer || "AI-generated clinical summary; requires licensed doctor confirmation." },
+                                  ],
+                                  downloadPath: `/records/reports/${rep.report_id}/pdf`,
+                                  downloadFilename: `report-${rep.report_id.slice(0, 8)}.pdf`,
+                                  downloadKey: `rep-${rep.report_id}`,
+                                })
+                              }
+                            >
+                              <span>👁️</span>
+                              <span>{isHindi ? "विवरण देखें" : "View Details"}</span>
+                            </button>
+                            <button
+                              className="cv-btn cv-btn-sm cv-btn-outline"
+                              disabled={isDownloading}
+                              onClick={() =>
+                                downloadBinary(
+                                  `/records/reports/${rep.report_id}/pdf`,
+                                  `report-${rep.report_id.slice(0, 8)}.pdf`,
+                                  `rep-${rep.report_id}`
+                                )
+                              }
+                            >
+                              <span>📄</span>
+                              <span>{isDownloading ? (isHindi ? "डाउनलोड हो रहा है…" : "Downloading…") : (isHindi ? "PDF डाउनलोड" : "Download PDF")}</span>
+                            </button>
+                          </div>
                         </div>
 
                         {/* Summary */}
@@ -501,7 +765,90 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
           )}
 
           {/* =========================================================================
-              TAB 3: PRESCRIPTIONS
+              TAB 3: AI CONVERSATIONS & CONSULTATION TRANSCRIPTS
+              ========================================================================= */}
+          {activeTab === "conversations" && (
+            <div>
+              <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
+                <span className="demo-data-tag">
+                  DEMO DATA — MULTI-TURN AI CONSULTATION TRANSCRIPTS
+                </span>
+                <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                  {isHindi ? `कुल ${conversations.length} परामर्श संवाद` : `${conversations.length} interactive consultation transcripts`}
+                </span>
+              </div>
+
+              {/* Search Bar */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
+                <input
+                  className="cv-input"
+                  style={{ maxWidth: "280px", padding: "6px 12px", fontSize: "13px" }}
+                  type="text"
+                  placeholder={isHindi ? "परामर्श संवाद खोजें…" : "Search consultation transcripts…"}
+                  value={convSearch}
+                  onChange={(e) => setConvSearch(e.target.value)}
+                />
+                <div style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                  {isHindi ? "संवाद पढ़ने और क्लिनिकल साक्ष्य देखने के लिए 'संवाद देखें' पर क्लिक करें" : "Click 'View Transcript' to inspect turns and citations"}
+                </div>
+              </div>
+
+              {filteredConversations.length === 0 ? (
+                <EmptyState
+                  icon="💬"
+                  title={isHindi ? "कोई परामर्श बातचीत नहीं मिली" : "No AI conversations found"}
+                  description={isHindi ? "वॉयस या चैट सहायक के साथ परामर्श यहाँ सहेजे जाते हैं।" : "Your interactive symptom evaluations with the CareVoice AI assistant will appear here."}
+                />
+              ) : (
+                <div style={{ display: "grid", gap: "14px" }}>
+                  {filteredConversations.map((conv) => {
+                    const badge = getUrgencyBadgeConfig(conv.urgency_level || "routine");
+                    return (
+                      <div key={conv.id || conv.assessment_id} className="record-card">
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "10px" }}>
+                          <div style={{ flex: 1, minWidth: "260px" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "6px" }}>
+                              <span className={`cv-badge ${badge.className}`}>
+                                {badge.label}
+                              </span>
+                              <span className="cv-badge cv-badge-neutral" style={{ textTransform: "capitalize" }}>
+                                {conv.category || "General Triage"}
+                              </span>
+                              <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                                {formatDate(conv.created_at)}
+                              </span>
+                              <span style={{ fontSize: "12px", color: "var(--cv-border-control)" }}>•</span>
+                              <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                                {conv.message_count ? `${conv.message_count} Turns` : "Multi-turn"}
+                              </span>
+                            </div>
+                            <h3 style={{ margin: "4px 0 6px", fontSize: "16px", color: "var(--cv-text-primary)" }}>
+                              {conv.title}
+                            </h3>
+                            <div style={{ fontSize: "13px", color: "var(--cv-text-secondary)", lineHeight: "1.5" }}>
+                              Interactive patient-clinician triage session evaluating symptoms, timeline, red flags, and evidence-based guidance.
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="cv-btn cv-btn-sm cv-btn-primary"
+                            disabled={loadingConversation}
+                            onClick={() => fetchConversationTranscript(conv.assessment_id || conv.id)}
+                          >
+                            <span>💬</span>
+                            <span>{isHindi ? "संवाद देखें" : "View Transcript"}</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* =========================================================================
+              TAB 4: PRESCRIPTIONS
               ========================================================================= */}
           {activeTab === "prescriptions" && (
             <div>
@@ -510,20 +857,48 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                   DEMO DATA — DOCTOR-SIGNED DIGITAL PRESCRIPTIONS
                 </span>
                 <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
-                  {isHindi ? `कुल ${prescriptions.length} पर्चे` : `${prescriptions.length} finalized prescriptions`}
+                  {isHindi ? `कुल ${prescriptions.length} पर्चे` : `${prescriptions.length} prescriptions on file`}
                 </span>
               </div>
 
-              {prescriptions.length === 0 ? (
+              {/* Prescriptions Filter Bar */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
+                <input
+                  className="cv-input"
+                  style={{ maxWidth: "260px", padding: "6px 12px", fontSize: "13px" }}
+                  type="text"
+                  placeholder={isHindi ? "पर्चे खोजें…" : "Search prescriptions…"}
+                  value={rxSearch}
+                  onChange={(e) => setRxSearch(e.target.value)}
+                />
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                  {[
+                    { id: "all", label: isHindi ? "सभी" : "All" },
+                    { id: "finalized", label: isHindi ? "अंतिम हस्ताक्षरित" : "Finalized (Signed)" },
+                    { id: "draft", label: isHindi ? "AI ड्राफ्ट" : "AI Drafts" },
+                  ].map((f) => (
+                    <button
+                      key={f.id}
+                      className={`cv-btn cv-btn-xs ${rxFilter === f.id ? "cv-btn-secondary" : "cv-btn-ghost"}`}
+                      onClick={() => setRxFilter(f.id)}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {filteredPrescriptions.length === 0 ? (
                 <EmptyState
                   icon="℞"
-                  title={isHindi ? "कोई पर्चा नहीं मिला" : "No finalized prescriptions"}
-                  description={isHindi ? "आपके परामर्श चिकित्सक द्वारा जारी किए गए पर्चे यहाँ दिखाई देंगे।" : "Prescriptions authored and finalized by your licensed clinician will appear here."}
+                  title={isHindi ? "कोई पर्चा नहीं मिला" : "No prescriptions found"}
+                  description={isHindi ? "खोज या फ़िल्टर मानदंड बदलकर पुनः प्रयास करें।" : "Try clearing your search query or selecting a different filter."}
                 />
               ) : (
                 <div style={{ display: "grid", gap: "20px" }}>
-                  {prescriptions.map((rx) => {
+                  {filteredPrescriptions.map((rx) => {
                     const isDownloading = downloadingId === `rx-${rx.id}`;
+                    const isDraft = rx.status === "draft" || rx.is_ai_draft;
                     return (
                       <div key={rx.id} className="record-card record-card-rx">
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "10px", borderBottom: "1px solid var(--cv-border-soft)", paddingBottom: "14px", marginBottom: "14px" }}>
@@ -533,29 +908,71 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                               <h3 style={{ margin: 0, fontSize: "17px", color: "var(--cv-text-primary)" }}>
                                 {rx.prescription_number}
                               </h3>
-                              <span className="cv-badge cv-badge-success" style={{ textTransform: "uppercase" }}>
-                                {rx.status}
+                              <span className={`cv-badge ${isDraft ? "cv-badge-warning" : "cv-badge-success"}`} style={{ textTransform: "uppercase" }}>
+                                {isDraft ? "AI Draft" : rx.status}
                               </span>
                             </div>
                             <div style={{ fontSize: "12px", color: "var(--cv-text-muted)", marginTop: "4px" }}>
                               Prescribed by <strong style={{ color: "var(--cv-text-primary)" }}>Dr. {rx.doctor_name || "Clinician"}</strong> on {formatDate(rx.finalized_at || rx.created_at)}
                             </div>
                           </div>
-                          <button
-                            className="cv-btn cv-btn-sm cv-btn-primary"
-                            disabled={isDownloading}
-                            onClick={() =>
-                              downloadBinary(
-                                `/records/prescriptions/${rx.id}/pdf`,
-                                `prescription-${rx.prescription_number}.pdf`,
-                                `rx-${rx.id}`
-                              )
-                            }
-                          >
-                            <span>📥</span>
-                            <span>{isDownloading ? (isHindi ? "डाउनलोड हो रहा है…" : "Downloading…") : (isHindi ? "पर्चा डाउनलोड (PDF)" : "Download Rx PDF")}</span>
-                          </button>
+                          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              className="cv-btn cv-btn-sm cv-btn-ghost"
+                              onClick={() =>
+                                setSelectedRecordModal({
+                                  title: `Prescription ${rx.prescription_number}`,
+                                  type: "Clinician Signed Digital Rx",
+                                  date: formatDate(rx.finalized_at || rx.created_at),
+                                  actor: `Dr. ${rx.doctor_name || "Clinician"}`,
+                                  description: rx.diagnosis ? `Clinical Diagnosis: ${rx.diagnosis}` : "Outpatient Prescription Order",
+                                  details: [
+                                    { label: "Prescription Number", value: rx.prescription_number },
+                                    { label: "Status", value: rx.status?.toUpperCase() },
+                                    { label: "Diagnosis", value: rx.diagnosis || "Unspecified" },
+                                    {
+                                      label: "Medications Prescribed",
+                                      value: rx.items?.map((it) => `${it.medication_name} (${it.strength || ""}) - ${it.frequency}, ${it.duration}`).join("; ") || "None",
+                                    },
+                                    { label: "Allergy Warnings Checked", value: rx.allergy_warnings?.join("; ") || "All allergy checks passed" },
+                                    { label: "Doctor's Notes", value: rx.notes || "Follow instructions as labeled." },
+                                  ],
+                                  downloadPath: `/records/prescriptions/${rx.id}/pdf`,
+                                  downloadFilename: `prescription-${rx.prescription_number}.pdf`,
+                                  downloadKey: `rx-${rx.id}`,
+                                })
+                              }
+                            >
+                              <span>👁️</span>
+                              <span>{isHindi ? "विवरण देखें" : "View"}</span>
+                            </button>
+                            <button
+                              className="cv-btn cv-btn-sm cv-btn-primary"
+                              disabled={isDownloading}
+                              onClick={() =>
+                                downloadBinary(
+                                  `/records/prescriptions/${rx.id}/pdf`,
+                                  `prescription-${rx.prescription_number}.pdf`,
+                                  `rx-${rx.id}`
+                                )
+                              }
+                            >
+                              <span>📥</span>
+                              <span>{isDownloading ? (isHindi ? "डाउनलोड हो रहा है…" : "Downloading…") : (isHindi ? "पर्चा डाउनलोड (PDF)" : "Download Rx PDF")}</span>
+                            </button>
+                          </div>
                         </div>
+
+                        {isDraft && (
+                          <div className="cv-alert cv-alert-warning" style={{ marginBottom: "14px", padding: "8px 12px", fontSize: "12px" }}>
+                            <span>⚠️</span>
+                            <div>
+                              <strong>AI-Generated Prescription Draft: </strong>
+                              This draft prescription was generated by CareVoice AI and is pending licensed clinician review, modification, and digital signature before fulfillment.
+                            </div>
+                          </div>
+                        )}
 
                         {rx.diagnosis && (
                           <div style={{ marginBottom: "12px", fontSize: "13px" }}>
@@ -619,7 +1036,7 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
           )}
 
           {/* =========================================================================
-              TAB 4: CLINICAL NOTES
+              TAB 5: CLINICAL NOTES
               ========================================================================= */}
           {activeTab === "notes" && (
             <div>
@@ -628,44 +1045,143 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                   DEMO DATA — CLINICIAN CONSULTATION ENCOUNTER NOTES
                 </span>
                 <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
-                  {isHindi ? `कुल ${notes.length} नोट्स` : `${notes.length} finalized consultation notes`}
+                  {isHindi ? `कुल ${notes.length} नोट्स` : `${notes.length} consultation notes on file`}
                 </span>
               </div>
 
-              {notes.length === 0 ? (
+              {/* Doctor Notes Filter Bar */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
+                <input
+                  className="cv-input"
+                  style={{ maxWidth: "260px", padding: "6px 12px", fontSize: "13px" }}
+                  type="text"
+                  placeholder={isHindi ? "नोट्स खोजें…" : "Search clinical notes…"}
+                  value={noteSearch}
+                  onChange={(e) => setNoteSearch(e.target.value)}
+                />
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                  {[
+                    { id: "all", label: isHindi ? "सभी" : "All" },
+                    { id: "finalized", label: isHindi ? "अंतिम हस्ताक्षरित" : "Finalized (Signed)" },
+                    { id: "draft", label: isHindi ? "AI ड्राफ्ट" : "AI Drafts" },
+                  ].map((f) => (
+                    <button
+                      key={f.id}
+                      className={`cv-btn cv-btn-xs ${noteFilter === f.id ? "cv-btn-secondary" : "cv-btn-ghost"}`}
+                      onClick={() => setNoteFilter(f.id)}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {filteredNotes.length === 0 ? (
                 <EmptyState
                   icon="🩺"
-                  title={isHindi ? "कोई विज़िट नोट नहीं है" : "No clinical notes"}
-                  description={isHindi ? "डॉक्टर द्वारा हस्ताक्षरित परामर्श नोट्स यहाँ दिखाई देंगे।" : "Finalized clinical consultation notes from your appointments will appear here."}
+                  title={isHindi ? "कोई विज़िट नोट नहीं मिला" : "No clinical notes found"}
+                  description={isHindi ? "खोज या फ़िल्टर मानदंड बदलकर पुनः प्रयास करें।" : "Try clearing your search query or selecting a different filter."}
                 />
               ) : (
                 <div style={{ display: "grid", gap: "16px" }}>
-                  {notes.map((n) => (
-                    <div key={n.id} className="record-card">
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "8px", borderBottom: "1px solid var(--cv-border-soft)", paddingBottom: "12px", marginBottom: "12px" }}>
-                        <div>
-                          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "4px" }}>
-                            <span className="cv-badge cv-badge-info" style={{ textTransform: "uppercase" }}>
-                              {n.note_type?.replace("_", " ")}
-                            </span>
-                            <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
-                              {formatDate(n.finalized_at || n.created_at)}
-                            </span>
-                            <span style={{ fontSize: "12px", color: "var(--cv-border-control)" }}>•</span>
-                            <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
-                              Attending: <strong style={{ color: "var(--cv-text-primary)" }}>Dr. {n.doctor_name || "Clinician"}</strong>
-                            </span>
+                  {filteredNotes.map((n) => {
+                    const isDraft = n.status === "draft" || n.is_ai_draft;
+                    return (
+                      <div key={n.id} className="record-card">
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "8px", borderBottom: "1px solid var(--cv-border-soft)", paddingBottom: "12px", marginBottom: "12px" }}>
+                          <div>
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "4px" }}>
+                              <span className="cv-badge cv-badge-info" style={{ textTransform: "uppercase" }}>
+                                {n.note_type?.replace("_", " ")}
+                              </span>
+                              <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                                {formatDate(n.finalized_at || n.created_at)}
+                              </span>
+                              <span style={{ fontSize: "12px", color: "var(--cv-border-control)" }}>•</span>
+                              <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                                Attending: <strong style={{ color: "var(--cv-text-primary)" }}>Dr. {n.doctor_name || "Clinician"}</strong>
+                              </span>
+                            </div>
+                            <h3 style={{ margin: "4px 0 0", fontSize: "16px", color: "var(--cv-text-primary)" }}>
+                              {n.chief_complaint || "Clinical Consultation Note"}
+                            </h3>
                           </div>
-                          <h3 style={{ margin: "4px 0 0", fontSize: "16px", color: "var(--cv-text-primary)" }}>
-                            {n.chief_complaint || "Clinical Consultation Note"}
-                          </h3>
+                          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                            <span className={`cv-badge ${isDraft ? "cv-badge-warning" : "cv-badge-success"}`} style={{ textTransform: "uppercase" }}>
+                              {isDraft ? "AI Draft" : n.status}
+                            </span>
+                            <button
+                              type="button"
+                              className="cv-btn cv-btn-xs cv-btn-ghost"
+                              onClick={() =>
+                                setSelectedRecordModal({
+                                  title: n.chief_complaint || "Clinical Consultation Note",
+                                  type: n.note_type?.replace("_", " "),
+                                  date: formatDate(n.finalized_at || n.created_at),
+                                  actor: `Dr. ${n.doctor_name || "Clinician"}`,
+                                  description: n.assessment || "Clinical encounter documented and finalized by attending physician.",
+                                  details: [
+                                    { label: "Note Type", value: n.note_type?.replace("_", " ").toUpperCase() },
+                                    { label: "Chief Complaint", value: n.chief_complaint || "Routine Evaluation" },
+                                    { label: "History of Present Illness", value: n.history_of_present_illness || "N/A" },
+                                    { label: "Examination Findings", value: n.examination_findings || "N/A" },
+                                    { label: "Assessment", value: n.assessment || "N/A" },
+                                    { label: "Treatment Plan", value: n.plan || "N/A" },
+                                    { label: "Follow-up Instructions", value: n.follow_up_instructions || "As needed" },
+                                  ],
+                                  downloadPath: `/records/notes/${n.id}/pdf`,
+                                  downloadFilename: `clinical-note-${n.id}.pdf`,
+                                  downloadKey: `note-${n.id}`,
+                                })
+                              }
+                            >
+                              <span>👁️</span>
+                              <span>{isHindi ? "विवरण देखें" : "View"}</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="cv-btn cv-btn-xs cv-btn-outline"
+                              disabled={downloadingId === `note-${n.id}`}
+                              onClick={() =>
+                                downloadBinary(
+                                  `/records/notes/${n.id}/pdf`,
+                                  `clinical-note-${n.id}.pdf`,
+                                  `note-${n.id}`
+                                )
+                              }
+                            >
+                              <span>📥</span>
+                              <span>{downloadingId === `note-${n.id}` ? "…" : "Note PDF"}</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="cv-btn cv-btn-xs cv-btn-primary"
+                              disabled={downloadingId === `fup-${n.id}`}
+                              onClick={() =>
+                                downloadBinary(
+                                  `/records/followup/${n.id}/pdf`,
+                                  `followup-plan-${n.id}.pdf`,
+                                  `fup-${n.id}`
+                                )
+                              }
+                            >
+                              <span>📥</span>
+                              <span>{downloadingId === `fup-${n.id}` ? "…" : "Care Plan PDF"}</span>
+                            </button>
+                          </div>
                         </div>
-                        <span className="cv-badge cv-badge-success" style={{ textTransform: "uppercase" }}>
-                          {n.status}
-                        </span>
-                      </div>
 
-                      {n.history_of_present_illness && (
+                        {isDraft && (
+                          <div className="cv-alert cv-alert-warning" style={{ marginBottom: "12px", padding: "8px 12px", fontSize: "12px" }}>
+                            <span>⚠️</span>
+                            <div>
+                              <strong>Ambient AI Scribe Draft: </strong>
+                              Draft clinical note captured by CareVoice Ambient Scribe. Must be reviewed, validated, and signed by the attending clinician before becoming part of the permanent medical record.
+                            </div>
+                          </div>
+                        )}
+
+                        {n.history_of_present_illness && (
                         <div style={{ marginBottom: "10px", fontSize: "13px", lineHeight: "1.6" }}>
                           <strong style={{ color: "var(--cv-text-secondary)" }}>History of Present Illness: </strong>
                           <span style={{ color: "var(--cv-text-body)" }}>{n.history_of_present_illness}</span>
@@ -700,9 +1216,10 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                         </div>
                       )}
                     </div>
-                  ))}
-                </div>
-              )}
+                  );
+                })}
+              </div>
+            )}
             </div>
           )}
 
@@ -862,61 +1379,178 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
               {/* Documents List */}
               <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
                 <span className="demo-data-tag">
-                  DEMO DATA — VERIFIED CLINICAL DIAGNOSTIC REPORTS
+                  DEMO DATA — VERIFIED CLINICAL DIAGNOSTIC REPORTS & LAB OBSERVATIONS
                 </span>
                 <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
-                  {isHindi ? `कुल ${documents.length} दस्तावेज़` : `${documents.length} diagnostic reports`}
+                  {isHindi ? `कुल ${documents.length} दस्तावेज़` : `${documents.length} diagnostic reports on file`}
                 </span>
               </div>
 
-              {documents.length === 0 ? (
+              {/* Category Filter & Search Bar */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
+                <input
+                  className="cv-input"
+                  style={{ maxWidth: "260px", padding: "6px 12px", fontSize: "13px" }}
+                  type="text"
+                  placeholder={isHindi ? "दस्तावेज़ खोजें…" : "Search documents & labs…"}
+                  value={docSearch}
+                  onChange={(e) => setDocSearch(e.target.value)}
+                />
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                  {[
+                    { id: "all", label: isHindi ? "सभी" : "All" },
+                    { id: "lab_report", label: isHindi ? "लैब रिपोर्ट" : "Lab Reports" },
+                    { id: "imaging", label: isHindi ? "इमेजिंग / स्कैन" : "Imaging / Scans" },
+                    { id: "discharge_summary", label: isHindi ? "डिस्चार्ज" : "Discharge" },
+                    { id: "prescription", label: isHindi ? "बाहरी पर्चे" : "Prescriptions" },
+                  ].map((f) => (
+                    <button
+                      key={f.id}
+                      className={`cv-btn cv-btn-xs ${docCategoryFilter === f.id ? "cv-btn-secondary" : "cv-btn-ghost"}`}
+                      onClick={() => setDocCategoryFilter(f.id)}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {filteredDocs.length === 0 ? (
                 <EmptyState
                   icon="📁"
-                  title={isHindi ? "कोई दस्तावेज़ नहीं है" : "No uploaded documents"}
-                  description={isHindi ? "अपनी पिछली रिपोर्ट, रक्त परीक्षण, या डिस्चार्ज सारांश यहाँ अपलोड करें।" : "Upload previous medical reports, blood tests, or diagnostic summaries here."}
+                  title={isHindi ? "कोई दस्तावेज़ नहीं मिला" : "No documents match filters"}
+                  description={isHindi ? "खोज या श्रेणी फ़िल्टर बदलकर पुनः प्रयास करें।" : "Try clearing search filters or uploading a diagnostic document."}
                 />
               ) : (
-                <div style={{ display: "grid", gap: "12px" }}>
-                  {documents.map((d) => {
+                <div style={{ display: "grid", gap: "16px" }}>
+                  {filteredDocs.map((d) => {
                     const isDownloading = downloadingId === `doc-${d.id}`;
+                    const hasParams = d.extracted_data?.parameters && d.extracted_data.parameters.length > 0;
                     return (
-                      <div key={d.id} className="record-card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
-                        <div style={{ minWidth: 0, flex: "1 1 280px" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "4px" }}>
-                            <span className="cv-badge cv-badge-routine" style={{ textTransform: "uppercase" }}>
-                              {d.document_type.replace("_", " ")}
-                            </span>
-                            <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
-                              {formatFileSize(d.file_size)}
-                            </span>
-                            <span style={{ fontSize: "12px", color: "var(--cv-border-control)" }}>•</span>
-                            <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
-                              {formatDate(d.created_at)}
-                            </span>
-                          </div>
-                          <h4 style={{ margin: "2px 0 0", fontSize: "15px", color: "var(--cv-text-primary)" }}>
-                            {d.title}
-                          </h4>
-                          {d.notes && (
-                            <div style={{ fontSize: "12px", color: "var(--cv-text-muted)", marginTop: "2px" }}>
-                              {d.notes}
+                      <div key={d.id} className="record-card">
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "12px" }}>
+                          <div style={{ minWidth: 0, flex: "1 1 280px" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "4px" }}>
+                              <span className="cv-badge cv-badge-routine" style={{ textTransform: "uppercase" }}>
+                                {d.document_type.replace("_", " ")}
+                              </span>
+                              <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                                {formatFileSize(d.file_size)}
+                              </span>
+                              <span style={{ fontSize: "12px", color: "var(--cv-border-control)" }}>•</span>
+                              <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                                {formatDate(d.created_at)}
+                              </span>
                             </div>
-                          )}
+                            <h4 style={{ margin: "2px 0 0", fontSize: "15px", color: "var(--cv-text-primary)" }}>
+                              {d.title}
+                            </h4>
+                            {d.notes && (
+                              <div style={{ fontSize: "12px", color: "var(--cv-text-muted)", marginTop: "2px" }}>
+                                {d.notes}
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              className="cv-btn cv-btn-sm cv-btn-ghost"
+                              onClick={() =>
+                                setSelectedRecordModal({
+                                  title: d.title,
+                                  type: d.document_type.replace("_", " "),
+                                  date: formatDate(d.created_at),
+                                  actor: d.extracted_data?.signing_doctor || "Verified Lab/Imaging Facility",
+                                  details: [
+                                    { label: "Document Category", value: d.document_type.replace("_", " ").toUpperCase() },
+                                    { label: "File Size", value: formatFileSize(d.file_size) },
+                                    { label: "Uploaded At", value: formatDate(d.created_at) },
+                                    { label: "Clinical Notes", value: d.notes || "No additional notes provided." },
+                                    ...(hasParams
+                                      ? [{
+                                          label: "Measured Parameters",
+                                          value: d.extracted_data.parameters.map((p) => `${p.name}: ${p.value} (${p.status})`).join("; "),
+                                        }]
+                                      : []),
+                                    ...(d.extracted_data?.interpretation
+                                      ? [{ label: "Interpretation", value: d.extracted_data.interpretation }]
+                                      : []),
+                                  ],
+                                  downloadPath: `/records/documents/${d.id}/download`,
+                                  downloadFilename: d.title.replace(/\s+/g, "_") + ".pdf",
+                                  downloadKey: `doc-${d.id}`,
+                                })
+                              }
+                            >
+                              <span>👁️</span>
+                              <span>{isHindi ? "विवरण देखें" : "View"}</span>
+                            </button>
+                            <button
+                              className="cv-btn cv-btn-sm cv-btn-outline"
+                              disabled={isDownloading}
+                              onClick={() =>
+                                downloadBinary(
+                                  `/records/documents/${d.id}/download`,
+                                  d.title.replace(/\s+/g, "_") + ".pdf",
+                                  `doc-${d.id}`
+                                )
+                              }
+                            >
+                              <span>📥</span>
+                              <span>{isDownloading ? (isHindi ? "डाउनलोड हो रहा है…" : "Downloading…") : (isHindi ? "डाउनलोड PDF" : "Download PDF")}</span>
+                            </button>
+                          </div>
                         </div>
-                        <button
-                          className="cv-btn cv-btn-sm cv-btn-outline"
-                          disabled={isDownloading}
-                          onClick={() =>
-                            downloadBinary(
-                              `/records/documents/${d.id}/download`,
-                              d.title.replace(/\s+/g, "_") + ".pdf",
-                              `doc-${d.id}`
-                            )
-                          }
-                        >
-                          <span>📥</span>
-                          <span>{isDownloading ? (isHindi ? "डाउनलोड हो रहा है…" : "Downloading…") : (isHindi ? "डाउनलोड PDF" : "Download PDF")}</span>
-                        </button>
+
+                        {/* Structured Laboratory Observations Table */}
+                        {hasParams && (
+                          <div style={{ marginTop: "14px", overflowX: "auto", borderRadius: "8px", border: "1px solid var(--cv-border)" }}>
+                            <table className="cv-table" style={{ width: "100%", fontSize: "12px", borderCollapse: "collapse" }}>
+                              <thead style={{ background: "var(--cv-surface-soft)" }}>
+                                <tr>
+                                  <th style={{ padding: "8px 12px", textAlign: "left" }}>Test Parameter</th>
+                                  <th style={{ padding: "8px 12px", textAlign: "left" }}>Measured Value</th>
+                                  <th style={{ padding: "8px 12px", textAlign: "left" }}>Reference Range</th>
+                                  <th style={{ padding: "8px 12px", textAlign: "left" }}>Status</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {d.extracted_data.parameters.map((param, pIdx) => {
+                                  const statusClass =
+                                    param.status === "ABNORMAL"
+                                      ? "cv-badge-urgent"
+                                      : param.status === "BORDERLINE"
+                                      ? "cv-badge-warning"
+                                      : "cv-badge-success";
+                                  return (
+                                    <tr key={pIdx} style={{ borderTop: "1px solid var(--cv-border-soft)" }}>
+                                      <td style={{ padding: "8px 12px", fontWeight: "600", color: "var(--cv-text-primary)" }}>{param.name}</td>
+                                      <td style={{ padding: "8px 12px", fontWeight: "700", color: param.status === "ABNORMAL" ? "#dc2626" : "var(--cv-text-primary)" }}>{param.value}</td>
+                                      <td style={{ padding: "8px 12px", color: "var(--cv-text-muted)" }}>{param.reference_range}</td>
+                                      <td style={{ padding: "8px 12px" }}>
+                                        <span className={`cv-badge ${statusClass}`} style={{ fontSize: "10px", padding: "2px 6px" }}>
+                                          {param.status}
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+
+                        {d.extracted_data?.interpretation && (
+                          <div style={{ marginTop: "10px", padding: "10px 12px", borderRadius: "8px", background: "var(--cv-surface-soft)", fontSize: "12px", color: "var(--cv-text-secondary)" }}>
+                            <strong style={{ color: "var(--cv-text-primary)" }}>Pathologist / Clinician Interpretation: </strong>
+                            {d.extracted_data.interpretation}
+                            {d.extracted_data.signing_doctor && (
+                              <span style={{ display: "block", marginTop: "4px", fontSize: "11px", color: "var(--cv-text-muted)" }}>
+                                Verified &amp; Electronically Signed by: <strong>{d.extracted_data.signing_doctor}</strong>
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -924,7 +1558,1037 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
               )}
             </div>
           )}
+
+          {/* =========================================================================
+              TAB 6: VITALS & PROTOCOL MONITOR
+              ========================================================================= */}
+          {activeTab === "vitals" && (
+            <div>
+              <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
+                <span className="demo-data-tag">
+                  DEMO DATA — PROTOCOL MONITORING & CLINICAL VITAL SIGNS
+                </span>
+                <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                  Clinical decision protocols active: WHO Proning, Dengue, Hypoglycemia, SNOOP, ORS
+                </span>
+              </div>
+
+              {/* Vitals Summary Grid */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "14px", marginBottom: "20px" }}>
+                <div className="record-card" style={{ padding: "16px", textAlign: "center" }}>
+                  <div style={{ fontSize: "11px", fontWeight: "800", color: "var(--cv-text-muted)", textTransform: "uppercase" }}>Blood Oxygen (SpO2)</div>
+                  <div style={{ fontSize: "28px", fontWeight: "800", color: "var(--cv-accent)", margin: "6px 0 2px" }}>97%</div>
+                  <span className="cv-badge cv-badge-success">Normal Range</span>
+                  <div style={{ fontSize: "11px", color: "var(--cv-text-muted)", marginTop: "6px" }}>Protocol alert at &lt; 94%</div>
+                </div>
+
+                <div className="record-card" style={{ padding: "16px", textAlign: "center" }}>
+                  <div style={{ fontSize: "11px", fontWeight: "800", color: "var(--cv-text-muted)", textTransform: "uppercase" }}>Heart Rate</div>
+                  <div style={{ fontSize: "28px", fontWeight: "800", color: "var(--cv-accent)", margin: "6px 0 2px" }}>72 bpm</div>
+                  <span className="cv-badge cv-badge-success">Normal Sinus</span>
+                  <div style={{ fontSize: "11px", color: "var(--cv-text-muted)", marginTop: "6px" }}>Alert if &gt; 100 or &lt; 50</div>
+                </div>
+
+                <div className="record-card" style={{ padding: "16px", textAlign: "center" }}>
+                  <div style={{ fontSize: "11px", fontWeight: "800", color: "var(--cv-text-muted)", textTransform: "uppercase" }}>Blood Pressure</div>
+                  <div style={{ fontSize: "28px", fontWeight: "800", color: "var(--cv-accent)", margin: "6px 0 2px" }}>120/80</div>
+                  <span className="cv-badge cv-badge-routine">Optimal mmHg</span>
+                  <div style={{ fontSize: "11px", color: "var(--cv-text-muted)", marginTop: "6px" }}>NSAID caution on elevation</div>
+                </div>
+
+                <div className="record-card" style={{ padding: "16px", textAlign: "center" }}>
+                  <div style={{ fontSize: "11px", fontWeight: "800", color: "var(--cv-text-muted)", textTransform: "uppercase" }}>Blood Glucose</div>
+                  <div style={{ fontSize: "28px", fontWeight: "800", color: "var(--cv-accent)", margin: "6px 0 2px" }}>98 mg/dL</div>
+                  <span className="cv-badge cv-badge-success">Fasting Normal</span>
+                  <div style={{ fontSize: "11px", color: "var(--cv-text-muted)", marginTop: "6px" }}>Rule of 15 if &lt; 70</div>
+                </div>
+
+                <div className="record-card" style={{ padding: "16px", textAlign: "center" }}>
+                  <div style={{ fontSize: "11px", fontWeight: "800", color: "var(--cv-text-muted)", textTransform: "uppercase" }}>Body Temp</div>
+                  <div style={{ fontSize: "28px", fontWeight: "800", color: "var(--cv-accent)", margin: "6px 0 2px" }}>98.6°F</div>
+                  <span className="cv-badge cv-badge-routine">Afebrile</span>
+                  <div style={{ fontSize: "11px", color: "var(--cv-text-muted)", marginTop: "6px" }}>Defervescence monitor</div>
+                </div>
+              </div>
+
+              {/* Protocol Monitor Rules Matrix */}
+              <div style={{ display: "grid", gap: "16px" }}>
+                <div className="record-card" style={{ borderLeft: "4px solid #0284c7" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "8px", marginBottom: "8px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <span style={{ fontSize: "18px" }}>🫁</span>
+                      <h4 style={{ margin: 0, fontSize: "15px", color: "var(--cv-text-primary)" }}>
+                        WHO Acute Respiratory Proning Protocol (SpO2 &lt; 94%)
+                      </h4>
+                    </div>
+                    <span className="cv-badge cv-badge-info">WHO COVID-19 Clinical Guidelines</span>
+                  </div>
+                  <p style={{ margin: "0 0 10px", fontSize: "13px", color: "var(--cv-text-body)", lineHeight: "1.6" }}>
+                    For awake, non-intubated patients exhibiting oxygen saturation below 94%, the protocol recommends structured cycle rotations: <strong>30 to 120 minutes in prone position</strong>, followed by right lateral decubitus, semi-Fowler's position (30-60°), and left lateral decubitus.
+                  </p>
+                  <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                    <span>✓ Continuously monitor SpO2</span> • <span>✓ Seek immediate emergency care (112) if SpO2 &lt; 90%</span>
+                  </div>
+                </div>
+
+                <div className="record-card" style={{ borderLeft: "4px solid #dc2626" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "8px", marginBottom: "8px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <span style={{ fontSize: "18px" }}>🦟</span>
+                      <h4 style={{ margin: 0, fontSize: "15px", color: "var(--cv-text-primary)" }}>
+                        Dengue Critical Phase &amp; Defervescence Warning
+                      </h4>
+                    </div>
+                    <span className="cv-badge cv-badge-urgent">Plasma Leakage Alert</span>
+                  </div>
+                  <p style={{ margin: "0 0 10px", fontSize: "13px", color: "var(--cv-text-body)", lineHeight: "1.6" }}>
+                    At the time of fever drop (defervescence, days 3–7), patients enter the high-risk critical phase. A simultaneous <strong>hematocrit rise &ge; 5%</strong> and <strong>platelet count drop &ge; 50%</strong> signifies acute plasma leakage. <strong>Absolute Contraindication:</strong> Avoid all NSAIDs (ibuprofen, aspirin, naproxen, diclofenac) due to catastrophic hemorrhage risks.
+                  </p>
+                  <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                    <span>✓ Paracetamol only for analgesia</span> • <span>✓ Close hematocrit monitoring</span>
+                  </div>
+                </div>
+
+                <div className="record-card" style={{ borderLeft: "4px solid #f59e0b" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "8px", marginBottom: "8px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <span style={{ fontSize: "18px" }}>🍬</span>
+                      <h4 style={{ margin: 0, fontSize: "15px", color: "var(--cv-text-primary)" }}>
+                        Hypoglycemia Management: Rule of 15 (Blood Glucose &lt; 70 mg/dL)
+                      </h4>
+                    </div>
+                    <span className="cv-badge cv-badge-warning">Rule of 15 Protocol</span>
+                  </div>
+                  <p style={{ margin: "0 0 10px", fontSize: "13px", color: "var(--cv-text-body)", lineHeight: "1.6" }}>
+                    Immediately administer <strong>15 grams of fast-acting carbohydrate</strong> (e.g., 1/2 cup fruit juice, 3–4 glucose tablets, or 4 teaspoons sugar in water). Rest for 15 minutes and re-test blood glucose. If still under 70 mg/dL, repeat the 15g cycle. If unconscious, do not give oral items; administer glucagon or seek emergency care immediately.
+                  </p>
+                </div>
+
+                <div className="record-card" style={{ borderLeft: "4px solid #7c3aed" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "8px", marginBottom: "8px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <span style={{ fontSize: "18px" }}>💧</span>
+                      <h4 style={{ margin: 0, fontSize: "15px", color: "var(--cv-text-primary)" }}>
+                        WHO Low-Osmolarity ORS Formulation (245 mOsm/L)
+                      </h4>
+                    </div>
+                    <span className="cv-badge cv-badge-routine">WHO Standard</span>
+                  </div>
+                  <p style={{ margin: "0 0 10px", fontSize: "13px", color: "var(--cv-text-body)", lineHeight: "1.6" }}>
+                    Optimal rehydration solution with total osmolarity of <strong>245 mOsm/L</strong>: Sodium 75 mmol/L, Glucose 75 mmol/L, Potassium 20 mmol/L, Chloride 65 mmol/L, Citrate 10 mmol/L. Dilute exactly 1 sachet in 1 litre of clean drinking water. Avoid high-sugar carbonated drinks.
+                  </p>
+                </div>
+              </div>
+
+              {/* Longitudinal Vitals Observation Log */}
+              {overview?.recent_vitals && overview.recent_vitals.length > 0 && (
+                <div className="record-card" style={{ marginTop: "20px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "8px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <span style={{ fontSize: "18px" }}>📈</span>
+                      <h4 style={{ margin: 0, fontSize: "15px", color: "var(--cv-text-primary)" }}>
+                        {isHindi ? "दीर्घकालिक वाइटल साइन्स इतिहास" : "Longitudinal Vitals & Clinical Observation History"}
+                      </h4>
+                    </div>
+                    <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                      {overview.recent_vitals.length} recorded measurements
+                    </span>
+                  </div>
+
+                  <div style={{ overflowX: "auto", borderRadius: "8px", border: "1px solid var(--cv-border)" }}>
+                    <table className="cv-table" style={{ width: "100%", fontSize: "12px", borderCollapse: "collapse" }}>
+                      <thead style={{ background: "var(--cv-surface-soft)" }}>
+                        <tr>
+                          <th style={{ padding: "8px 12px", textAlign: "left" }}>Recorded Date</th>
+                          <th style={{ padding: "8px 12px", textAlign: "left" }}>Blood Pressure</th>
+                          <th style={{ padding: "8px 12px", textAlign: "left" }}>Heart Rate</th>
+                          <th style={{ padding: "8px 12px", textAlign: "left" }}>SpO2</th>
+                          <th style={{ padding: "8px 12px", textAlign: "left" }}>Temperature</th>
+                          <th style={{ padding: "8px 12px", textAlign: "left" }}>Glucose</th>
+                          <th style={{ padding: "8px 12px", textAlign: "left" }}>Status</th>
+                          <th style={{ padding: "8px 12px", textAlign: "left" }}>Clinical Context</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {overview.recent_vitals.map((v) => {
+                          const statusClass =
+                            v.status === "febrile" || v.status === "stage_1_hypertension"
+                              ? "cv-badge-warning"
+                              : "cv-badge-success";
+                          return (
+                            <tr key={v.id} style={{ borderTop: "1px solid var(--cv-border-soft)" }}>
+                              <td style={{ padding: "8px 12px", whiteSpace: "nowrap", color: "var(--cv-text-muted)" }}>
+                                {formatDate(v.recorded_at)}
+                              </td>
+                              <td style={{ padding: "8px 12px", fontWeight: "600", color: "var(--cv-text-primary)" }}>
+                                {v.bp_systolic}/{v.bp_diastolic} mmHg
+                              </td>
+                              <td style={{ padding: "8px 12px" }}>{v.heart_rate} bpm</td>
+                              <td style={{ padding: "8px 12px", fontWeight: "600", color: v.spo2 < 94 ? "#dc2626" : "var(--cv-text-primary)" }}>
+                                {v.spo2}%
+                              </td>
+                              <td style={{ padding: "8px 12px" }}>{v.temperature_f}°F</td>
+                              <td style={{ padding: "8px 12px" }}>{v.blood_glucose} mg/dL</td>
+                              <td style={{ padding: "8px 12px" }}>
+                                <span className={`cv-badge ${statusClass}`} style={{ fontSize: "10px", padding: "2px 6px", textTransform: "capitalize" }}>
+                                  {v.status?.replace("_", " ")}
+                                </span>
+                              </td>
+                              <td style={{ padding: "8px 12px", color: "var(--cv-text-secondary)", fontSize: "11px" }}>
+                                {v.notes}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* =========================================================================
+              TAB 8: CONDITIONS & ALLERGIES
+              ========================================================================= */}
+          {activeTab === "allergies" && (
+            <div>
+              <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
+                <span className="demo-data-tag">
+                  DEMO DATA — VERIFIED PATIENT ALLERGIES &amp; CONTRAINDICATION RULES
+                </span>
+                <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                  {isHindi ? `कुल ${allergies.length} दर्ज एलर्जी` : `${allergies.length} documented adverse reactions`}
+                </span>
+              </div>
+
+              {/* Active Chronic Conditions */}
+              <div style={{ marginBottom: "20px" }}>
+                <h4 style={{ margin: "0 0 10px", fontSize: "15px", color: "var(--cv-text-primary)" }}>
+                  {isHindi ? "सक्रिय दीर्घकालिक स्थितियां (Chronic Conditions)" : "Active Chronic Conditions & Clinical Diagnoses"}
+                </h4>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "12px" }}>
+                  <div className="record-card" style={{ padding: "12px 16px", borderLeft: "4px solid #0284c7" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                      <strong style={{ color: "var(--cv-text-primary)", fontSize: "14px" }}>Essential (Primary) Hypertension</strong>
+                      <span className="cv-badge cv-badge-routine">ICD-10 I10</span>
+                    </div>
+                    <div style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                      Onset: 2 years ago • Managed with Telmisartan 40mg daily • BP well-controlled
+                    </div>
+                  </div>
+                  <div className="record-card" style={{ padding: "12px 16px", borderLeft: "4px solid #10b981" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                      <strong style={{ color: "var(--cv-text-primary)", fontSize: "14px" }}>Type 2 Diabetes Mellitus</strong>
+                      <span className="cv-badge cv-badge-routine">ICD-10 E11</span>
+                    </div>
+                    <div style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                      Onset: 3 years ago • Monitored with HbA1c (6.8%, target &lt; 7.0%)
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Recorded Allergies List */}
+              {allergies.length === 0 ? (
+                <EmptyState
+                  icon="⚠️"
+                  title={isHindi ? "कोई एलर्जी दर्ज नहीं है" : "No allergies recorded"}
+                  description={isHindi ? "मरीज के लिए कोई दवा एलर्जी या प्रतिकूल प्रतिक्रियाएं दर्ज नहीं हैं।" : "No known drug allergies or adverse reactions are on record for this patient."}
+                />
+              ) : (
+                <div style={{ display: "grid", gap: "14px", marginBottom: "24px" }}>
+                  {allergies.map((al) => (
+                    <div key={al.id} className="record-card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+                      <div>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
+                          <span style={{ fontSize: "18px" }}>⚠️</span>
+                          <h4 style={{ margin: 0, fontSize: "16px", color: "var(--cv-text-primary)" }}>
+                            {al.allergen_or_condition}
+                          </h4>
+                          <span className={`cv-badge ${al.severity?.toLowerCase() === "severe" ? "cv-badge-urgent" : "cv-badge-warning"}`}>
+                            {al.severity} Severity
+                          </span>
+                        </div>
+                        <div style={{ fontSize: "13px", color: "var(--cv-text-secondary)" }}>
+                          <strong>Recorded Reaction: </strong>
+                          {al.reaction_details || al.notes || "Hypersensitivity / severe allergic reaction"}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="cv-btn cv-btn-sm cv-btn-outline"
+                        onClick={() =>
+                          setSelectedRecordModal({
+                            title: `Allergy: ${al.allergen_or_condition}`,
+                            type: "Documented Drug Allergy",
+                            date: formatDate(al.created_at),
+                            actor: "Verified Clinical Record",
+                            details: [
+                              { label: "Allergen / Substance", value: al.allergen_or_condition },
+                              { label: "Severity Rating", value: al.severity },
+                              { label: "Clinical Reaction", value: al.reaction_details || "Hypersensitivity" },
+                              { label: "Contraindication Status", value: "Hard block on related compounds, mandatory pre-flight validation" },
+                            ],
+                          })
+                        }
+                      >
+                        <span>👁️</span>
+                        <span>{isHindi ? "विवरण देखें" : "View Details"}</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Clinical Contraindication Guidance Rules */}
+              <div style={{ marginTop: "20px" }}>
+                <h4 style={{ margin: "0 0 12px", fontSize: "15px", color: "var(--cv-text-primary)" }}>
+                  Clinical Safety &amp; Cross-Reactivity Guardrails (Module 5)
+                </h4>
+                <div style={{ display: "grid", gap: "12px" }}>
+                  <div className="record-card" style={{ padding: "12px 16px" }}>
+                    <strong style={{ color: "var(--cv-accent)" }}>Penicillin &amp; Cephalosporin Cross-Reactivity:</strong>
+                    <p style={{ margin: "4px 0 0", fontSize: "13px", color: "var(--cv-text-body)" }}>
+                      Patients with severe penicillin anaphylaxis carry a <strong>2%–5% (and up to 10%)</strong> cross-reactivity risk with 1st and 2nd generation cephalosporins due to shared beta-lactam ring structures. System enforces hard blocking for penicillins and safety warnings for cephalosporins.
+                    </p>
+                  </div>
+                  <div className="record-card" style={{ padding: "12px 16px" }}>
+                    <strong style={{ color: "var(--cv-accent)" }}>Dengue / Thrombocytopenia &amp; NSAIDs:</strong>
+                    <p style={{ margin: "4px 0 0", fontSize: "13px", color: "var(--cv-text-body)" }}>
+                      Ibuprofen, Naproxen, and Aspirin irreversibly inhibit platelet aggregation and cause gastric mucosal erosions. Strictly contraindicated during acute dengue infection or platelet counts &lt; 100,000 /µL.
+                    </p>
+                  </div>
+                  <div className="record-card" style={{ padding: "12px 16px" }}>
+                    <strong style={{ color: "var(--cv-accent)" }}>Hypertension &amp; Fluid-Retaining Analgesics:</strong>
+                    <p style={{ margin: "4px 0 0", fontSize: "13px", color: "var(--cv-text-body)" }}>
+                      NSAIDs cause renal prostaglandin inhibition resulting in sodium retention and systemic vasoconstriction, blunting antihypertensive therapies.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* =========================================================================
+              TAB 9: INVOICES & PAYMENT RECEIPTS
+              ========================================================================= */}
+          {activeTab === "billing" && (
+            <div>
+              <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
+                <span className="demo-data-tag">
+                  DEMO DATA — VERIFIED MEDICAL INVOICES &amp; PAYMENT RECEIPTS
+                </span>
+                <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                  {isHindi ? `कुल ${invoices.length} बिलिंग रिकॉर्ड` : `${invoices.length} billing statements on file`}
+                </span>
+              </div>
+
+              {/* Billing Search & Status Filters */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "10px" }}>
+                <input
+                  className="cv-input"
+                  style={{ maxWidth: "260px", padding: "6px 12px", fontSize: "13px" }}
+                  type="text"
+                  placeholder={isHindi ? "बिल खोजें…" : "Search invoices…"}
+                  value={billingSearch}
+                  onChange={(e) => setBillingSearch(e.target.value)}
+                />
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                  {[
+                    { id: "all", label: isHindi ? "सभी" : "All" },
+                    { id: "paid", label: isHindi ? "भुगतान पूर्ण" : "Paid" },
+                    { id: "pending", label: isHindi ? "लंबित" : "Pending" },
+                    { id: "failed", label: isHindi ? "विफल" : "Failed" },
+                  ].map((f) => (
+                    <button
+                      key={f.id}
+                      className={`cv-btn cv-btn-xs ${billingFilter === f.id ? "cv-btn-secondary" : "cv-btn-ghost"}`}
+                      onClick={() => setBillingFilter(f.id)}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {filteredInvoices.length === 0 ? (
+                <EmptyState
+                  icon="💳"
+                  title={isHindi ? "कोई बिलिंग रिकॉर्ड नहीं मिला" : "No invoices found"}
+                  description={isHindi ? "परामर्श के बाद जारी किए गए बिल और रसीदें यहाँ दिखाई देंगे।" : "Medical invoices and payment receipts from consultations will appear here."}
+                />
+              ) : (
+                <div style={{ display: "grid", gap: "14px" }}>
+                  {filteredInvoices.map((inv) => {
+                    const isPaid = inv.status === "paid";
+                    const isPending = inv.status === "pending";
+                    const amountFormatted = `₹${(inv.amount_minor / 100).toLocaleString("en-IN")}`;
+                    const isDownloadingInv = downloadingId === `inv-${inv.id}`;
+                    const isDownloadingRec = downloadingId === `rec-${inv.id}`;
+                    return (
+                      <div key={inv.id} className="record-card">
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "12px" }}>
+                          <div>
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "4px" }}>
+                              <span style={{ fontSize: "11px", fontWeight: "700", color: "var(--cv-text-muted)", letterSpacing: "0.05em" }}>
+                                {inv.invoice_number}
+                              </span>
+                              <span className={`cv-badge ${isPaid ? "cv-badge-success" : isPending ? "cv-badge-warning" : "cv-badge-urgent"}`} style={{ textTransform: "uppercase" }}>
+                                {inv.status}
+                              </span>
+                              <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                                {formatDate(inv.created_at)}
+                              </span>
+                            </div>
+                            <h3 style={{ margin: "4px 0", fontSize: "16px", color: "var(--cv-text-primary)" }}>
+                              {inv.description || "Medical Consultation Fee"}
+                            </h3>
+                            <div style={{ fontSize: "20px", fontWeight: "800", color: "var(--cv-accent)", marginTop: "4px" }}>
+                              {amountFormatted}
+                            </div>
+                            {inv.paid_at && (
+                              <div style={{ fontSize: "12px", color: "var(--cv-text-muted)", marginTop: "2px" }}>
+                                Paid on {formatDate(inv.paid_at)}
+                              </div>
+                            )}
+                          </div>
+
+                          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              className="cv-btn cv-btn-sm cv-btn-ghost"
+                              onClick={() =>
+                                setSelectedRecordModal({
+                                  title: `Invoice ${inv.invoice_number}`,
+                                  type: "Medical Billing Statement",
+                                  date: formatDate(inv.created_at),
+                                  actor: "CareVoice Billing Department",
+                                  description: inv.description || "Outpatient Clinical Consultation and Assessment Fee",
+                                  details: [
+                                    { label: "Invoice Number", value: inv.invoice_number },
+                                    { label: "Total Amount", value: amountFormatted },
+                                    { label: "Payment Status", value: inv.status?.toUpperCase() },
+                                    { label: "Currency", value: inv.currency?.toUpperCase() || "INR" },
+                                    { label: "Issue Date", value: formatDate(inv.created_at) },
+                                    { label: "Settlement Date", value: inv.paid_at ? formatDate(inv.paid_at) : "Pending" },
+                                  ],
+                                  downloadPath: `/billing/invoices/${inv.id}/pdf`,
+                                  downloadFilename: `invoice-${inv.invoice_number}.pdf`,
+                                  downloadKey: `inv-${inv.id}`,
+                                })
+                              }
+                            >
+                              <span>👁️</span>
+                              <span>{isHindi ? "विवरण देखें" : "View"}</span>
+                            </button>
+                            <button
+                              type="button"
+                              className="cv-btn cv-btn-sm cv-btn-outline"
+                              disabled={isDownloadingInv}
+                              onClick={() =>
+                                downloadBinary(
+                                  `/billing/invoices/${inv.id}/pdf`,
+                                  `invoice-${inv.invoice_number}.pdf`,
+                                  `inv-${inv.id}`
+                                )
+                              }
+                            >
+                              <span>📥</span>
+                              <span>{isDownloadingInv ? "…" : (isHindi ? "चालान PDF" : "Invoice PDF")}</span>
+                            </button>
+                            {isPaid && (
+                              <button
+                                type="button"
+                                className="cv-btn cv-btn-sm cv-btn-primary"
+                                disabled={isDownloadingRec}
+                                onClick={() =>
+                                  downloadBinary(
+                                    `/billing/receipts/${inv.id}/pdf`,
+                                    `receipt-${inv.invoice_number}.pdf`,
+                                    `rec-${inv.id}`
+                                  )
+                                }
+                              >
+                                <span>🧾</span>
+                                <span>{isDownloadingRec ? "…" : (isHindi ? "रसीद PDF" : "Receipt PDF")}</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* =========================================================================
+              TAB 10: MULTILINGUAL PATIENT CARE GUIDES (EN / HI)
+              ========================================================================= */}
+          {activeTab === "guides" && (
+            <div>
+              <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
+                <span className="demo-data-tag">
+                  DEMO DATA — POST-CONSULTATION PATIENT CARE GUIDES (EN / HI)
+                </span>
+                <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                  Clinical Primacy Enforced: Only finalized clinician encounter notes
+                </span>
+              </div>
+
+              {/* Guide Selector Controls */}
+              <div className="record-card" style={{ marginBottom: "20px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "14px", alignItems: "flex-end" }}>
+                  <div>
+                    <label style={{ display: "block", fontSize: "12px", fontWeight: "700", color: "var(--cv-text-secondary)", marginBottom: "6px" }}>
+                      {isHindi ? "परामर्श नोट चुनें" : "Select Clinical Encounter"}
+                    </label>
+                    <select
+                      className="cv-select"
+                      value={guideApptId}
+                      onChange={(e) => setGuideApptId(e.target.value)}
+                    >
+                      <option value="">
+                        {notes.length === 0 ? "No finalized notes available" : "-- Choose Finalized Consultation --"}
+                      </option>
+                      {notes.map((n) => (
+                        <option key={n.id} value={n.appointment_id || n.id}>
+                          {n.chief_complaint || "Encounter"} - Dr. {n.doctor_name || "Clinician"} ({formatDate(n.finalized_at || n.created_at)})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style={{ display: "block", fontSize: "12px", fontWeight: "700", color: "var(--cv-text-secondary)", marginBottom: "6px" }}>
+                      {isHindi ? "गाइड भाषा चुनें" : "Guide Language"}
+                    </label>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <button
+                        type="button"
+                        className={`cv-btn cv-btn-sm ${guideLang === "en" ? "cv-btn-primary" : "cv-btn-outline"}`}
+                        onClick={() => setGuideLang("en")}
+                      >
+                        English (EN)
+                      </button>
+                      <button
+                        type="button"
+                        className={`cv-btn cv-btn-sm ${guideLang === "hi" ? "cv-btn-primary" : "cv-btn-outline"}`}
+                        onClick={() => setGuideLang("hi")}
+                      >
+                        हिंदी (HI)
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <button
+                      type="button"
+                      className="cv-btn cv-btn-primary"
+                      disabled={loadingGuide || (!guideApptId && notes.length === 0)}
+                      onClick={() => {
+                        const targetId = guideApptId || (notes[0]?.appointment_id || notes[0]?.id);
+                        if (targetId) fetchCareGuide(targetId, guideLang);
+                      }}
+                      style={{ width: "100%" }}
+                    >
+                      <span>📖</span>
+                      <span>
+                        {loadingGuide
+                          ? (isHindi ? "गाइड तैयार हो रही है…" : "Loading Care Guide…")
+                          : (isHindi ? "केयर गाइड देखें" : "Generate / View Care Guide")}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {guideError && (
+                <div className="cv-alert cv-alert-warning" style={{ marginBottom: "16px" }}>
+                  <span>⚠️</span>
+                  <div>{guideError}</div>
+                </div>
+              )}
+
+              {/* Care Guide Display */}
+              {careGuide ? (
+                <div className="record-card" style={{ borderTop: "4px solid var(--cv-accent)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "10px", borderBottom: "1px solid var(--cv-border-soft)", paddingBottom: "14px", marginBottom: "16px" }}>
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                        <span style={{ fontSize: "20px" }}>📖</span>
+                        <h3 style={{ margin: 0, fontSize: "18px", color: "var(--cv-text-primary)" }}>
+                          {careGuide.title || (isHindi ? "रोगी देखभाल गाइड" : "Personalized Patient Care Guide")}
+                        </h3>
+                        <span className="cv-badge cv-badge-routine">{careGuide.language?.toUpperCase()}</span>
+                      </div>
+                      <div style={{ fontSize: "12px", color: "var(--cv-text-muted)", marginTop: "4px" }}>
+                        Attending: <strong>Dr. {careGuide.attending_doctor || "Clinician"}</strong> • Generated {formatDate(careGuide.generated_at)}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <button
+                        type="button"
+                        className="cv-btn cv-btn-sm cv-btn-outline"
+                        onClick={() => window.print()}
+                      >
+                        <span>🖨️</span>
+                        <span>{isHindi ? "प्रिंट करें" : "Print Guide"}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="cv-btn cv-btn-sm cv-btn-primary"
+                        onClick={() => {
+                          const blob = new Blob([JSON.stringify(careGuide, null, 2)], { type: "application/json" });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement("a");
+                          a.href = url;
+                          a.download = `patient-care-guide-${careGuide.language}.json`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                      >
+                        <span>📥</span>
+                        <span>{isHindi ? "गाइड सेव करें" : "Download Guide"}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Plain Language Summary */}
+                  <div style={{ marginBottom: "16px", padding: "14px", borderRadius: "8px", background: "var(--cv-surface-soft)" }}>
+                    <div style={{ fontSize: "11px", fontWeight: "800", color: "var(--cv-text-muted)", textTransform: "uppercase", marginBottom: "6px" }}>
+                      {isHindi ? "सरल भाषा में स्वास्थ्य सारांश" : "Plain Language Health Summary"}
+                    </div>
+                    <p style={{ margin: 0, fontSize: "14px", color: "var(--cv-text-body)", lineHeight: "1.7" }}>
+                      {careGuide.plain_language_summary}
+                    </p>
+                  </div>
+
+                  {/* Medication Timing Schedule */}
+                  {careGuide.medication_schedule?.length > 0 && (
+                    <div style={{ marginBottom: "16px" }}>
+                      <div style={{ fontSize: "11px", fontWeight: "800", color: "var(--cv-text-muted)", textTransform: "uppercase", marginBottom: "8px" }}>
+                        {isHindi ? "दवा लेने का समय सारणी" : "Medication & Administration Schedule"}
+                      </div>
+                      <div style={{ display: "grid", gap: "8px" }}>
+                        {careGuide.medication_schedule.map((m, idx) => (
+                          <div key={idx} style={{ padding: "10px 14px", borderRadius: "8px", border: "1px solid var(--cv-border)", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
+                            <div>
+                              <strong style={{ color: "var(--cv-text-primary)", fontSize: "14px" }}>{m.medication}</strong>
+                              <div style={{ fontSize: "12px", color: "var(--cv-text-muted)", marginTop: "2px" }}>
+                                {m.timing_with_meals} • Duration: {m.duration}
+                              </div>
+                            </div>
+                            <span className="cv-badge cv-badge-routine">{m.dosage}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Red Flags / Emergency Warnings */}
+                  {careGuide.red_flag_symptoms?.length > 0 && (
+                    <div className="cv-alert cv-alert-danger" style={{ marginBottom: "16px", padding: "12px 16px" }}>
+                      <span style={{ fontSize: "20px" }}>🚨</span>
+                      <div style={{ flex: 1 }}>
+                        <strong style={{ fontSize: "14px" }}>
+                          {isHindi ? "आपातकालीन चेतावनी लक्षण (तुरंत डॉक्टर या 112 से संपर्क करें):" : "Emergency Warning Symptoms (Seek immediate care or call 112):"}
+                        </strong>
+                        <ul style={{ margin: "6px 0 0", paddingLeft: "18px", fontSize: "13px" }}>
+                          {careGuide.red_flag_symptoms.map((rf, idx) => (
+                            <li key={idx}>{rf}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Lifestyle & Dietary Guidance */}
+                  {careGuide.lifestyle_and_diet?.length > 0 && (
+                    <div style={{ marginBottom: "16px" }}>
+                      <div style={{ fontSize: "11px", fontWeight: "800", color: "var(--cv-text-muted)", textTransform: "uppercase", marginBottom: "6px" }}>
+                        {isHindi ? "दैनिक जीवनशैली व आहार निर्देश" : "Daily Lifestyle & Dietary Recommendations"}
+                      </div>
+                      <ul style={{ margin: 0, paddingLeft: "18px", fontSize: "13px", color: "var(--cv-text-body)", lineHeight: "1.7" }}>
+                        {careGuide.lifestyle_and_diet.map((ls, idx) => (
+                          <li key={idx}>{ls}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Audio Prompt Simulation */}
+                  {careGuide.multilingual_audio_prompt && (
+                    <div style={{ padding: "12px 14px", borderRadius: "8px", background: "var(--cv-accent-soft)", border: "1px solid var(--cv-accent)", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span style={{ fontSize: "20px" }}>🔊</span>
+                        <div style={{ fontSize: "13px", color: "var(--cv-text-primary)", fontWeight: "600" }}>
+                          {isHindi ? "ऑडियो विवरण उपलब्ध है" : "Audio Guide Voice Narration Available"}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="cv-btn cv-btn-xs cv-btn-primary"
+                        onClick={() => {
+                          if ("speechSynthesis" in window) {
+                            const utt = new SpeechSynthesisUtterance(careGuide.plain_language_summary);
+                            utt.lang = careGuide.language === "hi" ? "hi-IN" : "en-US";
+                            window.speechSynthesis.speak(utt);
+                          } else {
+                            alert("Text-to-speech is not supported by your browser.");
+                          }
+                        }}
+                      >
+                        ▶ {isHindi ? "सुनें" : "Play Narration"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <EmptyState
+                  icon="📖"
+                  title={isHindi ? "कोई केयर गाइड चयनित नहीं है" : "Select an encounter to view Care Guide"}
+                  description={isHindi ? "ऊपर दी गई सूची से परामर्श चुनें और 'केयर गाइड देखें' पर क्लिक करें।" : "Choose an encounter from the dropdown above and generate your multilingual patient care guide."}
+                />
+              )}
+            </div>
+          )}
+
+          {/* =========================================================================
+              TAB 9: CARE TEAM & FACILITIES
+              ========================================================================= */}
+          {activeTab === "careteam" && (
+            <div>
+              <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
+                <span className="demo-data-tag">
+                  DEMO DATA — ASSIGNED MULTIDISCIPLINARY CARE TEAM &amp; NETWORK
+                </span>
+                <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                  CareVoice Integrated Health Network
+                </span>
+              </div>
+
+              <div style={{ display: "grid", gap: "16px", marginBottom: "24px" }}>
+                <div className="record-card" style={{ display: "flex", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
+                  <div style={{ width: "52px", height: "52px", borderRadius: "50%", background: "var(--cv-accent-soft)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "24px" }}>
+                    👨‍⚕️
+                  </div>
+                  <div style={{ flex: 1, minWidth: "220px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                      <h4 style={{ margin: 0, fontSize: "16px", color: "var(--cv-text-primary)" }}>Dr. Ayesha Khan, MD</h4>
+                      <span className="cv-badge cv-badge-routine">Primary Attending Physician</span>
+                    </div>
+                    <div style={{ fontSize: "13px", color: "var(--cv-text-muted)", marginTop: "4px" }}>
+                      Internal Medicine &amp; Chronic Care Management • Reg #MCI-2018-98421
+                    </div>
+                    <div style={{ fontSize: "12px", color: "var(--cv-text-secondary)", marginTop: "2px" }}>
+                      Available for Teleconsultation &amp; In-Person Follow-up
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="cv-btn cv-btn-sm cv-btn-primary"
+                    onClick={() => alert("Follow-up appointment booking initiated. Our scheduling team will confirm your slot.")}
+                  >
+                    <span>📅</span>
+                    <span>Book Appointment</span>
+                  </button>
+                </div>
+
+                <div className="record-card" style={{ display: "flex", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
+                  <div style={{ width: "52px", height: "52px", borderRadius: "50%", background: "var(--cv-surface-soft)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "24px" }}>
+                    🩺
+                  </div>
+                  <div style={{ flex: 1, minWidth: "220px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                      <h4 style={{ margin: 0, fontSize: "16px", color: "var(--cv-text-primary)" }}>Dr. Rajesh Sharma, MD, DM</h4>
+                      <span className="cv-badge cv-badge-info">Consulting Cardiologist</span>
+                    </div>
+                    <div style={{ fontSize: "13px", color: "var(--cv-text-muted)", marginTop: "4px" }}>
+                      Cardiovascular Sciences &amp; Preventive Cardiology • Reg #DMC-14298
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="cv-btn cv-btn-sm cv-btn-outline"
+                    onClick={() => alert("Consultation request logged.")}
+                  >
+                    Request Referral
+                  </button>
+                </div>
+
+                <div className="record-card" style={{ display: "flex", alignItems: "center", gap: "16px", flexWrap: "wrap" }}>
+                  <div style={{ width: "52px", height: "52px", borderRadius: "50%", background: "var(--cv-surface-soft)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "24px" }}>
+                    🏥
+                  </div>
+                  <div style={{ flex: 1, minWidth: "220px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                      <h4 style={{ margin: 0, fontSize: "16px", color: "var(--cv-text-primary)" }}>CareVoice Health Center of Excellence</h4>
+                      <span className="cv-badge cv-badge-success">NABH Accredited</span>
+                    </div>
+                    <div style={{ fontSize: "13px", color: "var(--cv-text-muted)", marginTop: "4px" }}>
+                      Institutional Hub, South Extension, New Delhi 110049
+                    </div>
+                    <div style={{ fontSize: "12px", color: "var(--cv-text-secondary)", marginTop: "2px" }}>
+                      Emergency Department: Open 24x7 • Diagnostic Labs Onsite
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Emergency Hotlines Row */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "14px" }}>
+                <div className="record-card" style={{ borderLeft: "4px solid #dc2626" }}>
+                  <div style={{ fontSize: "11px", fontWeight: "800", color: "#dc2626", textTransform: "uppercase" }}>National Emergency Hotline</div>
+                  <div style={{ fontSize: "24px", fontWeight: "900", color: "var(--cv-text-primary)", margin: "4px 0" }}>112</div>
+                  <div style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>Ambulance, Police, and Fire Services nationwide</div>
+                </div>
+                <div className="record-card" style={{ borderLeft: "4px solid #0284c7" }}>
+                  <div style={{ fontSize: "11px", fontWeight: "800", color: "#0284c7", textTransform: "uppercase" }}>Tele-MANAS Mental Health</div>
+                  <div style={{ fontSize: "24px", fontWeight: "900", color: "var(--cv-text-primary)", margin: "4px 0" }}>14416</div>
+                  <div style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>24/7 Toll-free mental health psychological support</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* =========================================================================
+              TAB 10: DPDP PRIVACY & PORTABILITY
+              ========================================================================= */}
+          {activeTab === "privacy" && (
+            <div>
+              <div style={{ marginBottom: "16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "10px" }}>
+                <span className="demo-data-tag">
+                  DEMO DATA — DPDP ACT 2023 PATIENT PRIVACY &amp; CONSENT
+                </span>
+                <span style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                  Revocable Consent, 48h Cooling-off, FHIR R4 Bundle &amp; PIN-Protected Links
+                </span>
+              </div>
+
+              <DPDPPrivacyCenter
+                token={token}
+                isHindi={isHindi}
+                patientId={overview?.patient_user_id || 1}
+              />
+            </div>
+          )}
         </>
+      )}
+
+      {/* =========================================================================
+          VIEW RECORD DETAILS MODAL (Action: View Details, Print, Download)
+          ========================================================================= */}
+      {selectedRecordModal && (
+        <Modal
+          isOpen={true}
+          onClose={() => setSelectedRecordModal(null)}
+          title={selectedRecordModal.title || (isHindi ? "रिकॉर्ड विवरण" : "Record Details")}
+        >
+          <div style={{ padding: "4px 0" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", borderBottom: "1px solid var(--cv-border-soft)", paddingBottom: "12px", marginBottom: "16px" }}>
+              <div>
+                <span className="cv-badge cv-badge-routine" style={{ textTransform: "uppercase" }}>
+                  {selectedRecordModal.type || "Clinical Record"}
+                </span>
+                {selectedRecordModal.category && (
+                  <span className="cv-badge cv-badge-neutral" style={{ marginLeft: "6px", textTransform: "uppercase" }}>
+                    {selectedRecordModal.category}
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                {selectedRecordModal.date}
+              </div>
+            </div>
+
+            {selectedRecordModal.actor && (
+              <div style={{ marginBottom: "12px", fontSize: "13px" }}>
+                <strong style={{ color: "var(--cv-text-secondary)" }}>Author / Provider: </strong>
+                <span style={{ color: "var(--cv-text-primary)", fontWeight: "600" }}>{selectedRecordModal.actor}</span>
+              </div>
+            )}
+
+            {selectedRecordModal.description && (
+              <div style={{ marginBottom: "14px", fontSize: "14px", lineHeight: "1.6", color: "var(--cv-text-body)" }}>
+                {selectedRecordModal.description}
+              </div>
+            )}
+
+            {/* Custom Details Array if provided */}
+            {selectedRecordModal.details?.length > 0 && (
+              <div style={{ display: "grid", gap: "8px", marginBottom: "16px" }}>
+                {selectedRecordModal.details.map((d, idx) => (
+                  <div key={idx} style={{ padding: "8px 12px", borderRadius: "6px", background: "var(--cv-surface-soft)", fontSize: "13px" }}>
+                    <strong style={{ color: "var(--cv-text-secondary)" }}>{d.label}: </strong>
+                    <span style={{ color: "var(--cv-text-primary)" }}>{d.value}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Modal Actions */}
+            <div style={{ marginTop: "20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px", borderTop: "1px solid var(--cv-border-soft)", paddingTop: "14px" }}>
+              <button
+                type="button"
+                className="cv-btn cv-btn-sm cv-btn-outline"
+                onClick={() => window.print()}
+              >
+                <span>🖨️</span>
+                <span>{isHindi ? "प्रिंट करें" : "Print Record"}</span>
+              </button>
+
+              <div style={{ display: "flex", gap: "8px" }}>
+                {selectedRecordModal.downloadPath && (
+                  <button
+                    type="button"
+                    className="cv-btn cv-btn-sm cv-btn-primary"
+                    onClick={() =>
+                      downloadBinary(
+                        selectedRecordModal.downloadPath,
+                        selectedRecordModal.downloadFilename,
+                        selectedRecordModal.downloadKey
+                      )
+                    }
+                  >
+                    <span>📥</span>
+                    <span>{isHindi ? "PDF डाउनलोड" : "Download PDF"}</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="cv-btn cv-btn-sm cv-btn-ghost"
+                  onClick={() => setSelectedRecordModal(null)}
+                >
+                  {isHindi ? "बंद करें" : "Close"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* =========================================================================
+          VIEW AI CONVERSATION TRANSCRIPT MODAL
+          ========================================================================= */}
+      {selectedConversation && (
+        <Modal
+          isOpen={true}
+          onClose={() => setSelectedConversation(null)}
+          title={selectedConversation.symptom_summary?.slice(0, 60) || (isHindi ? "परामर्श संवाद" : "AI Consultation Transcript")}
+        >
+          <div style={{ padding: "4px 0", maxHeight: "70vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", borderBottom: "1px solid var(--cv-border-soft)", paddingBottom: "10px", marginBottom: "14px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span className={`cv-badge ${getUrgencyBadgeConfig(selectedConversation.triage_level || selectedConversation.care_urgency || "routine").className}`}>
+                  {getUrgencyBadgeConfig(selectedConversation.triage_level || selectedConversation.care_urgency || "routine").label}
+                </span>
+                <span className="cv-badge cv-badge-neutral" style={{ textTransform: "uppercase" }}>
+                  Language: {selectedConversation.language?.toUpperCase() || "EN"}
+                </span>
+              </div>
+              <div style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                ID: {selectedConversation.assessment_id?.slice(0, 8)}
+              </div>
+            </div>
+
+            {/* Clinical Symptom Summary */}
+            {selectedConversation.symptom_summary && (
+              <div style={{ marginBottom: "14px", padding: "10px 12px", borderRadius: "8px", background: "var(--cv-surface-soft)", fontSize: "13px", lineHeight: "1.5" }}>
+                <strong style={{ color: "var(--cv-text-primary)" }}>Clinical Symptom Summary: </strong>
+                <span style={{ color: "var(--cv-text-body)" }}>{selectedConversation.symptom_summary}</span>
+              </div>
+            )}
+
+            {/* Multi-turn Chat Dialogue */}
+            <div style={{ display: "grid", gap: "12px", marginBottom: "16px" }}>
+              {(selectedConversation.messages || []).map((msg, mIdx) => {
+                const isAssistant = msg.role === "assistant";
+                return (
+                  <div
+                    key={mIdx}
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: isAssistant ? "flex-start" : "flex-end",
+                    }}
+                  >
+                    <div style={{ fontSize: "11px", fontWeight: "700", color: "var(--cv-text-muted)", marginBottom: "3px", textTransform: "uppercase" }}>
+                      {isAssistant ? "CareVoice AI Assistant" : "Patient"}
+                    </div>
+                    <div
+                      style={{
+                        maxWidth: "85%",
+                        padding: "10px 14px",
+                        borderRadius: "12px",
+                        background: isAssistant ? "var(--cv-surface-soft)" : "var(--cv-accent)",
+                        color: isAssistant ? "var(--cv-text-primary)" : "#ffffff",
+                        fontSize: "13px",
+                        lineHeight: "1.5",
+                        whiteSpace: "pre-wrap",
+                        boxShadow: "0 1px 2px rgba(0,0,0,0.05)",
+                      }}
+                    >
+                      {msg.content}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Red Flags if present */}
+            {selectedConversation.red_flags?.length > 0 && (
+              <div className="cv-alert cv-alert-danger" style={{ marginBottom: "12px", padding: "10px 12px", fontSize: "12px" }}>
+                <span>🚨</span>
+                <div>
+                  <strong>Red Flag Symptoms Identified: </strong>
+                  <ul style={{ margin: "4px 0 0", paddingLeft: "16px" }}>
+                    {selectedConversation.red_flags.map((rf, idx) => (
+                      <li key={idx}>{rf}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
+
+            {/* Recommended Next Steps */}
+            {selectedConversation.recommended_next_steps?.length > 0 && (
+              <div style={{ marginBottom: "12px", padding: "10px 12px", borderRadius: "8px", background: "var(--cv-surface-soft)", fontSize: "12px" }}>
+                <strong style={{ color: "var(--cv-text-primary)" }}>Recommended Clinical Next Steps: </strong>
+                <ol style={{ margin: "4px 0 0", paddingLeft: "16px", color: "var(--cv-text-secondary)" }}>
+                  {selectedConversation.recommended_next_steps.map((step, idx) => (
+                    <li key={idx}>{step}</li>
+                  ))}
+                </ol>
+              </div>
+            )}
+
+            {/* Evidence Sources */}
+            {selectedConversation.evidence_sources?.length > 0 && (
+              <div style={{ marginBottom: "14px", fontSize: "11px", color: "var(--cv-text-muted)" }}>
+                <strong>Evidence Citations: </strong>
+                {selectedConversation.evidence_sources.map((s, idx) => (
+                  <span key={idx}>
+                    {idx > 0 && " • "}
+                    {s.title || s.provenance}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "14px", borderTop: "1px solid var(--cv-border-soft)", paddingTop: "10px" }}>
+              <button
+                type="button"
+                className="cv-btn cv-btn-sm cv-btn-secondary"
+                onClick={() => setSelectedConversation(null)}
+              >
+                {isHindi ? "संवाद बंद करें" : "Close Transcript"}
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );

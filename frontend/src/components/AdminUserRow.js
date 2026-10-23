@@ -1,5 +1,6 @@
 import { createElement } from "react";
 
+// Maps raw role identifier slug to localized, human-readable display title.
 function roleLabel(role) {
   const labels = {
     platform_admin: "Platform Admin",
@@ -11,6 +12,7 @@ function roleLabel(role) {
   return labels[role] || role;
 }
 
+// Determines if an administrative role change demotes the active user from platform admin privileges.
 export function requiresPlatformAdminDemotionConfirmation(account, currentUser, role) {
   return (
     account.id === currentUser?.id &&
@@ -19,6 +21,7 @@ export function requiresPlatformAdminDemotionConfirmation(account, currentUser, 
   );
 }
 
+// Renders an editable table row for user role management, facility linkage, and activation toggling.
 export default function AdminUserRow({
   account,
   currentUser,

@@ -8,6 +8,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
+# Exception class for payment gateway communication and transaction failures.
 class PaymentProviderError(Exception):
     def __init__(
         self,
@@ -27,6 +28,7 @@ class PaymentProviderError(Exception):
         self.error_phase = error_phase
 
 
+# Abstract protocol for payment gateway implementations.
 class PaymentService(Protocol):
     async def create_order(
         self,
@@ -45,16 +47,19 @@ class PaymentService(Protocol):
     async def create_refund(self, *, payment_id: str, amount_minor: int, reason: str) -> dict[str, Any]: ...
 
 
+# Payment service implementation integrating with the Razorpay Payment Gateway.
 class RazorpayPaymentService:
     def __init__(self, key_id: str, key_secret: str, api_base_url: str):
         self.key_id = key_id
         self.key_secret = key_secret
         self.api_base_url = api_base_url.rstrip("/")
 
+    # Returns True if the configured Razorpay key ID is a test key.
     @property
     def is_test_mode(self) -> bool:
         return bool(self.key_id and self.key_id.startswith("rzp_test_"))
 
+    # Creates an order on Razorpay for checkout collection against a patient invoice.
     async def create_order(
         self,
         *,
@@ -174,6 +179,7 @@ class RazorpayPaymentService:
                 error_phase="response_handling",
             ) from exc
 
+    # Queries Razorpay for payment status, amount, and authorization state.
     async def fetch_payment(self, payment_id: str) -> dict[str, Any]:
         try:
             async with httpx.AsyncClient(
@@ -195,6 +201,7 @@ class RazorpayPaymentService:
             logger.warning("Razorpay payment lookup failed (kind=%s).", type(exc).__name__)
             raise PaymentProviderError("Could not confirm payment with Razorpay.") from exc
 
+    # Captures an authorized Razorpay payment for settlement.
     async def capture_payment(self, *, payment_id: str, amount_minor: int, currency: str = "INR") -> dict[str, Any]:
         try:
             async with httpx.AsyncClient(
@@ -219,6 +226,7 @@ class RazorpayPaymentService:
             logger.warning("Razorpay payment capture failed (kind=%s).", type(exc).__name__)
             raise PaymentProviderError("Could not capture payment with Razorpay.") from exc
 
+    # Initiates a full or partial payment refund via Razorpay.
     async def create_refund(self, *, payment_id: str, amount_minor: int, reason: str) -> dict[str, Any]:
         try:
             async with httpx.AsyncClient(
