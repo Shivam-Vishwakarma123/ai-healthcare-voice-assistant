@@ -116,9 +116,9 @@ def _obvious_red_flags(text: str) -> list[str]:
         "breathlessness", "shortness of breath", "trouble breathing", "difficulty breathing",
         "can't breathe", "cant breathe", "gasping", "saans nahi aa rahi", "saans nahin aa rahi",
         "saans lene mein dikkat", "saans lene me dikkat", "saans lene mein takleef",
-        "saans lene me takleef", "सांस नहीं आ रही", "साँस नहीं आ रही",
-        "सांस लेने में दिक्कत", "साँस लेने में दिक्कत",
-    ]) or re.search(r"\bsaans\b.*?\b(takleef|dikkat|ruk|kam|nahi|nahin)\b", lower) or re.search(r"(सांस|साँस).*?(तकलीफ|दिक्कत|रुक|नहीं)", lower):
+        "saans lene me takleef", "saans phool", "saans phul", "सांस नहीं आ रही", "साँस नहीं आ रही",
+        "सांस लेने में दिक्कत", "साँस लेने में दिक्कत", "सांस फूल", "साँस फूल",
+    ]) or re.search(r"\bsaans\b.*?\b(takleef|dikkat|ruk|kam|nahi|nahin|phool|phul)\b", lower) or re.search(r"(सांस|साँस).*?(तकलीफ|दिक्कत|रुक|नहीं|फूल)", lower):
         flags.append("breathing")
     if _contains_any(lower, [
         "face drooping", "one side of face", "slurred speech", "weak arm",

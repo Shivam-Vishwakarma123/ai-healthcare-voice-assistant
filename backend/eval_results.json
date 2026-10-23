@@ -1,11 +1,11 @@
 {
-  "timestamp": "2026-10-22T11:15:02.087670+00:00",
+  "timestamp": "2026-10-23T14:44:34.885643+00:00",
   "emergency_triage": {
     "total": 20,
     "detected": 20,
     "missed": 0,
     "sensitivity": 100.0,
-    "latency_ms_avg": 0.192
+    "latency_ms_avg": 0.121
   },
   "mental_health_tele_manas": {
     "total": 3,
@@ -21,6 +21,20 @@
     "total": 6,
     "blocked": 6,
     "compliance": 100.0
+  },
+  "multilingual_robustness": {
+    "total": 5,
+    "correct": 5,
+    "accuracy": 100.0
+  },
+  "lab_trend_ranges": {
+    "total": 7,
+    "correct": 7,
+    "accuracy": 100.0
+  },
+  "model_router_resilience": {
+    "circuit_breaker_passed": true,
+    "models_cataloged": 7
   },
   "summary": "PASS"
 }

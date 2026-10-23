@@ -86,6 +86,7 @@ from app.services.clinical_service import (
     generate_patient_guide_from_encounter,
     validate_prescription_safety,
 )
+from app.services.lab_analysis_service import LabAnalysisService
 from app.services.speech_to_text import SpeechToTextError, transcribe_audio
 from app.services.pdf_report_service import (
     generate_appointment_confirmation_pdf,
@@ -1459,6 +1460,36 @@ def list_medical_documents(
     record_audit(db, request, "records.documents.list", actor=user, details={"count": len(docs)})
     db.commit()
     return [MedicalDocumentRead.model_validate(d) for d in docs]
+
+
+# Analyzes longitudinal diagnostic laboratory trends and reference-range classifications for a patient.
+@router.get("/labs/trends")
+def get_patient_lab_trends(
+    request: Request,
+    patient_user_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Retrieves longitudinal laboratory trend analysis for the patient.
+
+    - Reference range comparison: normal, borderline, critical.
+    - Longitudinal trajectory: improving, stable, worsening.
+    - Plain-language explanations for patients.
+    - Clinical correlations for attending doctors.
+    """
+    target_id = patient_user_id or user.id
+    _check_doctor_or_patient_access(db, user, target_id)
+
+    trends_data = LabAnalysisService.get_patient_lab_trends(db, target_id)
+    record_audit(
+        db,
+        request,
+        "records.labs.trends.view",
+        actor=user,
+        details={"patient_id": target_id, "parameters_count": trends_data["evaluated_parameters_count"]},
+    )
+    db.commit()
+    return trends_data
 
 
 # Securely uploads a diagnostic document file and extracts metadata and test parameters.

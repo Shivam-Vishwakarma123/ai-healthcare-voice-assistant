@@ -150,6 +150,45 @@ def cosine_similarity(vec_a: list[float], vec_b: list[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
+# Computes BM25 lexical relevance scores across candidate chunks.
+def compute_bm25_scores(
+    query_tokens: set[str],
+    corpus_chunks: list[tuple[KnowledgeChunk, KnowledgeDocument]],
+    k1: float = 1.2,
+    b: float = 0.75,
+) -> list[float]:
+    N = len(corpus_chunks)
+    if N == 0 or not query_tokens:
+        return [0.0] * N
+
+    doc_tokens_list = [_lexical_tokens(c[0].content) for c in corpus_chunks]
+    doc_lens = [len(c[0].content.split()) for c in corpus_chunks]
+    avgdl = sum(doc_lens) / max(1, N)
+
+    df: dict[str, int] = {}
+    for qt in query_tokens:
+        df[qt] = sum(1 for dtoks in doc_tokens_list if qt in dtoks)
+
+    scores: list[float] = []
+    for d_idx, (chunk, _) in enumerate(corpus_chunks):
+        d_len = doc_lens[d_idx]
+        tokens_in_doc = chunk.content.casefold().split()
+        score = 0.0
+        for qt in query_tokens:
+            if df.get(qt, 0) == 0:
+                continue
+            tf = tokens_in_doc.count(qt)
+            if tf == 0:
+                continue
+            idf = math.log(1.0 + (N - df[qt] + 0.5) / (df[qt] + 0.5))
+            numerator = tf * (k1 + 1.0)
+            denominator = tf + k1 * (1.0 - b + b * (d_len / max(1.0, avgdl)))
+            score += idf * (numerator / denominator)
+        scores.append(score)
+
+    return scores
+
+
 _GUIDANCE_POLARITIES = {
     "urgent follow-up": (
         re.compile(r"\b(?:no|not|never)\b.{0,35}\burgent follow[- ]?up\b|\burgent follow[- ]?up\b.{0,30}\b(?:not recommended|not required|unnecessary)\b", re.I),
@@ -285,8 +324,16 @@ class RAGService:
             if (document.updated_at or document.retrieval_date).timestamp() < stale_before
         ]
 
-    # Searches knowledge chunks by vector similarity and keyword boosts for relevant clinical evidence.
-    def search(self, db: Session, query: str, *, limit: int = 5, category: str | None = None) -> list[RAGSearchResult]:
+    # Searches knowledge chunks using hybrid dense vector embeddings and BM25 lexical scoring.
+    def search(
+        self,
+        db: Session,
+        query: str,
+        *,
+        limit: int = 5,
+        category: str | None = None,
+        language: str | None = None,
+    ) -> list[RAGSearchResult]:
         sanitized = sanitize_search_query(query)
         if not sanitized or limit < 1 or not _lexical_tokens(sanitized):
             return []
@@ -299,28 +346,49 @@ class RAGService:
             stmt = stmt.where(KnowledgeDocument.category == category)
         else:
             stmt = stmt.where(KnowledgeDocument.category == "public_health")
+        if language:
+            stmt = stmt.where(KnowledgeDocument.language == language)
         stmt = stmt.where(KnowledgeDocument.is_active.is_(True)).order_by(KnowledgeChunk.id)
         rows = db.execute(stmt).all()
+        if not rows:
+            return []
 
-        scored: list[tuple[float, KnowledgeChunk, KnowledgeDocument]] = []
-        boost_terms = [k.strip().casefold() for k in settings.rag_boost_keywords.split(",") if k.strip()]
-        query_cf = sanitized.casefold()
         query_tokens = _lexical_tokens(sanitized)
-
+        valid_candidates: list[tuple[KnowledgeChunk, KnowledgeDocument]] = []
         for chunk, document in rows:
             if not chunk.embedding or not chunk.metadata_json:
                 continue
             if any(chunk.metadata_json.get(key) != value for key, value in embedding_profile.items()):
                 continue
             chunk_tokens = _lexical_tokens(chunk.content)
-            if settings.embedding_provider.strip().lower() == "hash" and not (
-                query_tokens & chunk_tokens
-            ):
+            if settings.embedding_provider.strip().lower() == "hash" and not (query_tokens & chunk_tokens):
                 continue
-            score = cosine_similarity(query_vector, chunk.embedding)
+            valid_candidates.append((chunk, document))
+
+        if not valid_candidates:
+            return []
+
+        # Calculate BM25 scores across candidates
+        bm25_raw = compute_bm25_scores(query_tokens, valid_candidates)
+        max_bm25 = max(bm25_raw) if bm25_raw else 0.0
+
+        boost_terms = [k.strip().casefold() for k in settings.rag_boost_keywords.split(",") if k.strip()]
+        query_cf = sanitized.casefold()
+
+        scored: list[tuple[float, KnowledgeChunk, KnowledgeDocument]] = []
+        for idx, (chunk, document) in enumerate(valid_candidates):
+            dense_score = cosine_similarity(query_vector, chunk.embedding)
+            norm_bm25 = (bm25_raw[idx] / max_bm25) if max_bm25 > 0.0 else 0.0
+
+            # Hybrid score fusing dense semantic vector similarity and lexical BM25 token relevance
+            if max_bm25 > 0:
+                score = (0.70 * dense_score) + (0.30 * norm_bm25)
+            else:
+                score = dense_score
 
             # Query keyword boost for critical clinical terms ('ORS', 'SpO2', '14416', '112')
             chunk_cf = chunk.content.casefold()
+            chunk_tokens = _lexical_tokens(chunk.content)
             boost_hits = 0
             for term in boost_terms:
                 if (term in query_cf or term in query_tokens) and (term in chunk_cf or term in chunk_tokens):

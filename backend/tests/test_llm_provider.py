@@ -158,3 +158,105 @@ def test_provider_failure_messages_keep_context_and_model_metadata():
     assert error.model == "llama3.2:1b-instruct-q4_K_M"
     assert error.status_code == 503
     assert error.retryable is True
+
+
+def test_model_catalog_and_capabilities():
+    from app.services.llm_provider import MODEL_CATALOG, get_model_capability
+
+    assert "llama3.2:1b-instruct-q4_K_M" in MODEL_CATALOG
+    ollama_cap = get_model_capability("llama3.2:1b-instruct-q4_K_M")
+    assert ollama_cap.is_local is True
+    assert ollama_cap.context_window == 4096
+    assert ollama_cap.supports_structured_outputs is True
+
+    cloud_cap = get_model_capability("gpt-4o-mini", provider_hint="openai")
+    assert cloud_cap.is_local is False
+    assert cloud_cap.context_window == 128000
+    assert cloud_cap.input_cost_per_million > 0
+
+    unknown_cap = get_model_capability("custom-unknown-model", provider_hint="ollama")
+    assert unknown_cap.model_id == "custom-unknown-model"
+    assert unknown_cap.is_local is True
+
+
+def test_circuit_breaker_transitions_and_blocking(monkeypatch):
+    from app.services.llm_provider import CircuitBreaker, CircuitBreakerState
+
+    cb = CircuitBreaker(failure_threshold=2, cooldown_seconds=0.1)
+    assert cb.state == CircuitBreakerState.CLOSED
+    can_exec, _ = cb.can_execute()
+    assert can_exec is True
+
+    cb.record_failure()
+    assert cb.state == CircuitBreakerState.CLOSED
+
+    cb.record_failure()
+    assert cb.state == CircuitBreakerState.OPEN
+    can_exec, reason = cb.can_execute()
+    assert can_exec is False
+    assert "circuit breaker is OPEN" in reason
+
+    import time
+    time.sleep(0.12)
+    assert cb.state == CircuitBreakerState.HALF_OPEN
+    can_exec, _ = cb.can_execute()
+    assert can_exec is True
+
+    cb.record_success()
+    assert cb.state == CircuitBreakerState.CLOSED
+
+
+def test_provider_metrics_tracker_computes_telemetry():
+    from app.services.llm_provider import ProviderMetricsTracker
+
+    tracker = ProviderMetricsTracker()
+
+    async def record():
+        await tracker.record_request(
+            success=True,
+            latency_ms=150.0,
+            prompt_tokens=100,
+            completion_tokens=50,
+            cost_usd=0.0001,
+        )
+        await tracker.record_request(
+            success=False,
+            latency_ms=250.0,
+            prompt_tokens=0,
+            completion_tokens=0,
+            cost_usd=0.0,
+        )
+
+    asyncio.run(record())
+    snapshot = tracker.get_metrics_snapshot()
+    assert snapshot["total_requests"] == 2
+    assert snapshot["successful_requests"] == 1
+    assert snapshot["failed_requests"] == 1
+    assert snapshot["error_rate_pct"] == 50.0
+    assert snapshot["avg_latency_ms"] == 200.0
+    assert snapshot["total_tokens"] == 150
+    assert snapshot["estimated_cost_usd"] == 0.0001
+
+
+def test_provider_circuit_breaker_blocks_execution_when_open(monkeypatch):
+    provider = OpenAICompatibleProvider()
+    provider.circuit_breaker.reset()
+
+    # Trip the breaker
+    provider.circuit_breaker.record_failure()
+    provider.circuit_breaker.record_failure()
+    provider.circuit_breaker.record_failure()
+    assert provider.circuit_breaker.state == "OPEN"
+
+    async def run_call():
+        async with httpx.AsyncClient() as client:
+            await provider.complete(client, [{"role": "user", "content": "hi"}])
+
+    try:
+        asyncio.run(run_call())
+        raise AssertionError("Expected circuit breaker to block request.")
+    except LLMProviderError as err:
+        assert "circuit breaker active" in str(err).lower()
+    finally:
+        provider.circuit_breaker.reset()
+
