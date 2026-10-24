@@ -863,6 +863,63 @@ def _ensure_demo_conversations(
             ],
         })
 
+    sneha = db.scalar(select(User).where(User.email == "sneha@gmail.com"))
+    if sneha:
+        demo_conversations.extend([
+            {
+                "user": sneha,
+                "conversation_id": f"{SEED_MARKER}-SNEHA-CONV-01",
+                "title": "Seasonal Allergies & Respiratory Health Consultation",
+                "category": "allergy",
+                "urgency_level": "routine",
+                "summary": "Voice triage session regarding seasonal allergic rhinitis, ocular pruritus, and morning nasal congestion. Allergen avoidance and antihistamine protocol synthesized.",
+                "days_ago": 12,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "I have been sneezing frequently in the mornings with watery eyes and a stuffy nose for the past week.",
+                        "structured_data": None,
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "Your symptoms are typical of allergic rhinitis triggered by airborne allergens.\n\nRecommended steps:\n1. Non-sedating antihistamine (Cetirizine or Levocetirizine).\n2. Saline nasal rinse to clear allergens.\n3. Keep bedroom windows closed during high pollen hours.\n4. Consult your clinician if symptoms persist beyond two weeks.",
+                        "structured_data": {
+                            "triage_urgency": "routine",
+                            "citations": [
+                                {"title": "WHO Guidelines on Allergic Rhinitis Management", "source_url": "https://who.int/publications/allergic-rhinitis"}
+                            ],
+                        },
+                    },
+                ],
+            },
+            {
+                "user": sneha,
+                "conversation_id": f"{SEED_MARKER}-SNEHA-CONV-02",
+                "title": "Tension Headache & Digital Eye Strain Assessment",
+                "category": "neurology",
+                "urgency_level": "routine",
+                "summary": "AI triage evaluation for mild bilateral frontal headache after prolonged screen time. SNOOP criteria screened negative for emergency flags.",
+                "days_ago": 4,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "I have a dull ache across my forehead and around my eyes after working on my laptop all day.",
+                        "structured_data": None,
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "This presentation is characteristic of tension-type headache associated with digital eye strain (asthenopia).\n\nGuidance:\n1. Follow the 20-20-20 rule: every 20 minutes, look at an object 20 feet away for 20 seconds.\n2. Ensure adequate hydration and ergonomic screen positioning.\n3. Take regular short screen breaks.\n4. Emergency red flags: Thunderclap onset, visual loss, or neurological weakness require immediate emergency evaluation (Call 112).",
+                        "structured_data": {
+                            "triage_urgency": "routine",
+                            "citations": [
+                                {"title": "NIH Clinical Guide: Headaches and Digital Eye Strain", "source_url": "https://medlineplus.gov/headache.html"}
+                            ],
+                        },
+                    },
+                ],
+            },
+        ])
+
     for c_data in demo_conversations:
         existing_conv = db.scalar(
             select(AssistantConversation).where(
@@ -1539,6 +1596,524 @@ def _ensure_demo_clinical_records(
         elif not (existing_doc.extracted_data or {}).get("parameters"):
             existing_doc.extracted_data = structured_extracted_data
 
+    # 6. Comprehensive Clinical Records for Sneha Vishwakarma (sneha@gmail.com) if present
+    sneha = db.scalar(select(User).where(User.email == "sneha@gmail.com"))
+    if sneha:
+        # Sneha Allergies
+        sneha_allergies = [
+            (
+                "Sulfa Drugs (Sulfamethoxazole, Trimethoprim)",
+                "allergy",
+                "moderate",
+                f"Erythematous macular rash, pruritus, and facial swelling ({SEED_MARKER})",
+            ),
+            (
+                "NSAIDs (Aspirin, Mefenamic Acid)",
+                "medication_reaction",
+                "mild",
+                f"Dyspepsia, epigastric burning, and nausea ({SEED_MARKER})",
+            ),
+        ]
+        for allergen, cat, sev, reaction in sneha_allergies:
+            existing_alg = db.scalar(
+                select(PatientAllergy).where(
+                    PatientAllergy.patient_user_id == sneha.id,
+                    PatientAllergy.allergen_or_condition == allergen,
+                )
+            )
+            if existing_alg is None:
+                db.add(
+                    PatientAllergy(
+                        patient_user_id=sneha.id,
+                        allergen_or_condition=allergen,
+                        category=cat,
+                        severity=sev,
+                        reaction=reaction,
+                        recorded_by_user_id=dr_asha_user.id if dr_asha_user else sneha.id,
+                        is_active=True,
+                    )
+                )
+                counts["allergies_created"] += 1
+
+        # Sneha AI Reports (5 comprehensive assessments)
+        sneha_reports = [
+            {
+                "title": "Comprehensive Acute Pharyngitis & Upper Respiratory Assessment",
+                "report_type": "symptom_assessment",
+                "urgency_level": "routine",
+                "days_ago": 18,
+                "doctor": dr_asha,
+                "summary": "Clinical synthesis of 3-day acute pharyngeal irritation, low-grade fever, and nasal congestion. Centor criteria calculation (Score 1) indicates viral etiology with low streptococcal likelihood.",
+                "findings": [
+                    {"finding": "Pharyngeal mucosal erythema without exudates", "significance": "Consistent with viral pharyngitis"},
+                    {"finding": "Bilateral clear nasal discharge", "significance": "Upper respiratory viral presentation"},
+                    {"finding": "SpO2 98% on room air", "significance": "Normal pulmonary gas exchange"},
+                ],
+                "red_flags": [],
+                "next_steps": [
+                    "Warm saline gargles 3-4 times daily",
+                    "Hydration maintenance with warm liquids",
+                    "Paracetamol 650mg SOS for throat discomfort (Avoid NSAIDs due to recorded adverse reaction)",
+                    "In-person evaluation if fever >101°F persists >48 hours",
+                ],
+                "evidence": [
+                    {"title": "WHO Guidelines on Pharyngitis Clinical Synthesis", "provenance": "WHO SEARO", "url": "https://who.int/guidelines/pharyngitis"},
+                    {"title": "NIH MedQuAD Pharyngitis Care Guide", "provenance": "NIH MedQuAD", "url": "https://medlineplus.gov/sorethroat.html"},
+                ],
+            },
+            {
+                "title": "Annual Preventive Wellness & Routine Metabolic Screening",
+                "report_type": "visit_summary",
+                "urgency_level": "routine",
+                "days_ago": 12,
+                "doctor": dr_kabir,
+                "summary": "Longitudinal preventive health evaluation and metabolic screening review. Blood pressure 118/76 mmHg, BMI 22.4 kg/m². Fasting blood glucose and lipid panel within optimal biological reference intervals.",
+                "findings": [
+                    {"finding": "Normotensive sitting blood pressure (118/76 mmHg)", "significance": "Optimal cardiovascular profile"},
+                    {"finding": "Fasting blood sugar 88 mg/dL and HbA1c 5.1%", "significance": "Optimal glycemic control"},
+                    {"finding": "Mild 25-OH Vitamin D insufficiency (19.4 ng/mL)", "significance": "Reversible nutritional insufficiency"},
+                ],
+                "red_flags": [],
+                "next_steps": [
+                    "Vitamin D3 60,000 IU weekly supplementation for 4 weeks",
+                    "Maintain 150 minutes weekly moderate aerobic physical activity",
+                    "Balanced diet rich in leafy greens and adequate dietary calcium",
+                    "Routine follow-up laboratory evaluation in 6 months",
+                ],
+                "evidence": [
+                    {"title": "WHO Global Health Action Plan on Noncommunicable Disease Prevention", "provenance": "WHO", "url": "https://who.int/publications/ncd-prevention"},
+                ],
+            },
+            {
+                "title": "Seasonal Allergic Rhinitis & Sinus Congestion Management Assessment",
+                "report_type": "symptom_assessment",
+                "urgency_level": "routine",
+                "days_ago": 7,
+                "doctor": dr_asha,
+                "summary": "Evaluation of episodic morning sneezing, ocular pruritus, and nasal congestion triggered by seasonal pollen changes. Screened negative for acute bacterial rhinosinusitis.",
+                "findings": [
+                    {"finding": "Pale, boggy nasal turbinates on rhinoscopy", "significance": "Classic allergic mucosal edema"},
+                    {"finding": "Absence of facial pain or purulent discharge", "significance": "Excludes acute bacterial sinusitis"},
+                ],
+                "red_flags": [],
+                "next_steps": [
+                    "Daily Cetirizine 10mg at bedtime",
+                    "Normal saline nasal spray twice daily",
+                    "Keep bedroom windows closed during peak morning pollen hours",
+                ],
+                "evidence": [
+                    {"title": "Allergic Rhinitis and its Impact on Asthma (ARIA) Guidelines", "provenance": "ARIA", "url": "https://aria.org/guidelines"},
+                ],
+            },
+            {
+                "title": "Post-Consultation Recovery & Treatment Monitoring",
+                "report_type": "follow_up",
+                "urgency_level": "routine",
+                "days_ago": 3,
+                "doctor": dr_kabir,
+                "summary": "Patient reports complete resolution of upper respiratory symptoms and good tolerance of prescribed nutritional supplementation. No adverse drug events or hypersensitivity reactions.",
+                "findings": [
+                    {"finding": "Complete symptom resolution reported", "significance": "Uncomplicated recovery"},
+                    {"finding": "Medication compliance verified", "significance": "Optimal therapeutic adherence"},
+                ],
+                "red_flags": [],
+                "next_steps": [
+                    "Complete scheduled vitamin D supplementation course",
+                    "Continue regular health maintenance and physical fitness",
+                ],
+                "evidence": [
+                    {"title": "CareVoice Clinical Synthesis Protocol", "provenance": "CareVoice Clinical Hub", "url": "https://carevoice.test/clinical/guidelines"},
+                ],
+            },
+            {
+                "title": "Hydration, Electrolyte & Dietary Wellness Assessment",
+                "report_type": "symptom_assessment",
+                "urgency_level": "routine",
+                "days_ago": 1,
+                "doctor": dr_asha,
+                "summary": "Assessment of mild afternoon fatigue and work-related headache after prolonged computer screen time. Hydration, ergonomic posture, and 20-20-20 visual rest protocol reviewed.",
+                "findings": [
+                    {"finding": "Absence of neurological focal deficits", "significance": "Benign tension-type headache etiology"},
+                    {"finding": "Adequate baseline vitals (BP 116/74 mmHg, Pulse 72 bpm)", "significance": "Physiologically stable"},
+                ],
+                "red_flags": [],
+                "next_steps": [
+                    "Target 2.0 - 2.5 Liters daily oral fluid intake",
+                    "Implement 20-20-20 screen break rule during work hours",
+                    "Screen ergonomics adjustment: monitor at eye level",
+                ],
+                "evidence": [
+                    {"title": "NIH Clinical Guide: Headaches and Digital Eye Strain", "provenance": "NIH MedQuAD", "url": "https://medlineplus.gov/headache.html"},
+                ],
+            },
+        ]
+        for rep in sneha_reports:
+            existing_rep = db.scalar(
+                select(MedicalReport).where(
+                    MedicalReport.patient_user_id == sneha.id,
+                    MedicalReport.title == rep["title"],
+                )
+            )
+            if existing_rep is None:
+                rep_date = now - timedelta(days=rep["days_ago"])
+                db.add(
+                    MedicalReport(
+                        patient_user_id=sneha.id,
+                        doctor_id=rep["doctor"].id,
+                        report_type=rep["report_type"],
+                        title=rep["title"],
+                        summary=rep["summary"],
+                        urgency_level=rep["urgency_level"],
+                        red_flags=rep["red_flags"],
+                        findings=rep["findings"],
+                        recommended_next_steps=rep["next_steps"],
+                        evidence_sources=rep["evidence"],
+                        disclaimer=f"DEMO DATA — NOT A REAL PATIENT ASSESSMENT ({SEED_MARKER}). CareVoice AI reports provide structured educational assessment and clinical synthesis only.",
+                        status="reviewed",
+                        reviewed_by_doctor_id=rep["doctor"].id,
+                        reviewed_at=rep_date + timedelta(hours=2),
+                        created_at=rep_date,
+                    )
+                )
+                counts["ai_reports_created"] += 1
+
+        # Sneha Prescriptions (4 prescriptions: 3 finalized, 1 AI draft)
+        sneha_prescriptions = [
+            {
+                "prescription_number": "RX-20261005-SNEHA01",
+                "days_ago": 18,
+                "doctor": dr_asha,
+                "finalized_by": dr_asha_user,
+                "diagnosis": "Acute Pharyngitis & Upper Respiratory Tract Infection",
+                "notes": f"Sulfa allergy documented. Prescribed Amoxicillin-Clavulanate. Maintain hydration. ({SEED_MARKER})",
+                "warnings": [
+                    "Allergy verified: Sulfa drugs avoided.",
+                    "NSAID sensitivity: Aspirin avoided, Paracetamol safely prescribed.",
+                ],
+                "items": [
+                    ("Amoxicillin-Clavulanate", "625 mg", "tablet", "oral", "1-0-1 (Twice daily)", "5 days", "10 tablets", "Take with or right after food"),
+                    ("Paracetamol", "650 mg", "tablet", "oral", "1-0-1 (SOS / As needed)", "3 days", "6 tablets", "Take after food for fever or discomfort"),
+                    ("Cetirizine", "10 mg", "tablet", "oral", "0-0-1 (Night)", "5 days", "5 tablets", "Take at bedtime with water"),
+                ],
+            },
+            {
+                "prescription_number": "RX-20261011-SNEHA02",
+                "days_ago": 12,
+                "doctor": dr_kabir,
+                "finalized_by": dr_kabir_user,
+                "diagnosis": "Mild Functional Dyspepsia & Airway Hyperreactivity",
+                "notes": f"Proton pump inhibitor and leukotriene receptor antagonist. ({SEED_MARKER})",
+                "warnings": [
+                    "Allergy profile verified. No contraindications detected.",
+                ],
+                "items": [
+                    ("Pantoprazole", "40 mg", "tablet", "oral", "1-0-0 (Morning)", "14 days", "14 tablets", "Take on empty stomach 30 minutes before breakfast"),
+                    ("Montelukast", "10 mg", "tablet", "oral", "0-0-1 (Night)", "10 days", "10 tablets", "Take at bedtime with water"),
+                ],
+            },
+            {
+                "prescription_number": "RX-20261016-SNEHA03",
+                "days_ago": 7,
+                "doctor": dr_asha,
+                "finalized_by": dr_asha_user,
+                "diagnosis": "Nutritional Vitamin D3 Insufficiency & Health Maintenance",
+                "notes": f"High-dose weekly vitamin D3 protocol. ({SEED_MARKER})",
+                "warnings": [
+                    "Allergy profile verified. No contraindications detected.",
+                ],
+                "items": [
+                    ("Vitamin D3 (Cholecalciferol)", "60,000 IU", "capsule", "oral", "1-0-0 (Once weekly)", "4 weeks", "4 capsules", "Take once weekly with milk or after a meal"),
+                    ("Calcium Citrate", "500 mg", "tablet", "oral", "0-1-0 (After lunch)", "30 days", "30 tablets", "Take with water after meals"),
+                ],
+            },
+            {
+                "prescription_number": "RX-20261022-SNEHA04",
+                "days_ago": 1,
+                "doctor": dr_asha,
+                "finalized_by": None,
+                "is_ai_draft": True,
+                "status": "draft",
+                "diagnosis": "AI Draft: Seasonal Environmental Allergic Rhinitis",
+                "notes": f"AI Generated Draft: Awaiting attending physician validation and digital signature. ({SEED_MARKER})",
+                "warnings": [
+                    "AI Screening: Sulfa allergy confirmed on record.",
+                    "NSAID sensitivity noted: Paracetamol recommended if needed.",
+                ],
+                "items": [
+                    ("Azithromycin", "500 mg", "tablet", "oral", "1-0-0 (Once daily)", "3 days", "3 tablets", "Take 1 hour before or 2 hours after meals"),
+                    ("Levocetirizine", "5 mg", "tablet", "oral", "0-0-1 (Night)", "7 days", "7 tablets", "Take at bedtime with water"),
+                ],
+            },
+        ]
+        for rx_data in sneha_prescriptions:
+            existing_rx = db.scalar(
+                select(Prescription).where(
+                    Prescription.patient_user_id == sneha.id,
+                    Prescription.prescription_number == rx_data["prescription_number"],
+                )
+            )
+            if existing_rx is None:
+                rx_date = now - timedelta(days=rx_data["days_ago"])
+                is_draft = rx_data.get("is_ai_draft", False) or rx_data.get("status") == "draft"
+                rx = Prescription(
+                    prescription_number=rx_data["prescription_number"],
+                    patient_user_id=sneha.id,
+                    doctor_id=rx_data["doctor"].id,
+                    diagnosis=rx_data["diagnosis"],
+                    notes=rx_data["notes"],
+                    allergy_warnings=rx_data["warnings"],
+                    is_ai_draft=is_draft,
+                    status="draft" if is_draft else rx_data.get("status", "finalized"),
+                    finalized_at=None if is_draft else rx_date,
+                    finalized_by_user_id=None if is_draft else (rx_data["finalized_by"].id if rx_data.get("finalized_by") else sneha.id),
+                    created_at=rx_date,
+                )
+                for it in rx_data["items"]:
+                    rx.items.append(
+                        PrescriptionItem(
+                            medication_name=it[0],
+                            strength=it[1],
+                            dosage_form=it[2],
+                            route=it[3],
+                            frequency=it[4],
+                            duration=it[5],
+                            quantity=it[6],
+                            instructions=it[7],
+                        )
+                    )
+                db.add(rx)
+                counts["prescriptions_created"] += 1
+
+        # Sneha Clinical Notes (4 notes: 3 finalized, 1 AI draft)
+        sneha_notes = [
+            {
+                "note_type": "outpatient_consultation",
+                "days_ago": 18,
+                "doctor": dr_asha,
+                "finalized_by": dr_asha_user,
+                "chief_complaint": "Sore throat, nasal congestion, and low-grade fever for 3 days.",
+                "hpi": f"29-year-old female presenting with 3-day history of scratchy throat, nasal congestion, rhinorrhea, and mild dry cough. No dyspnea or chest pain. Negative for acute red flags. ({SEED_MARKER})",
+                "exam": "Throat: mild erythema, no tonsillar exudates. Chest: clear bilaterally. SpO2 98%, HR 76 bpm, BP 118/76 mmHg, Temp 99.2°F.",
+                "assessment": "Acute Viral Pharyngitis & Upper Respiratory Infection. Sulfa drug allergy documented.",
+                "plan": f"Supportive symptomatic therapy, warm saline gargles, adequate hydration. Amoxicillin-Clavulanate prescribed. ({SEED_MARKER})",
+                "follow_up": "Return to clinic if fever exceeds 101°F or difficulty swallowing develops.",
+            },
+            {
+                "note_type": "follow_up",
+                "days_ago": 12,
+                "doctor": dr_kabir,
+                "finalized_by": dr_kabir_user,
+                "chief_complaint": "Follow-up for seasonal allergic rhinitis and mild dyspepsia.",
+                "hpi": f"Patient reports substantial improvement in pharyngitis symptoms. Occasional mild morning nasal congestion and occasional acid reflux after spicy meals. ({SEED_MARKER})",
+                "exam": "Abdomen: soft, non-tender, no organomegaly. BP 120/78 mmHg, HR 74 bpm regular. Heart sounds normal.",
+                "assessment": "Resolving Upper Respiratory Episode; Mild Functional Dyspepsia.",
+                "plan": f"Pantoprazole 40mg before meals; Montelukast 10mg at night for 10 days. Dietary counseling provided. ({SEED_MARKER})",
+                "follow_up": "Review in 2 weeks or SOS.",
+            },
+            {
+                "note_type": "wellness_examination",
+                "days_ago": 7,
+                "doctor": dr_asha,
+                "finalized_by": dr_asha_user,
+                "chief_complaint": "Annual preventive health assessment and routine blood work review.",
+                "hpi": f"Comprehensive health maintenance review. Patient reports good energy levels, regular exercise 3-4 days/week. No cardiovascular or pulmonary complaints. ({SEED_MARKER})",
+                "exam": "General: alert, well-nourished. Vital signs: BP 116/74 mmHg, HR 72 bpm, BMI 22.4 kg/m² (normal range). Systemic examination within normal limits.",
+                "assessment": "Healthy adult female, optimal cardiovascular profile, mild Vitamin D insufficiency noted on lab work.",
+                "plan": f"Vitamin D3 60,000 IU weekly supplementation for 4 weeks. Continue balanced diet and physical activity. ({SEED_MARKER})",
+                "follow_up": "Repeat 25-OH Vitamin D level in 3 months; routine annual review in 1 year.",
+            },
+            {
+                "note_type": "outpatient_consultation",
+                "days_ago": 1,
+                "doctor": dr_asha,
+                "finalized_by": None,
+                "is_ai_draft": True,
+                "status": "draft",
+                "chief_complaint": "AI Ambient Scribe Intake: Mild seasonal cough and environmental allergy symptoms.",
+                "hpi": f"AI Scribe ambient recording transcript synthesized: Patient described mild dry cough triggered by recent dust exposure and seasonal weather change. No fever, hemoptysis, or nocturnal dyspnea. ({SEED_MARKER})",
+                "exam": "Automated vitals sync: SpO2 98%, Heart Rate 75 bpm, BP 118/76 mmHg. Respiratory rate 16/min.",
+                "assessment": "AI Draft: Seasonal Environmental Allergic Rhinitis with Mild Reactive Cough.",
+                "plan": f"AI Draft recommendation: Second-generation antihistamine (Levocetirizine), saline nasal sprays. Awaiting physician validation and digital signature. ({SEED_MARKER})",
+                "follow_up": "Doctor review pending.",
+            },
+        ]
+        for n_data in sneha_notes:
+            existing_note = db.scalar(
+                select(ClinicalNote).where(
+                    ClinicalNote.patient_user_id == sneha.id,
+                    ClinicalNote.chief_complaint == n_data["chief_complaint"],
+                )
+            )
+            if existing_note is None:
+                note_date = now - timedelta(days=n_data["days_ago"])
+                is_draft = n_data.get("is_ai_draft", False) or n_data.get("status") == "draft"
+                db.add(
+                    ClinicalNote(
+                        patient_user_id=sneha.id,
+                        doctor_id=n_data["doctor"].id,
+                        note_type=n_data["note_type"],
+                        chief_complaint=n_data["chief_complaint"],
+                        history_of_present_illness=n_data["hpi"],
+                        examination_findings=n_data["exam"],
+                        assessment=n_data["assessment"],
+                        plan=n_data["plan"],
+                        follow_up_instructions=n_data["follow_up"],
+                        is_ai_draft=is_draft,
+                        status="draft" if is_draft else n_data.get("status", "finalized"),
+                        finalized_at=None if is_draft else note_date,
+                        finalized_by_user_id=None if is_draft else (n_data["finalized_by"].id if n_data.get("finalized_by") else sneha.id),
+                        created_at=note_date,
+                    )
+                )
+                counts["notes_created"] += 1
+
+        # Sneha Medical Documents (5 physical PDFs generated on disk)
+        sneha_documents = [
+            {
+                "filename": "DEMO_CBC_Panel_Sneha_Vishwakarma.pdf",
+                "title": "Complete Blood Count (CBC) Panel with Differential",
+                "document_type": "lab_report",
+                "days_ago": 20,
+                "category": "Clinical Pathology",
+                "parameters": [
+                    ("Hemoglobin (Hb)", "13.6 g/dL", "12.0 - 15.5 g/dL", "NORMAL"),
+                    ("Total RBC Count", "4.65 mil/uL", "4.0 - 5.2 mil/uL", "NORMAL"),
+                    ("Total Leucocyte Count (WBC)", "6,800 /uL", "4,000 - 11,000 /uL", "NORMAL"),
+                    ("Platelet Count", "275,000 /uL", "150,000 - 450,000 /uL", "NORMAL"),
+                    ("Neutrophils", "60 %", "40 - 75 %", "NORMAL"),
+                    ("Lymphocytes", "32 %", "20 - 45 %", "NORMAL"),
+                    ("Monocytes", "5 %", "2 - 10 %", "NORMAL"),
+                    ("Eosinophils", "3 %", "1 - 6 %", "NORMAL"),
+                    ("ESR", "10 mm/hr", "0 - 20 mm/hr", "NORMAL"),
+                ],
+                "interpretation": "Normocytic normochromic red cells. Normal total and differential leukocyte count. Platelet count adequate.",
+                "doctor": "Dr. S. K. Sharma, MD (Pathology)",
+            },
+            {
+                "filename": "DEMO_CMP_Lipid_Profile_Sneha_Vishwakarma.pdf",
+                "title": "Comprehensive Metabolic Panel (CMP) & Lipid Profile",
+                "document_type": "lab_report",
+                "days_ago": 12,
+                "category": "Clinical Biochemistry",
+                "parameters": [
+                    ("Fasting Blood Sugar (Glucose)", "88 mg/dL", "70 - 99 mg/dL", "NORMAL"),
+                    ("Glycated Hemoglobin (HbA1c)", "5.1 %", "< 5.7 %", "NORMAL"),
+                    ("Serum Creatinine", "0.82 mg/dL", "0.55 - 1.02 mg/dL", "NORMAL"),
+                    ("eGFR", "> 90 mL/min/1.73m²", "> 60 mL/min/1.73m²", "NORMAL"),
+                    ("Total Serum Cholesterol", "172 mg/dL", "< 200 mg/dL", "NORMAL"),
+                    ("LDL Cholesterol", "96 mg/dL", "< 100 mg/dL", "NORMAL"),
+                    ("HDL Cholesterol", "56 mg/dL", "> 50 mg/dL", "NORMAL"),
+                    ("Serum Triglycerides", "110 mg/dL", "< 150 mg/dL", "NORMAL"),
+                ],
+                "interpretation": "Normal fasting glucose and HbA1c confirming euglycemia. Renal function intact. Desirable lipid profile.",
+                "doctor": "Dr. Neha Verma, MD (Biochemistry)",
+            },
+            {
+                "filename": "DEMO_Thyroid_Profile_Sneha_Vishwakarma.pdf",
+                "title": "Complete Thyroid Function Profile (TSH, Free T3, Free T4)",
+                "document_type": "lab_report",
+                "days_ago": 12,
+                "category": "Endocrinology Laboratory",
+                "parameters": [
+                    ("Thyroid Stimulating Hormone (TSH)", "2.18 uIU/mL", "0.45 - 4.50 uIU/mL", "NORMAL"),
+                    ("Free Triiodothyronine (FT3)", "3.1 pg/mL", "2.0 - 4.4 pg/mL", "NORMAL"),
+                    ("Free Thyroxine (FT4)", "1.24 ng/dL", "0.82 - 1.77 ng/dL", "NORMAL"),
+                    ("25-OH Vitamin D Total", "19.4 ng/mL", "30.0 - 100.0 ng/mL", "BORDERLINE LOW"),
+                ],
+                "interpretation": "Euthyroid state confirmed. Baseline 25-OH Vitamin D level shows mild insufficiency amenable to oral supplementation.",
+                "doctor": "Dr. Neha Verma, MD (Biochemistry)",
+            },
+            {
+                "filename": "DEMO_Urinalysis_Sneha_Vishwakarma.pdf",
+                "title": "Urine Routine & Microscopic Examination (Urinalysis)",
+                "document_type": "lab_report",
+                "days_ago": 7,
+                "category": "Clinical Pathology",
+                "parameters": [
+                    ("Physical Appearance", "Pale Yellow, Clear", "Straw / Yellow, Clear", "NORMAL"),
+                    ("Specific Gravity", "1.016", "1.005 - 1.030", "NORMAL"),
+                    ("pH Reaction", "6.5", "4.5 - 8.0", "NORMAL"),
+                    ("Urinary Protein", "Negative", "Negative", "NORMAL"),
+                    ("Urinary Glucose", "Negative", "Negative", "NORMAL"),
+                    ("Ketones", "Negative", "Negative", "NORMAL"),
+                    ("Microscopic RBC", "0 - 1 / HPF", "0 - 2 / HPF", "NORMAL"),
+                    ("Microscopic Pus Cells", "1 - 2 / HPF", "0 - 5 / HPF", "NORMAL"),
+                ],
+                "interpretation": "Normal urinalysis findings. Negative for proteinuria, hematuria, or active sediment.",
+                "doctor": "Dr. S. K. Sharma, MD (Pathology)",
+            },
+            {
+                "filename": "DEMO_Chest_XRay_Sneha_Vishwakarma.pdf",
+                "title": "Chest X-Ray (PA View) Diagnostic Radiology Report",
+                "document_type": "imaging",
+                "days_ago": 12,
+                "category": "Diagnostic Radiology",
+                "parameters": [
+                    ("Pulmonary Parenchyma", "Clear lung fields bilaterally", "No focal consolidation or effusion", "NORMAL"),
+                    ("Cardiothoracic Ratio (CTR)", "0.42", "< 0.50 (Normal cardiac size)", "NORMAL"),
+                    ("Mediastinal Contours", "Normal configuration", "No mass or adenopathy", "NORMAL"),
+                    ("Costophrenic Angles", "Sharp bilaterally", "No blunting", "NORMAL"),
+                    ("Thoracic Skeleton", "Normal osseous structures", "Intact", "NORMAL"),
+                ],
+                "interpretation": "Normal chest radiograph. No evidence of active pulmonary disease, infiltration, or cardiomegaly.",
+                "doctor": "Dr. Rajesh Gupta, MD (Radiodiagnosis)",
+            },
+        ]
+        for doc_data in sneha_documents:
+            filepath = os.path.join(DOCUMENTS_DIR, doc_data["filename"])
+            file_size = 0
+            if not os.path.exists(filepath):
+                file_size = _create_sample_diagnostic_pdf(
+                    filepath=filepath,
+                    hospital_name=hospital_name,
+                    patient_name="Sneha Vishwakarma",
+                    patient_age_gender="29Y / Female",
+                    test_title=doc_data["title"],
+                    test_category=doc_data["category"],
+                    collection_date=(now - timedelta(days=doc_data["days_ago"])).strftime("%d %b %Y"),
+                    parameters=doc_data["parameters"],
+                    interpretation=doc_data["interpretation"],
+                    signing_doctor=doc_data["doctor"],
+                )
+            else:
+                file_size = os.path.getsize(filepath)
+
+            existing_doc = db.scalar(
+                select(MedicalDocument).where(
+                    MedicalDocument.patient_user_id == sneha.id,
+                    MedicalDocument.title == doc_data["title"],
+                )
+            )
+            structured_extracted_data = {
+                "category": doc_data["category"],
+                "status": "VERIFIED",
+                "parameters": [
+                    {"name": p[0], "value": p[1], "reference_range": p[2], "status": p[3]}
+                    for p in doc_data["parameters"]
+                ],
+                "interpretation": doc_data["interpretation"],
+                "signing_doctor": doc_data["doctor"],
+            }
+            if existing_doc is None:
+                doc_date = now - timedelta(days=doc_data["days_ago"])
+                db.add(
+                    MedicalDocument(
+                        patient_user_id=sneha.id,
+                        uploaded_by_user_id=dr_asha_user.id if dr_asha_user else sneha.id,
+                        title=doc_data["title"],
+                        document_type=doc_data["document_type"],
+                        file_path=filepath,
+                        file_size=file_size,
+                        mime_type="application/pdf",
+                        notes=f"Diagnostic report for {doc_data['title']} ({SEED_MARKER}).",
+                        extracted_data=structured_extracted_data,
+                        created_at=doc_date,
+                    )
+                )
+                counts["documents_created"] += 1
+            elif not (existing_doc.extracted_data or {}).get("parameters"):
+                existing_doc.extracted_data = structured_extracted_data
+
     db.flush()
     return counts
 
@@ -1631,6 +2206,7 @@ def clean_demo_data(db: Session) -> dict[str, int]:
                 (Prescription.patient_user_id.in_(demo_user_ids))
                 | (Prescription.prescription_number.like("RX-DEMO-%"))
                 | (Prescription.prescription_number.like("RX-202610%"))
+                | (Prescription.notes.like(f"%{SEED_MARKER}%"))
             )
         ).all()
         if demo_user_ids
@@ -1653,6 +2229,8 @@ def clean_demo_data(db: Session) -> dict[str, int]:
             delete(ClinicalNote).where(
                 ClinicalNote.patient_user_id.in_(demo_user_ids)
                 | ClinicalNote.doctor_id.in_(demo_doctor_ids)
+                | ClinicalNote.history_of_present_illness.like(f"%{SEED_MARKER}%")
+                | ClinicalNote.plan.like(f"%{SEED_MARKER}%")
             )
         ).rowcount
         cleaned_counts["clinical_notes_removed"] = deleted_notes
@@ -1663,6 +2241,7 @@ def clean_demo_data(db: Session) -> dict[str, int]:
             delete(MedicalReport).where(
                 MedicalReport.patient_user_id.in_(demo_user_ids)
                 | MedicalReport.report_id.like("REP-DEMO-%")
+                | MedicalReport.disclaimer.like(f"%{SEED_MARKER}%")
             )
         ).rowcount
         cleaned_counts["medical_reports_removed"] = deleted_reports
@@ -1670,23 +2249,32 @@ def clean_demo_data(db: Session) -> dict[str, int]:
     # 4. Medical Documents
     if demo_user_ids:
         demo_docs = db.scalars(
-            select(MedicalDocument).where(MedicalDocument.patient_user_id.in_(demo_user_ids))
+            select(MedicalDocument).where(
+                MedicalDocument.patient_user_id.in_(demo_user_ids)
+                | MedicalDocument.notes.like(f"%{SEED_MARKER}%")
+            )
         ).all()
         for d in demo_docs:
-            if d.file_path and os.path.exists(d.file_path) and "sample_" in os.path.basename(d.file_path):
+            if d.file_path and os.path.exists(d.file_path) and ("sample_" in os.path.basename(d.file_path) or "DEMO_" in os.path.basename(d.file_path)):
                 try:
                     os.remove(d.file_path)
                 except OSError:
                     pass
         deleted_docs = db.execute(
-            delete(MedicalDocument).where(MedicalDocument.patient_user_id.in_(demo_user_ids))
+            delete(MedicalDocument).where(
+                MedicalDocument.patient_user_id.in_(demo_user_ids)
+                | MedicalDocument.notes.like(f"%{SEED_MARKER}%")
+            )
         ).rowcount
         cleaned_counts["medical_documents_removed"] = deleted_docs
 
     # 5. Patient Allergies
     if demo_user_ids:
         deleted_allergies = db.execute(
-            delete(PatientAllergy).where(PatientAllergy.patient_user_id.in_(demo_user_ids))
+            delete(PatientAllergy).where(
+                PatientAllergy.patient_user_id.in_(demo_user_ids)
+                | PatientAllergy.reaction.like(f"%{SEED_MARKER}%")
+            )
         ).rowcount
         cleaned_counts["allergies_removed"] = deleted_allergies
 
@@ -1697,6 +2285,7 @@ def clean_demo_data(db: Session) -> dict[str, int]:
                 (AssistantConversation.user_id.in_(demo_user_ids))
                 | (AssistantConversation.conversation_id.like("conv-aarav-demo-%"))
                 | (AssistantConversation.conversation_id.like("conv-diya-demo-%"))
+                | (AssistantConversation.conversation_id.like(f"{SEED_MARKER}%"))
             )
         ).all()
         if demo_user_ids

@@ -4945,6 +4945,555 @@ body.cv-menu-open {
   margin-bottom: 4px;
 }
 
+/* ==========================================================================
+   CareVoice Health Record Detail Modal & Clinical Print Isolation System
+   ========================================================================== */
+
+.cv-record-detail-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  color: var(--cv-text-primary);
+  font-family: inherit;
+}
+
+/* Official Clinic / Hospital Letterhead Header */
+.cv-print-header {
+  border-bottom: 2px solid var(--cv-border);
+  padding-bottom: 14px;
+  margin-bottom: 6px;
+}
+
+.cv-print-header-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.cv-print-logo-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cv-print-cross-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background-color: var(--cv-accent);
+  color: #ffffff;
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.cv-print-hospital-name {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--cv-accent-text);
+  line-height: 1.2;
+}
+
+.cv-print-hospital-sub {
+  font-size: 11px;
+  color: var(--cv-text-muted);
+  margin-top: 2px;
+}
+
+.cv-print-meta-right {
+  text-align: right;
+  font-size: 12px;
+  color: var(--cv-text-secondary);
+  line-height: 1.4;
+}
+
+/* Patient Demographics Banner */
+.cv-patient-demographics-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px 12px;
+  padding: 10px 14px;
+  background-color: var(--cv-surface-soft);
+  border: 1px solid var(--cv-border);
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--cv-text-secondary);
+}
+
+.cv-patient-demographics-bar strong {
+  color: var(--cv-text-primary);
+  font-weight: 700;
+}
+
+/* Record Detail Scrollable Body */
+.cv-record-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--cv-border-soft) transparent;
+  -webkit-overflow-scrolling: touch;
+}
+
+.cv-record-detail-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.cv-record-detail-body::-webkit-scrollbar-thumb {
+  background-color: var(--cv-border-soft);
+  border-radius: 999px;
+}
+
+.cv-record-title-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cv-record-main-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--cv-text-primary);
+  line-height: 1.3;
+}
+
+/* Structured Clinical Sections */
+.cv-detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cv-detail-section-title {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--cv-accent-text);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.cv-section-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.cv-detail-text-box {
+  padding: 12px 14px;
+  background-color: var(--cv-surface-soft);
+  border: 1px solid var(--cv-border);
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--cv-text-body);
+}
+
+.cv-diagnosis-box {
+  background-color: var(--cv-surface-tint);
+  border-left: 4px solid var(--cv-accent);
+  color: var(--cv-text-primary);
+  font-weight: 600;
+}
+
+/* Diagnostic Parameters Table */
+.cv-table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 8px;
+  border: 1px solid var(--cv-border);
+}
+
+.cv-clinical-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 12px;
+}
+
+.cv-clinical-table th {
+  background-color: var(--cv-surface-soft);
+  color: var(--cv-text-secondary);
+  font-weight: 700;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--cv-border);
+  white-space: nowrap;
+}
+
+.cv-clinical-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--cv-border-soft);
+  color: var(--cv-text-primary);
+  vertical-align: middle;
+}
+
+.cv-clinical-table tr:last-child td {
+  border-bottom: none;
+}
+
+.cv-clinical-table tr.cv-row-abnormal td {
+  background-color: #fffbeb;
+}
+
+/* Lists and Warnings */
+.cv-detail-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--cv-text-body);
+}
+
+.cv-warning-box {
+  padding: 12px 14px;
+  background-color: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #991b1b;
+}
+
+/* Clinical Citations */
+.cv-citation-badge {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  background-color: var(--cv-surface-soft);
+  border: 1px solid var(--cv-border);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--cv-text-secondary);
+}
+
+/* Detail Key-Value Grid */
+.cv-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 8px;
+}
+
+.cv-detail-grid-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  background-color: var(--cv-surface-soft);
+  border: 1px solid var(--cv-border);
+  border-radius: 8px;
+}
+
+.cv-detail-grid-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--cv-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.cv-detail-grid-val {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cv-text-primary);
+  word-break: break-word;
+}
+
+/* Digital Signature Block */
+.cv-detail-signature-block {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  background-color: var(--cv-surface-soft);
+  border: 1px dashed var(--cv-border-control);
+  border-radius: 12px;
+  margin-top: 8px;
+}
+
+.cv-signature-left {
+  max-width: 320px;
+}
+
+.cv-signature-stamp {
+  display: inline-block;
+  padding: 4px 8px;
+  border: 1.5px solid var(--cv-accent);
+  border-radius: 6px;
+  color: var(--cv-accent-text);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cv-signature-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  text-align: right;
+}
+
+.cv-signature-line {
+  width: 140px;
+  height: 1px;
+  background-color: var(--cv-border-control);
+  margin-bottom: 6px;
+}
+
+/* Modal Action Footer */
+.cv-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--cv-border);
+}
+
+.cv-btn-print {
+  min-height: 44px;
+  padding: 8px 16px;
+  font-weight: 700;
+  border-color: var(--cv-border-control);
+}
+
+.cv-btn-download {
+  min-height: 44px;
+  padding: 8px 16px;
+  font-weight: 700;
+}
+
+/* Responsive Modal Breakpoints */
+@media (max-width: 767px) {
+  .cv-modal-large {
+    width: calc(100vw - 16px) !important;
+    max-width: calc(100vw - 16px) !important;
+    margin: 8px auto !important;
+    max-height: calc(100dvh - 16px) !important;
+  }
+
+  .cv-modal-body {
+    padding: 14px 16px !important;
+  }
+
+  .cv-record-detail-body {
+    max-height: calc(100dvh - 200px);
+  }
+
+  .cv-patient-demographics-bar {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .cv-modal-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .cv-modal-actions > * {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .cv-signature-right {
+    align-items: flex-start;
+    text-align: left;
+    margin-top: 8px;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .cv-modal-large {
+    max-width: 700px;
+  }
+
+  .cv-patient-demographics-bar {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (min-width: 1024px) {
+  .cv-modal-large {
+    max-width: 780px;
+  }
+}
+
+/* ==========================================================================
+   CSS @media print Isolation for Clinical Health Records
+   ========================================================================== */
+
+@media print {
+  /* Hide all interactive app elements and chrome */
+  body * {
+    visibility: hidden;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    height: auto !important;
+    min-height: auto !important;
+  }
+
+  /* Reset modal containers so content flows continuously on paper */
+  .cv-modal-backdrop,
+  .cv-modal,
+  .cv-modal-large,
+  .cv-modal-body,
+  .cv-record-detail-container {
+    position: static !important;
+    display: block !important;
+    background: #ffffff !important;
+    box-shadow: none !important;
+    border: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    max-height: none !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    overflow: visible !important;
+    transform: none !important;
+    animation: none !important;
+  }
+
+  .cv-record-detail-body {
+    max-height: none !important;
+    overflow: visible !important;
+    padding-right: 0 !important;
+  }
+
+  /* Target printable area and make it and all children visible */
+  #cv-printable-area,
+  #cv-printable-area * {
+    visibility: visible !important;
+  }
+
+  #cv-printable-area {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 15mm 12mm !important;
+    box-sizing: border-box !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    font-size: 11pt !important;
+    line-height: 1.5 !important;
+  }
+
+  /* Strictly suppress interactive buttons, navigation, headers and footers */
+  .cv-modal-header,
+  .cv-modal-close,
+  .cv-modal-actions,
+  .no-print,
+  nav,
+  header,
+  footer,
+  aside,
+  button,
+  .health-records-tabs-wrapper,
+  .health-records-mobile-picker,
+  .health-records-toolbar {
+    display: none !important;
+  }
+
+  /* Paper geometry */
+  @page {
+    size: A4 portrait;
+    margin: 12mm 10mm;
+  }
+
+  /* Prevent awkward page breaks */
+  .cv-print-section,
+  .cv-detail-section,
+  .cv-patient-demographics-bar,
+  .cv-detail-signature-block {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .cv-print-header {
+    border-bottom: 2pt solid #0f766e !important;
+    padding-bottom: 10pt !important;
+    margin-bottom: 14pt !important;
+  }
+
+  .cv-patient-demographics-bar {
+    background: #f8fafc !important;
+    border: 1pt solid #cbd5e1 !important;
+    border-radius: 4pt !important;
+    padding: 8pt 12pt !important;
+  }
+
+  .cv-clinical-table {
+    border-collapse: collapse !important;
+    width: 100% !important;
+  }
+
+  .cv-clinical-table th,
+  .cv-clinical-table td {
+    border: 1pt solid #cbd5e1 !important;
+    padding: 6pt 8pt !important;
+    font-size: 10pt !important;
+  }
+
+  .cv-clinical-table th {
+    background: #f1f5f9 !important;
+    color: #0f172a !important;
+    font-weight: 700 !important;
+  }
+
+  .cv-detail-signature-block {
+    border: 1pt solid #94a3b8 !important;
+    background: #ffffff !important;
+    margin-top: 24pt !important;
+    padding: 12pt 16pt !important;
+  }
+
+  .cv-warning-box {
+    border: 1pt solid #f87171 !important;
+    background: #fef2f2 !important;
+    color: #991b1b !important;
+    padding: 8pt 10pt !important;
+  }
+
+  .cv-diagnosis-box {
+    border-left: 3pt solid #0f766e !important;
+    background: #f0fdf4 !important;
+    padding: 8pt 12pt !important;
+  }
+}
+
+
 
 
 

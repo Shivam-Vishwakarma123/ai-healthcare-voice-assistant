@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -61,6 +61,13 @@ def readiness(db: Session = Depends(get_db)):
 
 
 @app.exception_handler(Exception)
-async def unhandled_exception_handler(_request, exc: Exception):
+async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.error("Unhandled application exception", exc_info=(type(exc), exc, exc.__traceback__))
-    return JSONResponse(status_code=500, content={"detail": "An unexpected server error occurred."})
+    origin = request.headers.get("origin")
+    headers = {}
+    if origin and origin in settings.cors_origins:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+        headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type, Idempotency-Key"
+        headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    return JSONResponse(status_code=500, content={"detail": "An unexpected server error occurred."}, headers=headers)

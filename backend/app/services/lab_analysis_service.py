@@ -191,6 +191,49 @@ class LabAnalysisService:
                     evaluated["document_id"] = doc.id
                     parameters_timeline.setdefault(clean_key, []).append(evaluated)
 
+            # Also inspect structured parameters list if present (e.g. from diagnostic lab reports)
+            if "parameters" in data and isinstance(data["parameters"], list):
+                for p in data["parameters"]:
+                    if not isinstance(p, dict):
+                        continue
+                    p_name = (p.get("name") or "").lower()
+                    p_val = p.get("value")
+                    matched_key = None
+                    if ("hemoglobin" in p_name or "hb" in p_name) and "hba1c" not in p_name and "glycated" not in p_name:
+                        matched_key = "hemoglobin"
+                    elif "hba1c" in p_name or "glycated" in p_name:
+                        matched_key = "hba1c"
+                    elif ("glucose" in p_name or "sugar" in p_name) and "urin" not in p_name:
+                        matched_key = "fasting_glucose"
+                    elif "platelet" in p_name:
+                        matched_key = "platelets"
+                    elif "cholesterol" in p_name and "total" in p_name:
+                        matched_key = "total_cholesterol"
+                    elif "creatinine" in p_name:
+                        matched_key = "creatinine"
+                    elif "systolic" in p_name:
+                        matched_key = "systolic_bp"
+                    elif "diastolic" in p_name:
+                        matched_key = "diastolic_bp"
+                    elif "spo2" in p_name or "oxygen sat" in p_name:
+                        matched_key = "spo2"
+
+                    if matched_key and matched_key in LAB_REFERENCES:
+                        num_val = p_val
+                        if isinstance(p_val, str):
+                            import re
+                            m = re.search(r"[-+]?[0-9]+(?:\.[0-9]+)?", p_val.replace(",", ""))
+                            if m:
+                                try:
+                                    num_val = float(m.group(0))
+                                except ValueError:
+                                    num_val = p_val
+                        evaluated = LabAnalysisService.evaluate_parameter(matched_key, num_val)
+                        evaluated["date"] = doc_date
+                        evaluated["document_title"] = doc.title
+                        evaluated["document_id"] = doc.id
+                        parameters_timeline.setdefault(matched_key, []).append(evaluated)
+
         trends_summary: list[dict[str, Any]] = []
         for param_key, history in parameters_timeline.items():
             ref = LAB_REFERENCES[param_key]

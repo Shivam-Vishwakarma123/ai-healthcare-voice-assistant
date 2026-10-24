@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     sms_api_token: str = ""
     app_public_url: str = "http://localhost:3000"
     admin_bootstrap_token: str = ""
-    backend_cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    backend_cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173"
 
     # AI Configuration (supports both AI_* and legacy LLM_* / EMBEDDING_* conventions)
     ai_enabled: bool = True

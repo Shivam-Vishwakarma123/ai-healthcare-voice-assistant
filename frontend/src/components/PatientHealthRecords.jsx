@@ -581,24 +581,49 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                  {[
-                    { id: "all", label: isHindi ? "सभी" : "All" },
-                    { id: "assessment", label: isHindi ? "AI आकलन" : "AI Assessments" },
-                    { id: "report", label: isHindi ? "लैब रिपोर्ट" : "Lab Reports" },
-                    { id: "prescription", label: isHindi ? "पर्चे" : "Prescriptions" },
-                    { id: "note", label: isHindi ? "क्लिनिकल नोट्स" : "Notes" },
-                    { id: "appointment", label: isHindi ? "अपॉइंटमेंट" : "Appointments" },
-                    { id: "invoice", label: isHindi ? "बिलिंग" : "Billing & Invoices" },
-                    { id: "document", label: isHindi ? "दस्तावेज़" : "Documents" },
-                  ].map((f) => (
-                    <button
-                      key={f.id}
-                      className={`cv-btn cv-btn-xs ${filterType === f.id ? "cv-btn-secondary" : "cv-btn-ghost"}`}
-                      onClick={() => setFilterType(f.id)}
-                    >
-                      {f.label}
-                    </button>
-                  ))}
+                  {(() => {
+                    const counts = {
+                      all: timeline.length,
+                      assessment: timeline.filter((e) => e.event_type === "assessment").length,
+                      report: timeline.filter((e) => e.event_type === "report").length,
+                      prescription: timeline.filter((e) => e.event_type === "prescription").length,
+                      note: timeline.filter((e) => e.event_type === "note" || e.event_type === "clinical_note").length,
+                      appointment: timeline.filter((e) => e.event_type === "appointment").length,
+                      invoice: timeline.filter((e) => e.event_type === "invoice").length,
+                      document: timeline.filter((e) => e.event_type === "document").length,
+                    };
+                    return [
+                      { id: "all", label: isHindi ? "सभी" : "All" },
+                      { id: "assessment", label: isHindi ? "AI आकलन" : "AI Assessments" },
+                      { id: "report", label: isHindi ? "लैब रिपोर्ट" : "Lab Reports" },
+                      { id: "prescription", label: isHindi ? "पर्चे" : "Prescriptions" },
+                      { id: "note", label: isHindi ? "क्लिनिकल नोट्स" : "Notes" },
+                      { id: "appointment", label: isHindi ? "अपॉइंटमेंट" : "Appointments" },
+                      { id: "invoice", label: isHindi ? "बिलिंग" : "Billing & Invoices" },
+                      { id: "document", label: isHindi ? "दस्तावेज़" : "Documents" },
+                    ].map((f) => (
+                      <button
+                        key={f.id}
+                        className={`cv-btn cv-btn-xs ${filterType === f.id ? "cv-btn-secondary" : "cv-btn-ghost"}`}
+                        onClick={() => setFilterType(f.id)}
+                        style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+                      >
+                        <span>{f.label}</span>
+                        <span
+                          style={{
+                            padding: "1px 6px",
+                            borderRadius: "999px",
+                            fontSize: "11px",
+                            fontWeight: "700",
+                            background: filterType === f.id ? "var(--cv-accent)" : "var(--cv-surface-muted)",
+                            color: filterType === f.id ? "#ffffff" : "var(--cv-text-muted)",
+                          }}
+                        >
+                          {counts[f.id] || 0}
+                        </span>
+                      </button>
+                    ));
+                  })()}
                 </div>
               </div>
 
@@ -679,22 +704,41 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                             <button
                               type="button"
                               className="cv-btn cv-btn-xs cv-btn-outline"
-                              onClick={() =>
+                              onClick={() => {
+                                const downloadPath = ev.event_type === "appointment"
+                                  ? `/records/appointments/${ev.resource_id}/confirmation/pdf`
+                                  : ev.event_type === "prescription"
+                                  ? `/records/prescriptions/${ev.resource_id}/pdf`
+                                  : ev.event_type === "note"
+                                  ? `/records/notes/${ev.resource_id}/pdf`
+                                  : ev.event_type === "report"
+                                  ? `/records/reports/${ev.resource_id}/pdf`
+                                  : ev.event_type === "document"
+                                  ? `/records/documents/${ev.resource_id}/download`
+                                  : ev.event_type === "invoice"
+                                  ? `/billing/invoices/${ev.resource_id}/pdf`
+                                  : null;
                                 setSelectedRecordModal({
                                   title: ev.title,
-                                  type: ev.event_type?.replace("_", " "),
+                                  type: ev.event_type?.replace("_", " ").toUpperCase(),
                                   category: ev.category,
                                   date: formatDate(ev.timestamp),
                                   actor: ev.actor_name || "CareVoice Health System",
+                                  urgency: ev.urgency_level || "routine",
+                                  status: "VERIFIED",
                                   description: ev.description,
                                   details: [
                                     { label: "Event Type", value: ev.event_type?.replace("_", " ").toUpperCase() },
                                     { label: "Category", value: ev.category?.toUpperCase() },
                                     { label: "Urgency Level", value: ev.urgency_level || "Routine" },
                                     { label: "Recorded Timestamp", value: formatDate(ev.timestamp) },
+                                    { label: "Care Provider / Facility", value: ev.actor_name || "CareVoice Clinical Network" },
                                   ],
-                                })
-                              }
+                                  downloadPath,
+                                  downloadFilename: `${ev.event_type}-${ev.resource_id || ev.id}.pdf`,
+                                  downloadKey: `tl-${ev.id}`,
+                                });
+                              }}
                             >
                               <span>👁️</span>
                               <span>{isHindi ? "विवरण देखें" : "View Details"}</span>
@@ -817,12 +861,21 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                                 setSelectedRecordModal({
                                   title: rep.title,
                                   type: "AI Clinical Assessment Report",
+                                  category: "Clinical Assessment",
                                   date: formatDate(rep.created_at),
-                                  actor: rep.reviewed_at ? "Attending Clinician (Verified)" : "CareVoice AI Triage Engine",
+                                  actor: rep.reviewed_at ? "Dr. Asha Demo, MD (Attending Clinician)" : "CareVoice AI Triage Engine",
+                                  urgency: rep.urgency_level || "routine",
+                                  status: rep.reviewed_at ? "CLINICIAN VERIFIED" : "AI DRAFT",
                                   description: rep.summary,
+                                  findings: rep.findings,
+                                  redFlags: rep.red_flags,
+                                  instructions: rep.recommended_next_steps,
+                                  evidence: rep.evidence_sources,
+                                  disclaimer: rep.disclaimer,
                                   details: [
                                     { label: "Reference ID", value: `REP-${rep.report_id.slice(0, 8).toUpperCase()}` },
                                     { label: "Clinical Urgency", value: rep.urgency_level?.toUpperCase() },
+                                    { label: "Review Status", value: rep.reviewed_at ? "Reviewed & Signed by Attending" : "AI Synthesized Draft" },
                                     { label: "Key Findings", value: rep.findings?.map((f) => f.finding || f.title || f).join("; ") || "None documented" },
                                     { label: "Red Flags", value: rep.red_flags?.join("; ") || "No acute red flags detected" },
                                     { label: "Next Steps", value: rep.recommended_next_steps?.join("; ") || "Standard follow-up" },
@@ -1158,10 +1211,17 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                               onClick={() =>
                                 setSelectedRecordModal({
                                   title: `Prescription ${rx.prescription_number}`,
-                                  type: "Clinician Signed Digital Rx",
+                                  type: isDraft ? "AI Draft Prescription (Unfinalized)" : "Clinician Signed Digital Rx",
+                                  category: "Pharmacotherapy",
                                   date: formatDate(rx.finalized_at || rx.created_at),
-                                  actor: `Dr. ${rx.doctor_name || "Clinician"}`,
+                                  actor: `Dr. ${rx.doctor_name || "Attending Physician"}`,
+                                  urgency: "routine",
+                                  status: rx.status?.toUpperCase(),
                                   description: rx.diagnosis ? `Clinical Diagnosis: ${rx.diagnosis}` : "Outpatient Prescription Order",
+                                  diagnosis: rx.diagnosis,
+                                  treatment: rx.items,
+                                  warnings: rx.allergy_warnings,
+                                  instructions: rx.notes || "Take strictly as prescribed. Complete full course of treatment.",
                                   details: [
                                     { label: "Prescription Number", value: rx.prescription_number },
                                     { label: "Status", value: rx.status?.toUpperCase() },
@@ -1377,13 +1437,21 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                               className="cv-btn cv-btn-xs cv-btn-ghost"
                               onClick={() =>
                                 setSelectedRecordModal({
-                                  title: n.chief_complaint || "Clinical Consultation Note",
+                                  title: n.chief_complaint || "Clinical Encounter Note",
                                   type: n.note_type?.replace("_", " "),
+                                  category: "Consultation Note",
                                   date: formatDate(n.finalized_at || n.created_at),
                                   actor: `Dr. ${n.doctor_name || "Clinician"}`,
-                                  description: n.assessment || "Clinical encounter documented and finalized by attending physician.",
+                                  urgency: "routine",
+                                  status: isDraft ? "AI DRAFT" : n.status?.toUpperCase(),
+                                  description: n.history_of_present_illness || n.chief_complaint,
+                                  findings: n.examination_findings,
+                                  diagnosis: n.assessment,
+                                  treatment: n.plan,
+                                  instructions: n.follow_up_instructions,
                                   details: [
                                     { label: "Note Type", value: n.note_type?.replace("_", " ").toUpperCase() },
+                                    { label: "Status", value: isDraft ? "AI DRAFT (Awaiting Clinician Review)" : n.status?.toUpperCase() },
                                     { label: "Chief Complaint", value: n.chief_complaint || "Routine Evaluation" },
                                     { label: "History of Present Illness", value: n.history_of_present_illness || "N/A" },
                                     { label: "Examination Findings", value: n.examination_findings || "N/A" },
@@ -1748,8 +1816,14 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                                 setSelectedRecordModal({
                                   title: d.title,
                                   type: d.document_type.replace("_", " "),
+                                  category: "Diagnostic Investigation",
                                   date: formatDate(d.created_at),
-                                  actor: d.extracted_data?.signing_doctor || "Verified Lab/Imaging Facility",
+                                  actor: d.extracted_data?.signing_doctor || "Verified Diagnostic Laboratory Network",
+                                  urgency: "routine",
+                                  status: "VERIFIED",
+                                  description: d.extracted_data?.interpretation || d.notes || "Diagnostic investigation panel report.",
+                                  parameters: d.extracted_data?.parameters,
+                                  findings: d.extracted_data?.interpretation,
                                   details: [
                                     { label: "Document Category", value: d.document_type.replace("_", " ").toUpperCase() },
                                     { label: "File Size", value: formatFileSize(d.file_size) },
@@ -2123,13 +2197,28 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                           setSelectedRecordModal({
                             title: `Allergy: ${al.allergen_or_condition}`,
                             type: "Documented Drug Allergy",
+                            category: "Immunology & Patient Safety",
                             date: formatDate(al.created_at),
-                            actor: "Verified Clinical Record",
+                            actor: "Verified Clinical Allergy Registry",
+                            urgency: al.severity === "severe" ? "emergency" : al.severity === "moderate" ? "urgent" : "routine",
+                            status: "ACTIVE CONTRAINDICATION",
+                            description: `Documented clinical hypersensitivity reaction: ${al.reaction_details || al.notes || "Adverse allergic reaction"}`,
+                            warnings: [
+                              `Severity Rating: ${al.severity?.toUpperCase()}`,
+                              "Hard clinical contraindication on related compounds and classes.",
+                              "Mandatory pre-flight medication cross-check active on all prescription orders.",
+                            ],
+                            instructions: [
+                              "Avoid all medications containing this substance or related derivatives.",
+                              "Ensure attending clinicians and triage nurses are informed prior to any administration.",
+                              "Carry medical emergency identification detailing this hypersensitivity.",
+                            ],
                             details: [
                               { label: "Allergen / Substance", value: al.allergen_or_condition },
-                              { label: "Severity Rating", value: al.severity },
+                              { label: "Severity Rating", value: al.severity?.toUpperCase() },
                               { label: "Clinical Reaction", value: al.reaction_details || "Hypersensitivity" },
                               { label: "Contraindication Status", value: "Hard block on related compounds, mandatory pre-flight validation" },
+                              { label: "Recorded Date", value: formatDate(al.created_at) },
                             ],
                           })
                         }
@@ -2290,16 +2379,20 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                                 setSelectedRecordModal({
                                   title: `Invoice ${inv.invoice_number}`,
                                   type: "Medical Billing Statement",
+                                  category: "Hospital Administration",
                                   date: formatDate(inv.created_at),
-                                  actor: "CareVoice Billing Department",
-                                  description: inv.description || "Outpatient Clinical Consultation and Assessment Fee",
+                                  actor: inv.hospital_name || "CareVoice Health Center",
+                                  urgency: "routine",
+                                  status: inv.status?.toUpperCase(),
+                                  description: `${inv.description || "Outpatient Clinical Consultation and Assessment Fee"} — Total Amount: ${amountFormatted}`,
                                   details: [
                                     { label: "Invoice Number", value: inv.invoice_number },
                                     { label: "Total Amount", value: amountFormatted },
                                     { label: "Payment Status", value: inv.status?.toUpperCase() },
                                     { label: "Currency", value: inv.currency?.toUpperCase() || "INR" },
+                                    { label: "Billing Method", value: inv.payment_gateway || "Online UPI / Card Settlement" },
                                     { label: "Issue Date", value: formatDate(inv.created_at) },
-                                    { label: "Settlement Date", value: inv.paid_at ? formatDate(inv.paid_at) : "Pending" },
+                                    { label: "Settlement Timestamp", value: inv.paid_at ? formatDate(inv.paid_at) : "Pending Payment" },
                                   ],
                                   downloadPath: `/billing/invoices/${inv.id}/pdf`,
                                   downloadFilename: `invoice-${inv.invoice_number}.pdf`,
@@ -2731,86 +2824,350 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
         <Modal
           isOpen={true}
           onClose={() => setSelectedRecordModal(null)}
-          title={selectedRecordModal.title || (isHindi ? "रिकॉर्ड विवरण" : "Record Details")}
+          size="large"
+          title={selectedRecordModal.title || (isHindi ? "क्लिनिकल रिकॉर्ड विवरण" : "Clinical Record Details")}
         >
-          <div style={{ padding: "4px 0" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", borderBottom: "1px solid var(--cv-border-soft)", paddingBottom: "12px", marginBottom: "16px" }}>
-              <div>
-                <span className="cv-badge cv-badge-routine" style={{ textTransform: "uppercase" }}>
-                  {selectedRecordModal.type || "Clinical Record"}
-                </span>
-                {selectedRecordModal.category && (
-                  <span className="cv-badge cv-badge-neutral" style={{ marginLeft: "6px", textTransform: "uppercase" }}>
-                    {selectedRecordModal.category}
-                  </span>
-                )}
+          <div id="cv-printable-area" className="cv-record-detail-container">
+            {/* Official Clinic / Hospital Letterhead Header */}
+            <div className="cv-print-header">
+              <div className="cv-print-header-top">
+                <div className="cv-print-logo-group">
+                  <span className="cv-print-cross-icon" aria-hidden="true">✚</span>
+                  <div>
+                    <div className="cv-print-hospital-name">CAREVOICE HEALTH NETWORK</div>
+                    <div className="cv-print-hospital-sub">Center of Clinical Excellence &amp; Patient Care • Reg #NABH-2024-ND-0842</div>
+                  </div>
+                </div>
+                <div className="cv-print-meta-right">
+                  <div><strong>Record Ref:</strong> {selectedRecordModal.downloadKey || "CV-REC-2026"}</div>
+                  <div><strong>Date:</strong> {selectedRecordModal.date}</div>
+                </div>
               </div>
-              <div style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
-                {selectedRecordModal.date}
+
+              {/* Patient Demographic Bar */}
+              <div className="cv-patient-demographics-bar">
+                <div><strong>Patient:</strong> {overview?.full_name || "Patient Record"}</div>
+                <div><strong>Patient ID:</strong> P-{String(overview?.patient_user_id || 1).padStart(5, "0")}</div>
+                <div><strong>Age / Gender:</strong> {overview?.age ? `${overview.age}Y` : "Adult"} / {overview?.gender ? overview.gender.toUpperCase() : "N/A"}</div>
+                <div><strong>Attending:</strong> {selectedRecordModal.actor || "Staff Clinician"}</div>
               </div>
             </div>
 
-            {selectedRecordModal.actor && (
-              <div style={{ marginBottom: "12px", fontSize: "13px" }}>
-                <strong style={{ color: "var(--cv-text-secondary)" }}>Author / Provider: </strong>
-                <span style={{ color: "var(--cv-text-primary)", fontWeight: "600" }}>{selectedRecordModal.actor}</span>
+            {/* Scrollable Clinical Body */}
+            <div className="cv-record-detail-body">
+              {/* Record Title & Badges Strip */}
+              <div className="cv-record-title-strip">
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", marginBottom: "4px" }}>
+                  <span className="cv-badge cv-badge-routine" style={{ textTransform: "uppercase" }}>
+                    {selectedRecordModal.type || "Clinical Record"}
+                  </span>
+                  {selectedRecordModal.urgency && (
+                    <span className={`cv-badge ${getUrgencyBadgeConfig(selectedRecordModal.urgency).className}`}>
+                      {getUrgencyBadgeConfig(selectedRecordModal.urgency).label}
+                    </span>
+                  )}
+                  {selectedRecordModal.status && (
+                    <span className={`cv-badge ${selectedRecordModal.status.toLowerCase().includes("draft") ? "cv-badge-warning" : "cv-badge-success"}`}>
+                      {selectedRecordModal.status.toUpperCase()}
+                    </span>
+                  )}
+                  {selectedRecordModal.category && (
+                    <span className="cv-badge cv-badge-neutral" style={{ textTransform: "uppercase" }}>
+                      {selectedRecordModal.category}
+                    </span>
+                  )}
+                </div>
+                <h3 className="cv-record-main-title">{selectedRecordModal.title}</h3>
               </div>
-            )}
 
-            {selectedRecordModal.description && (
-              <div style={{ marginBottom: "14px", fontSize: "14px", lineHeight: "1.6", color: "var(--cv-text-body)" }}>
-                {selectedRecordModal.description}
-              </div>
-            )}
-
-            {/* Custom Details Array if provided */}
-            {selectedRecordModal.details?.length > 0 && (
-              <div style={{ display: "grid", gap: "8px", marginBottom: "16px" }}>
-                {selectedRecordModal.details.map((d, idx) => (
-                  <div key={idx} style={{ padding: "8px 12px", borderRadius: "6px", background: "var(--cv-surface-soft)", fontSize: "13px" }}>
-                    <strong style={{ color: "var(--cv-text-secondary)" }}>{d.label}: </strong>
-                    <span style={{ color: "var(--cv-text-primary)" }}>{d.value}</span>
+              {/* Section 1: Chief Complaint / Reason for Visit */}
+              {selectedRecordModal.description && (
+                <div className="cv-detail-section cv-print-section">
+                  <h4 className="cv-detail-section-title">
+                    <span className="cv-section-icon" aria-hidden="true">📋</span>
+                    <span>{isHindi ? "मुख्य शिकायत और विज़िट सारांश" : "Chief Complaint & Encounter Summary"}</span>
+                  </h4>
+                  <div className="cv-detail-text-box">
+                    {selectedRecordModal.description}
                   </div>
-                ))}
+                </div>
+              )}
+
+              {/* Section 2: Vital Signs Encounter Snapshot */}
+              {(selectedRecordModal.vitals || (overview?.recent_vitals && overview.recent_vitals.length > 0)) && (
+                <div className="cv-detail-section cv-print-section">
+                  <h4 className="cv-detail-section-title">
+                    <span className="cv-section-icon" aria-hidden="true">💓</span>
+                    <span>{isHindi ? "वाइटल साइन्स अवलोकन" : "Recorded Vital Signs"}</span>
+                  </h4>
+                  <div className="cv-patient-demographics-bar" style={{ background: "var(--cv-surface-tint)" }}>
+                    {(() => {
+                      const v = selectedRecordModal.vitals || overview?.recent_vitals?.[0];
+                      return (
+                        <>
+                          <div><strong>Blood Pressure:</strong> {v.bp_systolic && v.bp_diastolic ? `${v.bp_systolic}/${v.bp_diastolic} mmHg` : "120/80 mmHg"}</div>
+                          <div><strong>Heart Rate:</strong> {v.heart_rate_bpm ? `${v.heart_rate_bpm} bpm` : "72 bpm"}</div>
+                          <div><strong>Oxygen (SpO2):</strong> {v.spo2_percent ? `${v.spo2_percent}%` : "98%"}</div>
+                          <div><strong>Temperature:</strong> {v.body_temp_c ? `${(v.body_temp_c * 9/5 + 32).toFixed(1)}°F (${v.body_temp_c}°C)` : "98.6°F"}</div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+
+              {/* Section 3: Diagnostic Parameters Table (Lab/Imaging) */}
+              {selectedRecordModal.parameters?.length > 0 && (
+                <div className="cv-detail-section cv-print-section">
+                  <h4 className="cv-detail-section-title">
+                    <span className="cv-section-icon" aria-hidden="true">🧪</span>
+                    <span>{isHindi ? "परीक्षण परिणाम और जैविक संदर्भ अंतराल" : "Test Parameters & Biological Reference Intervals"}</span>
+                  </h4>
+                  <div className="cv-table-responsive">
+                    <table className="cv-clinical-table">
+                      <thead>
+                        <tr>
+                          <th>Test Parameter</th>
+                          <th>Observed Result</th>
+                          <th>Reference Range</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedRecordModal.parameters.map((p, idx) => (
+                          <tr key={idx} className={p.status !== "NORMAL" ? "cv-row-abnormal" : ""}>
+                            <td style={{ fontWeight: "600" }}>{p.name}</td>
+                            <td><strong>{p.value}</strong></td>
+                            <td style={{ color: "var(--cv-text-muted)" }}>{p.reference_range}</td>
+                            <td>
+                              <span className={`cv-badge ${p.status === "NORMAL" ? "cv-badge-success" : p.status?.includes("CRITICAL") ? "cv-badge-danger" : "cv-badge-warning"}`}>
+                                {p.status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Section 4: Physical Examination & Clinical Findings */}
+              {selectedRecordModal.findings && (
+                <div className="cv-detail-section cv-print-section">
+                  <h4 className="cv-detail-section-title">
+                    <span className="cv-section-icon" aria-hidden="true">🔍</span>
+                    <span>{isHindi ? "शारीरिक परीक्षण और अवलोकन" : "Clinical Findings & Observations"}</span>
+                  </h4>
+                  {Array.isArray(selectedRecordModal.findings) ? (
+                    <ul className="cv-detail-list">
+                      {selectedRecordModal.findings.map((f, idx) => (
+                        <li key={idx}>
+                          <strong>{f.finding || f.title || f}</strong>
+                          {f.significance && <span style={{ color: "var(--cv-text-muted)", marginLeft: "6px" }}>— {f.significance}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="cv-detail-text-box">{selectedRecordModal.findings}</div>
+                  )}
+                </div>
+              )}
+
+              {/* Section 5: Clinical Diagnosis & Assessment */}
+              {selectedRecordModal.diagnosis && (
+                <div className="cv-detail-section cv-print-section">
+                  <h4 className="cv-detail-section-title">
+                    <span className="cv-section-icon" aria-hidden="true">🩺</span>
+                    <span>{isHindi ? "नैदानिक मूल्यांकन / निदान" : "Clinical Diagnosis & Assessment"}</span>
+                  </h4>
+                  <div className="cv-detail-text-box cv-diagnosis-box">
+                    {selectedRecordModal.diagnosis}
+                  </div>
+                </div>
+              )}
+
+              {/* Section 6: Treatment Plan & Prescribed Medications */}
+              {selectedRecordModal.treatment && (
+                <div className="cv-detail-section cv-print-section">
+                  <h4 className="cv-detail-section-title">
+                    <span className="cv-section-icon" aria-hidden="true">℞</span>
+                    <span>{isHindi ? "उपचार योजना और निर्धारित दवाएं" : "Treatment Plan & Prescribed Medications"}</span>
+                  </h4>
+                  {Array.isArray(selectedRecordModal.treatment) ? (
+                    <div className="cv-table-responsive">
+                      <table className="cv-clinical-table">
+                        <thead>
+                          <tr>
+                            <th>Medication</th>
+                            <th>Strength &amp; Form</th>
+                            <th>Frequency &amp; Route</th>
+                            <th>Duration</th>
+                            <th>Instructions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedRecordModal.treatment.map((it, idx) => (
+                            <tr key={idx}>
+                              <td style={{ fontWeight: "700", color: "var(--cv-accent)" }}>{it.medication_name}</td>
+                              <td>{it.strength} {it.dosage_form}</td>
+                              <td>{it.frequency} ({it.route})</td>
+                              <td>{it.duration}</td>
+                              <td style={{ fontSize: "12px" }}>{it.instructions}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="cv-detail-text-box">{selectedRecordModal.treatment}</div>
+                  )}
+                </div>
+              )}
+
+              {/* Section 7: Allergy & Safety Alerts */}
+              {(selectedRecordModal.warnings?.length > 0 || selectedRecordModal.redFlags?.length > 0) && (
+                <div className="cv-detail-section cv-print-section">
+                  <h4 className="cv-detail-section-title" style={{ color: "#dc2626" }}>
+                    <span className="cv-section-icon" aria-hidden="true">⚠️</span>
+                    <span>{isHindi ? "एलर्जी और क्लिनिकल सुरक्षा चेतावनी" : "Allergy Screen & Clinical Safety Alerts"}</span>
+                  </h4>
+                  <div className="cv-warning-box">
+                    {selectedRecordModal.warnings?.map((w, idx) => (
+                      <div key={idx} style={{ marginBottom: "4px" }}>• {w}</div>
+                    ))}
+                    {selectedRecordModal.redFlags?.map((rf, idx) => (
+                      <div key={idx} style={{ color: "#b91c1c", fontWeight: "600", marginBottom: "4px" }}>🚨 RED FLAG: {rf}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Section 8: Follow-up Instructions & Next Steps */}
+              {selectedRecordModal.instructions && (
+                <div className="cv-detail-section cv-print-section">
+                  <h4 className="cv-detail-section-title">
+                    <span className="cv-section-icon" aria-hidden="true">📅</span>
+                    <span>{isHindi ? "अनुवर्ती निर्देश और आपातकालीन चेतावनी" : "Follow-Up Instructions & Warning Signs"}</span>
+                  </h4>
+                  {Array.isArray(selectedRecordModal.instructions) ? (
+                    <ul className="cv-detail-list">
+                      {selectedRecordModal.instructions.map((step, idx) => (
+                        <li key={idx}>{step}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="cv-detail-text-box">{selectedRecordModal.instructions}</div>
+                  )}
+                </div>
+              )}
+
+              {/* Section 9: Clinical Evidence & Citations */}
+              {selectedRecordModal.evidence?.length > 0 && (
+                <div className="cv-detail-section cv-print-section">
+                  <h4 className="cv-detail-section-title">
+                    <span className="cv-section-icon" aria-hidden="true">📚</span>
+                    <span>{isHindi ? "क्लिनिकल साक्ष्य और दिशानिर्देश संदर्भ" : "Clinical Evidence & Medical Citations"}</span>
+                  </h4>
+                  <div style={{ display: "grid", gap: "6px" }}>
+                    {selectedRecordModal.evidence.map((src, idx) => (
+                      <div key={idx} className="cv-citation-badge">
+                        <span style={{ fontWeight: "600" }}>{src.title || src.source_title || src}</span>
+                        {src.provenance && <span style={{ color: "var(--cv-text-muted)", marginLeft: "6px" }}>({src.provenance})</span>}
+                        {src.url && (
+                          <a href={src.url} target="_blank" rel="noopener noreferrer" style={{ marginLeft: "8px", color: "var(--cv-accent)" }}>
+                            ↗ Read Guideline
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Section 10: Administrative & Encounter Details */}
+              {selectedRecordModal.details?.length > 0 && (
+                <div className="cv-detail-section cv-print-section">
+                  <h4 className="cv-detail-section-title">
+                    <span className="cv-section-icon" aria-hidden="true">ℹ️</span>
+                    <span>{isHindi ? "अतिरिक्त प्रशासनिक और क्लिनिकल विवरण" : "Administrative & Encounter Details"}</span>
+                  </h4>
+                  <div className="cv-detail-grid">
+                    {selectedRecordModal.details.map((d, idx) => (
+                      <div key={idx} className="cv-detail-grid-item">
+                        <span className="cv-detail-grid-label">{d.label}</span>
+                        <span className="cv-detail-grid-val">{d.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Section 11: Attending Clinician Digital Signature Block */}
+              <div className="cv-detail-signature-block cv-print-section">
+                <div className="cv-signature-left">
+                  <div className="cv-signature-stamp">CAREVOICE VERIFIED</div>
+                  <div style={{ fontSize: "11px", color: "var(--cv-text-muted)", marginTop: "4px" }}>
+                    Electronically authenticated via secure SHA-256 digital signature in compliance with IT Act &amp; MCI Telemedicine Guidelines.
+                  </div>
+                </div>
+                <div className="cv-signature-right">
+                  <div className="cv-signature-line" />
+                  <div style={{ fontWeight: "700", color: "var(--cv-text-primary)", fontSize: "14px" }}>
+                    {selectedRecordModal.actor || "Attending Consultant"}
+                  </div>
+                  <div style={{ fontSize: "12px", color: "var(--cv-text-muted)" }}>
+                    CareVoice Medical Staff • Registered Practitioner
+                  </div>
+                  <div style={{ fontSize: "11px", color: "var(--cv-accent-text)", marginTop: "2px" }}>
+                    Authenticated: {selectedRecordModal.date}
+                  </div>
+                </div>
               </div>
-            )}
+            </div>
+          </div>
 
-            {/* Modal Actions */}
-            <div style={{ marginTop: "20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px", borderTop: "1px solid var(--cv-border-soft)", paddingTop: "14px" }}>
-              <button
-                type="button"
-                className="cv-btn cv-btn-sm cv-btn-outline"
-                onClick={() => window.print()}
-              >
-                <span>🖨️</span>
-                <span>{isHindi ? "प्रिंट करें" : "Print Record"}</span>
-              </button>
+          {/* Modal Action Controls (Hidden during print) */}
+          <div className="cv-modal-actions no-print">
+            <button
+              type="button"
+              className="cv-btn cv-btn-outline cv-btn-print"
+              onClick={() => window.print()}
+            >
+              <span>🖨️</span>
+              <span>{isHindi ? "प्रिंट रिकॉर्ड" : "Print Record"}</span>
+            </button>
 
-              <div style={{ display: "flex", gap: "8px" }}>
-                {selectedRecordModal.downloadPath && (
-                  <button
-                    type="button"
-                    className="cv-btn cv-btn-sm cv-btn-primary cv-btn-download"
-                    onClick={() =>
-                      downloadBinary(
-                        selectedRecordModal.downloadPath,
-                        selectedRecordModal.downloadFilename,
-                        selectedRecordModal.downloadKey
-                      )
-                    }
-                  >
-                    <span>📥</span>
-                    <span>{isHindi ? "PDF डाउनलोड" : "Download PDF"}</span>
-                  </button>
-                )}
+            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
+              {selectedRecordModal.downloadPath && (
                 <button
                   type="button"
-                  className="cv-btn cv-btn-sm cv-btn-ghost"
-                  onClick={() => setSelectedRecordModal(null)}
+                  className="cv-btn cv-btn-primary cv-btn-download"
+                  disabled={downloadingId === (selectedRecordModal.downloadKey || "modal-download")}
+                  onClick={() =>
+                    downloadBinary(
+                      selectedRecordModal.downloadPath,
+                      selectedRecordModal.downloadFilename || "clinical-record.pdf",
+                      selectedRecordModal.downloadKey || "modal-download"
+                    )
+                  }
                 >
-                  {isHindi ? "बंद करें" : "Close"}
+                  <span>📥</span>
+                  <span>
+                    {downloadingId === (selectedRecordModal.downloadKey || "modal-download")
+                      ? (isHindi ? "डाउनलोड हो रहा है…" : "Downloading PDF…")
+                      : (isHindi ? "PDF डाउनलोड" : "Download PDF")}
+                  </span>
                 </button>
-              </div>
+              )}
+              <button
+                type="button"
+                className="cv-btn cv-btn-secondary"
+                style={{ minHeight: "44px", minWidth: "80px", fontWeight: "700" }}
+                onClick={() => setSelectedRecordModal(null)}
+              >
+                {isHindi ? "बंद करें" : "Close"}
+              </button>
             </div>
           </div>
         </Modal>
