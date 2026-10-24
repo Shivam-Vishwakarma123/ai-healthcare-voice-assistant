@@ -19,6 +19,7 @@ from app.models.clinical import (
     MedicalDocument,
     MedicalReport,
     PatientAllergy,
+    PatientVital,
     Prescription,
     PrescriptionItem,
 )
@@ -46,6 +47,7 @@ __all__ = [
     "NotificationDelivery",
     "Patient",
     "PatientAllergy",
+    "PatientVital",
     "PasswordResetToken",
     "Payment",
     "PaymentWebhookEvent",

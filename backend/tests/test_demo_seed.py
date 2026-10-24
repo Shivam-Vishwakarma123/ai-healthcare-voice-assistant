@@ -63,7 +63,8 @@ def test_demo_seed_is_repeatable_and_relationships_are_consistent():
             "ai_reports_created": 5,
             "prescriptions_created": 6,
             "notes_created": 7,
-            "documents_created": 6,
+            "documents_created": 8,
+            "vitals_created": 11,
         }
         assert all(value == 0 for value in second_run.values())
 

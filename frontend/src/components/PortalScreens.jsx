@@ -4,10 +4,12 @@ import VoiceAssistant from "./VoiceAssistant";
 import ProviderDetailModal from "./ProviderDetailModal";
 import AppointmentHistoryModal from "./AppointmentHistoryModal";
 import AppointmentRescheduleModal from "./AppointmentRescheduleModal";
+import AppointmentReceiptModal from "./AppointmentReceiptModal";
 import { apiRequest, formatMoney } from "../services/api";
 import { createIdempotencyKey, formatAppointmentDatePart, formatAppointmentDateTime, getISTDate } from "../services/appointments";
 import { getAppointmentPaymentAction, getAppointmentPaymentState } from "../services/appointmentPayments";
 import NotificationContactForm from "./NotificationContactForm";
+import { PatientDashboard } from "./PatientDashboard";
 
 const API_BASE = (import.meta.env?.VITE_API_BASE_URL || "http://localhost:8000/api/v1").replace(/\/+$/, "");
 
@@ -277,10 +279,22 @@ export function NotificationsPage({ token, user, onUserUpdated, language = "en" 
 
 // Patient and clinical staff home dashboard displaying high-level metrics, upcoming visits, and shortcuts.
 export function DashboardPage({ user, patient, token, onNavigate, language = "en" }) {
+  const staffView = ["staff", "admin"].includes(user?.role);
+  if (!staffView) {
+    return (
+      <PatientDashboard
+        user={user}
+        patient={patient}
+        token={token}
+        onNavigate={onNavigate}
+        language={language}
+      />
+    );
+  }
+
   const [data, setData] = useState({ appointments: [], doctors: [], hospitals: [] });
   const [loading, setLoading] = useState(true);
   const [errors, setErrors] = useState({});
-  const staffView = ["staff", "admin"].includes(user?.role);
   const hi = language === "hi";
 
   async function loadDashboard() {
@@ -999,7 +1013,7 @@ export function CareDirectoryPage({ token, onNavigate, onAppointmentBooked, lang
 }
 
 // Appointment lifecycle view managing visit scheduling, rescheduling, cancellations, slips, and payment flows.
-export function AppointmentsPage({ token, language = "en", user, recentAppointment, onNavigate }) {
+export function AppointmentsPage({ token, language = "en", user, patient, recentAppointment, onNavigate }) {
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1014,6 +1028,7 @@ export function AppointmentsPage({ token, language = "en", user, recentAppointme
   const [historyById, setHistoryById] = useState({});
   const [historyLoadingId, setHistoryLoadingId] = useState(null);
   const [paymentStartId, setPaymentStartId] = useState(null);
+  const [selectedReceiptAppointment, setSelectedReceiptAppointment] = useState(null);
   const rescheduleCommandRef = useRef(null);
   const hi = language === "hi";
 
@@ -1164,7 +1179,7 @@ export function AppointmentsPage({ token, language = "en", user, recentAppointme
         <span className={`cv-status cv-status-${appointment.status}`}>{appointment.status}</span>
         {user?.role === "patient" && <div className="cv-appointment-payment" aria-label={hi ? "भुगतान स्थिति" : "Payment status"}>
           <span>{hi ? "परामर्श शुल्क" : "Consultation fee"}: {formatMoney(appointment.fee_minor)}</span>
-          {paymentState === "paid" ? <><span className="cv-status cv-status-paid">{appointment.payment_is_demo ? (hi ? "डेमो भुगतान · वास्तविक भुगतान नहीं" : "DEMO paid · not a real payment") : (hi ? "भुगतान हुआ" : "Paid")}</span><button className="cv-button cv-button-quiet" type="button" onClick={() => onNavigate?.("Billing", { invoiceId: appointment.invoice_id, action: "receipt" })}>{hi ? "रसीद देखें" : "View receipt"}</button></> : ["refunded", "partially_refunded"].includes(paymentState) ? <><span className="cv-status">{paymentState === "refunded" ? (hi ? "रिफंड हुआ" : "Refunded") : (hi ? "आंशिक रिफंड" : "Partially refunded")}</span><button className="cv-button cv-button-quiet" type="button" onClick={() => onNavigate?.("Billing", { invoiceId: appointment.invoice_id, action: "receipt" })}>{hi ? "विवरण देखें" : "View details"}</button></> : paymentState === "invoice_cancelled" ? <span className="cv-subtle">{hi ? "इनवॉइस रद्द" : "Invoice cancelled"}</span> : paymentAction ? <><span className="cv-subtle">{paymentState === "pending" ? (hi ? "भुगतान लंबित" : "Payment pending") : paymentState === "failed" ? (hi ? "भुगतान विफल" : "Payment failed") : paymentState === "cancelled" ? (hi ? "भुगतान रद्द" : "Payment cancelled") : (hi ? "भुगतान बाकी" : "Payment due")}</span><button className={`cv-button ${paymentAction === "pay" ? "cv-button-primary" : "cv-button-quiet"}`} type="button" disabled={paymentAction === "check_status" ? loading : paymentStartId !== null} onClick={() => paymentAction === "check_status" ? loadAppointments() : startAppointmentPayment(appointment)}>{paymentAction === "check_status" ? (loading ? (hi ? "जाँच रहे हैं…" : "Checking…") : (hi ? "भुगतान स्थिति जाँचें" : "Check payment status")) : paymentStartId === appointment.id ? (hi ? "तैयार हो रहा है…" : "Preparing…") : paymentAction === "retry" ? (hi ? "फिर भुगतान करें" : "Retry payment") : (hi ? "अभी भुगतान करें" : "Pay now")}</button></> : <span className="cv-subtle">{paymentState === "not_due" ? (appointment.payment_block_reason === "past" ? (hi ? "बीते हुए अपॉइंटमेंट के लिए भुगतान उपलब्ध नहीं है" : "Payment unavailable for a past appointment") : appointment.payment_block_reason === "cancelled" ? (hi ? "रद्द अपॉइंटमेंट के लिए भुगतान उपलब्ध नहीं है" : "Payment unavailable for a cancelled appointment") : (hi ? "इस अपॉइंटमेंट के लिए नया भुगतान उपलब्ध नहीं है" : "New payment is unavailable for this appointment")) : (hi ? "क्लिनिक का इनवॉइस अभी जारी नहीं हुआ" : "Clinic invoice not issued yet")}</span>}
+          {paymentState === "paid" ? <><span className="cv-status cv-status-paid">{appointment.payment_is_demo ? (hi ? "डेमो भुगतान · वास्तविक भुगतान नहीं" : "DEMO paid · not a real payment") : (hi ? "भुगतान हुआ" : "Paid")}</span><button className="cv-button cv-button-quiet" type="button" onClick={() => setSelectedReceiptAppointment(appointment)}>{hi ? "रसीद देखें" : "View receipt"}</button></> : ["refunded", "partially_refunded"].includes(paymentState) ? <><span className="cv-status">{paymentState === "refunded" ? (hi ? "रिफंड हुआ" : "Refunded") : (hi ? "आंशिक रिफंड" : "Partially refunded")}</span><button className="cv-button cv-button-quiet" type="button" onClick={() => setSelectedReceiptAppointment(appointment)}>{hi ? "विवरण देखें" : "View details"}</button></> : paymentState === "invoice_cancelled" ? <span className="cv-subtle">{hi ? "इनवॉइस रद्द" : "Invoice cancelled"}</span> : paymentAction ? <><span className="cv-subtle">{paymentState === "pending" ? (hi ? "भुगतान लंबित" : "Payment pending") : paymentState === "failed" ? (hi ? "भुगतान विफल" : "Payment failed") : paymentState === "cancelled" ? (hi ? "भुगतान रद्द" : "Payment cancelled") : (hi ? "भुगतान बाकी" : "Payment due")}</span><button className={`cv-button ${paymentAction === "pay" ? "cv-button-primary" : "cv-button-quiet"}`} type="button" disabled={paymentAction === "check_status" ? loading : paymentStartId !== null} onClick={() => paymentAction === "check_status" ? loadAppointments() : startAppointmentPayment(appointment)}>{paymentAction === "check_status" ? (loading ? (hi ? "जाँच रहे हैं…" : "Checking…") : (hi ? "भुगतान स्थिति जाँचें" : "Check payment status")) : paymentStartId === appointment.id ? (hi ? "तैयार हो रहा है…" : "Preparing…") : paymentAction === "retry" ? (hi ? "फिर भुगतान करें" : "Retry payment") : (hi ? "अभी भुगतान करें" : "Pay now")}</button></> : <span className="cv-subtle">{paymentState === "not_due" ? (appointment.payment_block_reason === "past" ? (hi ? "बीते हुए अपॉइंटमेंट के लिए भुगतान उपलब्ध नहीं है" : "Payment unavailable for a past appointment") : appointment.payment_block_reason === "cancelled" ? (hi ? "रद्द अपॉइंटमेंट के लिए भुगतान उपलब्ध नहीं है" : "Payment unavailable for a cancelled appointment") : (hi ? "इस अपॉइंटमेंट के लिए नया भुगतान उपलब्ध नहीं है" : "New payment is unavailable for this appointment")) : (hi ? "क्लिनिक का इनवॉइस अभी जारी नहीं हुआ" : "Clinic invoice not issued yet")}</span>}
         </div>}
         <div className="cv-appointment-actions">
           <button className="cv-button cv-button-quiet cv-button-download" type="button" onClick={() => downloadAppointmentSlip(appointment.id)} title="Download appointment confirmation slip PDF">
@@ -1217,6 +1232,15 @@ export function AppointmentsPage({ token, language = "en", user, recentAppointme
         onSubmit={rescheduleAppointment}
         SlotPickerComponent={AppointmentSlotPicker}
         language={language}
+      />
+      <AppointmentReceiptModal
+        isOpen={Boolean(selectedReceiptAppointment)}
+        onClose={() => setSelectedReceiptAppointment(null)}
+        appointment={selectedReceiptAppointment}
+        token={token}
+        language={language}
+        user={user}
+        patient={patient}
       />
     </>
   );

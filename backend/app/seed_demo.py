@@ -30,6 +30,7 @@ from app.models.clinical import (
     MedicalDocument,
     MedicalReport,
     PatientAllergy,
+    PatientVital,
     Prescription,
     PrescriptionItem,
 )
@@ -984,6 +985,7 @@ def _ensure_demo_clinical_records(
         "prescriptions_created": 0,
         "notes_created": 0,
         "documents_created": 0,
+        "vitals_created": 0,
     }
 
     # 1. Patient Allergies
@@ -1020,6 +1022,226 @@ def _ensure_demo_clinical_records(
             )
             db.add(allergy)
             counts["allergies_created"] += 1
+
+    # 1.5. Patient Vitals (Longitudinal observations for Aarav and Diya)
+    aarav_vitals = [
+        {
+            "days_ago": 60,
+            "bp_systolic": 142,
+            "bp_diastolic": 92,
+            "heart_rate": 82,
+            "spo2": 98,
+            "temperature_f": 98.6,
+            "respiratory_rate": 16,
+            "blood_glucose": 104.0,
+            "weight_kg": 76.5,
+            "status": "abnormal",
+            "notes": f"Baseline workplace health screening. Stage 1 hypertension noted ({SEED_MARKER}).",
+            "source": "clinical_encounter",
+        },
+        {
+            "days_ago": 45,
+            "bp_systolic": 140,
+            "bp_diastolic": 90,
+            "heart_rate": 78,
+            "spo2": 99,
+            "temperature_f": 98.4,
+            "respiratory_rate": 16,
+            "blood_glucose": 98.0,
+            "weight_kg": 76.0,
+            "status": "abnormal",
+            "notes": f"Home automated blood pressure log ({SEED_MARKER}).",
+            "source": "home_device",
+        },
+        {
+            "days_ago": 28,
+            "bp_systolic": 124,
+            "bp_diastolic": 80,
+            "heart_rate": 88,
+            "spo2": 98,
+            "temperature_f": 100.4,
+            "respiratory_rate": 18,
+            "blood_glucose": 96.0,
+            "weight_kg": 75.8,
+            "status": "abnormal",
+            "notes": f"Acute pharyngitis clinic check. Pyrexia and mild tachycardia ({SEED_MARKER}).",
+            "source": "clinical_encounter",
+        },
+        {
+            "days_ago": 21,
+            "bp_systolic": 122,
+            "bp_diastolic": 78,
+            "heart_rate": 76,
+            "spo2": 99,
+            "temperature_f": 98.6,
+            "respiratory_rate": 15,
+            "blood_glucose": 92.0,
+            "weight_kg": 75.5,
+            "status": "normal",
+            "notes": f"Allergic rhinitis consultation vitals ({SEED_MARKER}).",
+            "source": "clinical_encounter",
+        },
+        {
+            "days_ago": 14,
+            "bp_systolic": 138,
+            "bp_diastolic": 88,
+            "heart_rate": 72,
+            "spo2": 99,
+            "temperature_f": 98.6,
+            "respiratory_rate": 16,
+            "blood_glucose": 94.0,
+            "weight_kg": 75.2,
+            "status": "normal",
+            "notes": f"Cardiology consultation with Dr. Kabir. Blood pressure improving on regimen ({SEED_MARKER}).",
+            "source": "clinical_encounter",
+        },
+        {
+            "days_ago": 7,
+            "bp_systolic": 128,
+            "bp_diastolic": 82,
+            "heart_rate": 70,
+            "spo2": 99,
+            "temperature_f": 98.4,
+            "respiratory_rate": 15,
+            "blood_glucose": 90.0,
+            "weight_kg": 75.0,
+            "status": "normal",
+            "notes": f"Morning resting BP log ({SEED_MARKER}).",
+            "source": "home_device",
+        },
+        {
+            "days_ago": 1,
+            "bp_systolic": 120,
+            "bp_diastolic": 78,
+            "heart_rate": 68,
+            "spo2": 99,
+            "temperature_f": 98.6,
+            "respiratory_rate": 15,
+            "blood_glucose": 88.0,
+            "weight_kg": 74.8,
+            "status": "normal",
+            "notes": f"Resting home vitals check. Normotensive and euglycemic ({SEED_MARKER}).",
+            "source": "home_device",
+        },
+    ]
+
+    for v_data in aarav_vitals:
+        recorded_time = now - timedelta(days=v_data["days_ago"])
+        existing_vital = db.scalar(
+            select(PatientVital).where(
+                PatientVital.patient_user_id == aarav.id,
+                PatientVital.notes == v_data["notes"],
+            )
+        )
+        if existing_vital is None:
+            db.add(
+                PatientVital(
+                    patient_user_id=aarav.id,
+                    recorded_at=recorded_time,
+                    bp_systolic=v_data["bp_systolic"],
+                    bp_diastolic=v_data["bp_diastolic"],
+                    heart_rate=v_data["heart_rate"],
+                    spo2=v_data["spo2"],
+                    temperature_f=v_data["temperature_f"],
+                    respiratory_rate=v_data["respiratory_rate"],
+                    blood_glucose=v_data["blood_glucose"],
+                    weight_kg=v_data["weight_kg"],
+                    status=v_data["status"],
+                    notes=v_data["notes"],
+                    source=v_data["source"],
+                    created_at=recorded_time,
+                )
+            )
+            counts["vitals_created"] += 1
+
+    diya = patients[1] if len(patients) > 1 else None
+    if diya:
+        diya_vitals = [
+            {
+                "days_ago": 30,
+                "bp_systolic": 116,
+                "bp_diastolic": 76,
+                "heart_rate": 74,
+                "spo2": 99,
+                "temperature_f": 98.6,
+                "respiratory_rate": 15,
+                "blood_glucose": 88.0,
+                "weight_kg": 58.0,
+                "status": "normal",
+                "notes": f"Baseline wellness exam vitals ({SEED_MARKER}).",
+                "source": "clinical_encounter",
+            },
+            {
+                "days_ago": 20,
+                "bp_systolic": 118,
+                "bp_diastolic": 74,
+                "heart_rate": 72,
+                "spo2": 99,
+                "temperature_f": 98.4,
+                "respiratory_rate": 16,
+                "blood_glucose": 90.0,
+                "weight_kg": 57.8,
+                "status": "normal",
+                "notes": f"Routine checkup vitals ({SEED_MARKER}).",
+                "source": "clinical_encounter",
+            },
+            {
+                "days_ago": 10,
+                "bp_systolic": 114,
+                "bp_diastolic": 72,
+                "heart_rate": 70,
+                "spo2": 100,
+                "temperature_f": 98.6,
+                "respiratory_rate": 14,
+                "blood_glucose": 86.0,
+                "weight_kg": 57.5,
+                "status": "normal",
+                "notes": f"Pre-consultation vitals check ({SEED_MARKER}).",
+                "source": "clinical_encounter",
+            },
+            {
+                "days_ago": 2,
+                "bp_systolic": 112,
+                "bp_diastolic": 70,
+                "heart_rate": 68,
+                "spo2": 99,
+                "temperature_f": 98.4,
+                "respiratory_rate": 14,
+                "blood_glucose": 85.0,
+                "weight_kg": 57.3,
+                "status": "normal",
+                "notes": f"Home smart monitor sync ({SEED_MARKER}).",
+                "source": "home_device",
+            },
+        ]
+        for v_data in diya_vitals:
+            recorded_time = now - timedelta(days=v_data["days_ago"])
+            existing_vital = db.scalar(
+                select(PatientVital).where(
+                    PatientVital.patient_user_id == diya.id,
+                    PatientVital.notes == v_data["notes"],
+                )
+            )
+            if existing_vital is None:
+                db.add(
+                    PatientVital(
+                        patient_user_id=diya.id,
+                        recorded_at=recorded_time,
+                        bp_systolic=v_data["bp_systolic"],
+                        bp_diastolic=v_data["bp_diastolic"],
+                        heart_rate=v_data["heart_rate"],
+                        spo2=v_data["spo2"],
+                        temperature_f=v_data["temperature_f"],
+                        respiratory_rate=v_data["respiratory_rate"],
+                        blood_glucose=v_data["blood_glucose"],
+                        weight_kg=v_data["weight_kg"],
+                        status=v_data["status"],
+                        notes=v_data["notes"],
+                        source=v_data["source"],
+                        created_at=recorded_time,
+                    )
+                )
+                counts["vitals_created"] += 1
 
     # 2. AI Reports (5 comprehensive assessments)
     demo_reports = [
@@ -1429,8 +1651,28 @@ def _ensure_demo_clinical_records(
             db.add(note)
             counts["notes_created"] += 1
 
-    # 5. Medical Documents & Diagnostic Reports (6 physical PDFs generated on disk)
+    # 5. Medical Documents & Diagnostic Reports (8 physical PDFs generated on disk)
     demo_documents = [
+        {
+            "filename": "DEMO_Baseline_CMP_Lipid_Profile_Aarav_Demo.pdf",
+            "title": "Baseline Comprehensive Metabolic Panel (CMP) & Lipid Profile",
+            "document_type": "lab_report",
+            "days_ago": 60,
+            "category": "Clinical Biochemistry",
+            "parameters": [
+                ("Fasting Blood Sugar (Glucose)", "104 mg/dL", "70 - 99 mg/dL", "BORDERLINE HIGH"),
+                ("Glycated Hemoglobin (HbA1c)", "5.7 %", "< 5.7 % (Normal)", "BORDERLINE HIGH"),
+                ("Serum Creatinine", "0.98 mg/dL", "0.70 - 1.30 mg/dL", "NORMAL"),
+                ("Estimated GFR (eGFR)", "> 90 mL/min/1.73m²", "> 60 mL/min/1.73m²", "NORMAL"),
+                ("Blood Urea Nitrogen (BUN)", "16 mg/dL", "7 - 20 mg/dL", "NORMAL"),
+                ("Total Serum Cholesterol", "212 mg/dL", "< 200 mg/dL (Desirable)", "BORDERLINE HIGH"),
+                ("LDL Cholesterol", "135 mg/dL", "< 100 mg/dL (Optimal)", "HIGH"),
+                ("HDL Cholesterol", "42 mg/dL", "> 40 mg/dL (Normal)", "NORMAL"),
+                ("Serum Triglycerides", "175 mg/dL", "< 150 mg/dL (Normal)", "BORDERLINE HIGH"),
+            ],
+            "interpretation": "Baseline workplace metabolic screen. Demonstrates borderline impaired fasting glucose and mixed dyslipidemia with elevated LDL cholesterol and triglycerides. Lifestyle modification recommended.",
+            "doctor": "Dr. Neha Verma, MD (Biochemistry)",
+        },
         {
             "filename": "DEMO_CBC_Panel_Aarav_Demo.pdf",
             "title": "Complete Blood Count (CBC) Panel with Differential",
@@ -1540,6 +1782,24 @@ def _ensure_demo_clinical_records(
             "interpretation": "Spirometry demonstrates normal baseline ventilatory volumes and flow rates. No obstructive or restrictive ventilatory impairment observed.",
             "doctor": "Dr. Asha Demo, MD (General Medicine)",
         },
+        {
+            "filename": "DEMO_Followup_Lipid_Glucose_Aarav_Demo.pdf",
+            "title": "Follow-up Lipid Profile & Glycemic Evaluation",
+            "document_type": "lab_report",
+            "days_ago": 3,
+            "category": "Clinical Biochemistry",
+            "parameters": [
+                ("Fasting Blood Sugar (Glucose)", "88 mg/dL", "70 - 99 mg/dL", "NORMAL"),
+                ("Glycated Hemoglobin (HbA1c)", "5.3 %", "< 5.7 % (Normal)", "NORMAL"),
+                ("Serum Creatinine", "0.92 mg/dL", "0.70 - 1.30 mg/dL", "NORMAL"),
+                ("Total Serum Cholesterol", "174 mg/dL", "< 200 mg/dL (Desirable)", "NORMAL"),
+                ("LDL Cholesterol", "96 mg/dL", "< 100 mg/dL (Optimal)", "NORMAL"),
+                ("HDL Cholesterol", "52 mg/dL", "> 40 mg/dL (Normal)", "NORMAL"),
+                ("Serum Triglycerides", "128 mg/dL", "< 150 mg/dL (Normal)", "NORMAL"),
+            ],
+            "interpretation": "Repeat assessment following dietary sodium restriction, increased physical activity, and medical management. Excellent response with normalization of fasting glucose, HbA1c, LDL cholesterol, and triglycerides.",
+            "doctor": "Dr. Neha Verma, MD (Biochemistry)",
+        },
     ]
 
     for doc_data in demo_documents:
@@ -1622,18 +1882,96 @@ def _ensure_demo_clinical_records(
                 )
             )
             if existing_alg is None:
+                db.add(allergy)
+                counts["allergies_created"] += 1
+
+        # Sneha Vitals (Longitudinal observations)
+        sneha_vitals = [
+            {
+                "days_ago": 18,
+                "bp_systolic": 118,
+                "bp_diastolic": 76,
+                "heart_rate": 76,
+                "spo2": 98,
+                "temperature_f": 99.2,
+                "respiratory_rate": 16,
+                "blood_glucose": 92.0,
+                "weight_kg": 56.5,
+                "status": "normal",
+                "notes": f"Sore throat triage check ({SEED_MARKER}).",
+                "source": "clinical_encounter",
+            },
+            {
+                "days_ago": 12,
+                "bp_systolic": 120,
+                "bp_diastolic": 78,
+                "heart_rate": 74,
+                "spo2": 99,
+                "temperature_f": 98.6,
+                "respiratory_rate": 15,
+                "blood_glucose": 90.0,
+                "weight_kg": 56.2,
+                "status": "normal",
+                "notes": f"Follow-up consultation vitals ({SEED_MARKER}).",
+                "source": "clinical_encounter",
+            },
+            {
+                "days_ago": 7,
+                "bp_systolic": 116,
+                "bp_diastolic": 74,
+                "heart_rate": 72,
+                "spo2": 99,
+                "temperature_f": 98.4,
+                "respiratory_rate": 14,
+                "blood_glucose": 88.0,
+                "weight_kg": 56.0,
+                "status": "normal",
+                "notes": f"Annual wellness check vitals ({SEED_MARKER}).",
+                "source": "clinical_encounter",
+            },
+            {
+                "days_ago": 1,
+                "bp_systolic": 118,
+                "bp_diastolic": 76,
+                "heart_rate": 75,
+                "spo2": 98,
+                "temperature_f": 98.6,
+                "respiratory_rate": 16,
+                "blood_glucose": 89.0,
+                "weight_kg": 56.1,
+                "status": "normal",
+                "notes": f"Ambient scribe intake vitals ({SEED_MARKER}).",
+                "source": "clinical_encounter",
+            },
+        ]
+        for v_data in sneha_vitals:
+            recorded_time = now - timedelta(days=v_data["days_ago"])
+            existing_vital = db.scalar(
+                select(PatientVital).where(
+                    PatientVital.patient_user_id == sneha.id,
+                    PatientVital.notes == v_data["notes"],
+                )
+            )
+            if existing_vital is None:
                 db.add(
-                    PatientAllergy(
+                    PatientVital(
                         patient_user_id=sneha.id,
-                        allergen_or_condition=allergen,
-                        category=cat,
-                        severity=sev,
-                        reaction=reaction,
-                        recorded_by_user_id=dr_asha_user.id if dr_asha_user else sneha.id,
-                        is_active=True,
+                        recorded_at=recorded_time,
+                        bp_systolic=v_data["bp_systolic"],
+                        bp_diastolic=v_data["bp_diastolic"],
+                        heart_rate=v_data["heart_rate"],
+                        spo2=v_data["spo2"],
+                        temperature_f=v_data["temperature_f"],
+                        respiratory_rate=v_data["respiratory_rate"],
+                        blood_glucose=v_data["blood_glucose"],
+                        weight_kg=v_data["weight_kg"],
+                        status=v_data["status"],
+                        notes=v_data["notes"],
+                        source=v_data["source"],
+                        created_at=recorded_time,
                     )
                 )
-                counts["allergies_created"] += 1
+                counts["vitals_created"] += 1
 
         # Sneha AI Reports (5 comprehensive assessments)
         sneha_reports = [
@@ -2152,6 +2490,7 @@ def clean_demo_data(db: Session) -> dict[str, int]:
         raise RuntimeError("Demo cleaning is disabled unless APP_ENV is development or test.")
 
     cleaned_counts: dict[str, int] = {
+        "vitals_removed": 0,
         "prescription_items_removed": 0,
         "prescriptions_removed": 0,
         "clinical_notes_removed": 0,
@@ -2277,6 +2616,16 @@ def clean_demo_data(db: Session) -> dict[str, int]:
             )
         ).rowcount
         cleaned_counts["allergies_removed"] = deleted_allergies
+
+    # 5.5. Patient Vitals
+    if demo_user_ids:
+        deleted_vitals = db.execute(
+            delete(PatientVital).where(
+                PatientVital.patient_user_id.in_(demo_user_ids)
+                | PatientVital.notes.like(f"%{SEED_MARKER}%")
+            )
+        ).rowcount
+        cleaned_counts["vitals_removed"] = deleted_vitals
 
     # 6. Assistant Messages & Conversations
     demo_conversations = (

@@ -231,6 +231,43 @@ class MedicalDocumentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class PatientVitalCreate(BaseModel):
+    recorded_at: datetime | None = None
+    bp_systolic: int | None = Field(None, ge=50, le=280)
+    bp_diastolic: int | None = Field(None, ge=30, le=180)
+    heart_rate: int | None = Field(None, ge=30, le=240)
+    spo2: int | None = Field(None, ge=50, le=100)
+    temperature_f: float | None = Field(None, ge=90.0, le=110.0)
+    respiratory_rate: int | None = Field(None, ge=6, le=60)
+    blood_glucose: float | None = Field(None, ge=20.0, le=600.0)
+    weight_kg: float | None = Field(None, ge=1.0, le=300.0)
+    status: str = "normal"
+    notes: str | None = None
+    source: str = "clinical_encounter"
+    encounter_id: int | None = None
+
+
+class PatientVitalRead(BaseModel):
+    id: int | str
+    patient_user_id: int
+    recorded_at: datetime
+    bp_systolic: int | None = None
+    bp_diastolic: int | None = None
+    heart_rate: int | None = None
+    spo2: int | None = None
+    temperature_f: float | None = None
+    respiratory_rate: int | None = None
+    blood_glucose: float | None = None
+    weight_kg: float | None = None
+    status: str = "normal"
+    notes: str | None = None
+    source: str = "clinical_encounter"
+    encounter_id: int | None = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 # ============================================================================
 # Timeline & Patient Overview
 # ============================================================================
@@ -272,6 +309,10 @@ class PatientOverviewResponse(BaseModel):
     recent_invoices: list[dict[str, Any]] = Field(default_factory=list)
     upcoming_appointments: list[dict[str, Any]] = Field(default_factory=list)
     past_appointments: list[dict[str, Any]] = Field(default_factory=list)
+    total_counts: dict[str, int] = Field(default_factory=dict)
+    follow_up_tasks: list[dict[str, Any]] = Field(default_factory=list)
+    care_team: list[dict[str, Any]] = Field(default_factory=list)
+    health_status_summary: str | None = None
 
 
 # ============================================================================

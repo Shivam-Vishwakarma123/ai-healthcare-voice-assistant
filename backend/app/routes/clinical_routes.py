@@ -34,6 +34,7 @@ from app.models.clinical import (
     MedicalDocument,
     MedicalReport,
     PatientAllergy,
+    PatientVital,
     Prescription,
     PrescriptionItem,
 )
@@ -61,6 +62,8 @@ from app.schemas.clinical import (
     PatientOverviewResponse,
     PatientTimelineEvent,
     PatientTimelineResponse,
+    PatientVitalCreate,
+    PatientVitalRead,
     PrescriptionAIDraftRequest,
     PrescriptionCreate,
     PrescriptionItemCreate,
@@ -355,6 +358,35 @@ def get_patient_timeline(
             )
         )
 
+    # 8. Longitudinal Vital Signs Observations
+    vitals = db.scalars(
+        select(PatientVital).where(PatientVital.patient_user_id == target_id)
+    ).all()
+    for vit in vitals:
+        events.append(
+            PatientTimelineEvent(
+                id=f"vit-{vit.id}",
+                event_type="vital",
+                category="clinician" if vit.source == "clinical_encounter" else "patient",
+                title=f"Vital Signs ({vit.status.replace('_', ' ').title()})",
+                description=f"BP: {vit.bp_systolic}/{vit.bp_diastolic} mmHg • HR: {vit.heart_rate or '—'} bpm • SpO2: {vit.spo2 or '—'}% • Temp: {vit.temperature_f or '—'}°F. {vit.notes or ''}".strip(),
+                timestamp=vit.recorded_at,
+                actor_name="Clinical Care Team" if vit.source == "clinical_encounter" else "Patient Log",
+                actor_role="clinician" if vit.source == "clinical_encounter" else "patient",
+                status=vit.status,
+                resource_id=vit.id,
+                details={
+                    "bp_systolic": vit.bp_systolic,
+                    "bp_diastolic": vit.bp_diastolic,
+                    "heart_rate": vit.heart_rate,
+                    "spo2": vit.spo2,
+                    "temperature_f": vit.temperature_f,
+                    "blood_glucose": vit.blood_glucose,
+                    "status": vit.status,
+                },
+            )
+        )
+
     # Sort descending by timestamp
     events.sort(key=lambda x: x.timestamp, reverse=True)
 
@@ -474,74 +506,128 @@ def get_patient_overview(
         for inv in invoices
     ]
 
-    # Recent longitudinal vitals
+    # Longitudinal vitals from database
+    db_vitals = db.scalars(
+        select(PatientVital)
+        .where(PatientVital.patient_user_id == target_id)
+        .order_by(PatientVital.recorded_at.desc())
+        .limit(30)
+    ).all()
     recent_vitals = [
         {
-            "id": "vit-1",
-            "recorded_at": (now_utc - timedelta(hours=3)).isoformat(),
-            "bp_systolic": 122,
-            "bp_diastolic": 80,
-            "heart_rate": 72,
-            "spo2": 98,
-            "temperature_f": 98.4,
-            "respiratory_rate": 16,
-            "blood_glucose": 96,
-            "status": "normal",
-            "notes": "Resting seated measurement, regular rhythm.",
-        },
-        {
-            "id": "vit-2",
-            "recorded_at": (now_utc - timedelta(days=7)).isoformat(),
-            "bp_systolic": 126,
-            "bp_diastolic": 82,
-            "heart_rate": 74,
-            "spo2": 97,
-            "temperature_f": 98.6,
-            "respiratory_rate": 16,
-            "blood_glucose": 102,
-            "status": "normal",
-            "notes": "Follow-up visit, post-gastroenteritis recovery.",
-        },
-        {
-            "id": "vit-3",
-            "recorded_at": (now_utc - timedelta(days=14)).isoformat(),
-            "bp_systolic": 142,
-            "bp_diastolic": 90,
-            "heart_rate": 80,
-            "spo2": 97,
-            "temperature_f": 98.8,
-            "respiratory_rate": 18,
-            "blood_glucose": 98,
-            "status": "stage_1_hypertension",
-            "notes": "Cardiology clinic reading, right arm seated.",
-        },
-        {
-            "id": "vit-4",
-            "recorded_at": (now_utc - timedelta(days=21)).isoformat(),
-            "bp_systolic": 136,
-            "bp_diastolic": 86,
-            "heart_rate": 76,
-            "spo2": 98,
-            "temperature_f": 98.6,
-            "respiratory_rate": 16,
-            "blood_glucose": 94,
-            "status": "elevated",
-            "notes": "Allergy clinic baseline check.",
-        },
-        {
-            "id": "vit-5",
-            "recorded_at": (now_utc - timedelta(days=28)).isoformat(),
-            "bp_systolic": 128,
-            "bp_diastolic": 84,
-            "heart_rate": 88,
-            "spo2": 96,
-            "temperature_f": 100.4,
-            "respiratory_rate": 20,
-            "blood_glucose": 105,
-            "status": "febrile",
-            "notes": "Acute pharyngitis evaluation, low-grade fever present.",
-        },
+            "id": v.id,
+            "recorded_at": v.recorded_at.isoformat(),
+            "bp_systolic": v.bp_systolic,
+            "bp_diastolic": v.bp_diastolic,
+            "heart_rate": v.heart_rate,
+            "spo2": v.spo2,
+            "temperature_f": v.temperature_f,
+            "respiratory_rate": v.respiratory_rate,
+            "blood_glucose": v.blood_glucose,
+            "weight_kg": v.weight_kg,
+            "status": v.status,
+            "notes": v.notes,
+            "source": v.source,
+            "encounter_id": v.encounter_id,
+        }
+        for v in db_vitals
     ]
+
+    # Total record counts
+    docs_count = db.scalar(select(func.count(MedicalDocument.id)).where(MedicalDocument.patient_user_id == target_id)) or 0
+    total_rx_count = db.scalar(select(func.count(Prescription.id)).where(Prescription.patient_user_id == target_id)) or 0
+    total_notes_count = db.scalar(select(func.count(ClinicalNote.id)).where(ClinicalNote.patient_user_id == target_id)) or 0
+    total_reports_count = db.scalar(select(func.count(MedicalReport.id)).where(MedicalReport.patient_user_id == target_id)) or 0
+    total_allergies_count = len(allergies)
+    total_vitals_count = db.scalar(select(func.count(PatientVital.id)).where(PatientVital.patient_user_id == target_id)) or 0
+    total_convs_count = db.scalar(select(func.count(AssistantConversation.id)).where(AssistantConversation.user_id == target_id)) or 0
+    total_appts_count = len(appts)
+    total_records = (
+        total_appts_count
+        + total_notes_count
+        + total_rx_count
+        + total_reports_count
+        + docs_count
+        + total_vitals_count
+    )
+
+    total_counts = {
+        "appointments": total_appts_count,
+        "upcoming_appointments": len(upcoming_appts),
+        "past_appointments": len(past_appts),
+        "prescriptions": total_rx_count,
+        "active_medications": sum(len(p.items) for p in prescriptions),
+        "notes": total_notes_count,
+        "reports": total_reports_count,
+        "allergies": total_allergies_count,
+        "documents": docs_count,
+        "vitals": total_vitals_count,
+        "assessments": total_convs_count,
+        "total_records": total_records,
+    }
+
+    # Clinical follow-up tasks from finalized notes & upcoming appointments
+    follow_up_tasks = []
+    for note in notes:
+        if note.follow_up_instructions:
+            doc = db.get(Doctor, note.doctor_id)
+            follow_up_tasks.append({
+                "id": f"note-followup-{note.id}",
+                "source": "clinical_note",
+                "doctor_name": doc.full_name if doc else "Attending Clinician",
+                "task": note.follow_up_instructions,
+                "recorded_at": (note.finalized_at or note.created_at).isoformat(),
+                "status": "pending_action",
+            })
+    for ua in upcoming_appts:
+        follow_up_tasks.append({
+            "id": f"appt-followup-{ua['id']}",
+            "source": "appointment",
+            "doctor_name": ua["doctor_name"],
+            "task": f"Upcoming consultation ({ua['consultation_type'].replace('_', ' ')} with {ua['doctor_name']}).",
+            "recorded_at": ua["scheduled_for"],
+            "status": "scheduled",
+        })
+
+    # Care team information
+    care_team_map = {}
+    for a in appts:
+        if a.doctor_id and a.doctor_id not in care_team_map:
+            doc = db.get(Doctor, a.doctor_id)
+            if doc:
+                hosp = db.get(Hospital, doc.hospital_id) if doc.hospital_id else None
+                care_team_map[doc.id] = {
+                    "doctor_id": doc.id,
+                    "doctor_name": doc.full_name,
+                    "specialty": doc.specialty,
+                    "hospital_name": hosp.name if hosp else "CareVoice Telemedicine",
+                    "consultation_mode": doc.consultation_mode,
+                    "last_interaction": a.scheduled_for.isoformat(),
+                }
+    care_team = list(care_team_map.values())
+
+    # Dynamic clinical overview summary
+    status_parts = []
+    if allergies:
+        status_parts.append(f"{len(allergies)} active allergy alert{'s' if len(allergies) > 1 else ''} recorded")
+    else:
+        status_parts.append("No active allergies on file")
+
+    if prescriptions:
+        med_count = sum(len(p.items) for p in prescriptions)
+        status_parts.append(f"{med_count} active medication{'s' if med_count > 1 else ''} prescribed")
+
+    if recent_vitals:
+        latest_vit = recent_vitals[0]
+        v_status = latest_vit.get("status", "normal").replace("_", " ")
+        status_parts.append(f"Latest vitals ({latest_vit.get('bp_systolic')}/{latest_vit.get('bp_diastolic')} mmHg) classified as {v_status}")
+
+    if upcoming_appts:
+        status_parts.append(f"Next consultation scheduled with {upcoming_appts[0]['doctor_name']}")
+    else:
+        status_parts.append("No upcoming appointments scheduled")
+
+    health_status_summary = ". ".join(status_parts) + "."
 
     record_audit(db, request, "records.overview.view", actor=user, details={"patient_user_id": target_id})
     db.commit()
@@ -561,6 +647,10 @@ def get_patient_overview(
         recent_invoices=recent_invoices,
         upcoming_appointments=upcoming_appts[:5],
         past_appointments=past_appts[:5],
+        total_counts=total_counts,
+        follow_up_tasks=follow_up_tasks,
+        care_team=care_team,
+        health_status_summary=health_status_summary,
     )
 
 
@@ -1964,6 +2054,203 @@ async def create_ambient_scribe_draft(
 # ============================================================================
 # 8. Protocol Monitor & Clinical Decision Support
 # ============================================================================
+
+# Lists longitudinal vital sign observations for a patient with optional filters.
+@router.get("/vitals", response_model=list[PatientVitalRead])
+def list_patient_vitals(
+    request: Request,
+    patient_user_id: int | None = Query(None),
+    metric: str | None = Query(None, description="Filter by vital sign metric"),
+    start_date: datetime | None = Query(None),
+    end_date: datetime | None = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    target_id = patient_user_id or user.id
+    _check_doctor_or_patient_access(db, user, target_id)
+
+    query = select(PatientVital).where(PatientVital.patient_user_id == target_id)
+    if start_date:
+        query = query.where(PatientVital.recorded_at >= start_date)
+    if end_date:
+        query = query.where(PatientVital.recorded_at <= end_date)
+    vitals = db.scalars(query.order_by(PatientVital.recorded_at.desc()).limit(limit)).all()
+    record_audit(db, request, "records.vitals.list", actor=user, details={"patient_id": target_id, "count": len(vitals)})
+    db.commit()
+    return [PatientVitalRead.model_validate(v) for v in vitals]
+
+
+# Records a new vital sign observation with clinical range validation and protocol tagging.
+@router.post("/vitals", response_model=PatientVitalRead, status_code=status.HTTP_201_CREATED)
+def record_patient_vital(
+    payload: PatientVitalCreate,
+    request: Request,
+    patient_user_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    target_id = patient_user_id or user.id
+    _check_doctor_or_patient_access(db, user, target_id)
+
+    # Evaluate vital status using clinical rules if not explicitly provided
+    computed_status = payload.status
+    if computed_status == "normal":
+        if (payload.bp_systolic and payload.bp_systolic >= 140) or (payload.bp_diastolic and payload.bp_diastolic >= 90):
+            computed_status = "stage_1_hypertension"
+        elif (payload.bp_systolic and payload.bp_systolic >= 130) or (payload.bp_diastolic and payload.bp_diastolic >= 85):
+            computed_status = "elevated"
+        elif payload.temperature_f and payload.temperature_f >= 100.4:
+            computed_status = "febrile"
+        elif payload.spo2 and payload.spo2 < 94:
+            computed_status = "hypoxemia"
+
+    vital = PatientVital(
+        patient_user_id=target_id,
+        recorded_at=payload.recorded_at or datetime.now(timezone.utc),
+        bp_systolic=payload.bp_systolic,
+        bp_diastolic=payload.bp_diastolic,
+        heart_rate=payload.heart_rate,
+        spo2=payload.spo2,
+        temperature_f=payload.temperature_f,
+        respiratory_rate=payload.respiratory_rate,
+        blood_glucose=payload.blood_glucose,
+        weight_kg=payload.weight_kg,
+        status=computed_status,
+        notes=payload.notes,
+        source=payload.source,
+        encounter_id=payload.encounter_id,
+    )
+    db.add(vital)
+    db.commit()
+    db.refresh(vital)
+    record_audit(db, request, "records.vitals.create", actor=user, details={"vital_id": vital.id, "status": vital.status})
+    db.commit()
+    return PatientVitalRead.model_validate(vital)
+
+
+# Generates AI-powered health insights grounded in the patient's authorized longitudinal records.
+@router.get("/insights")
+def get_patient_health_insights(
+    request: Request,
+    patient_user_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    target_id = patient_user_id or user.id
+    _check_doctor_or_patient_access(db, user, target_id)
+
+    target_patient = db.get(User, target_id)
+    if not target_patient:
+        raise HTTPException(status_code=404, detail="Patient user not found.")
+
+    allergies = db.scalars(
+        select(PatientAllergy).where(PatientAllergy.patient_user_id == target_id, PatientAllergy.is_active == True)  # noqa: E712
+    ).all()
+    notes = db.scalars(
+        select(ClinicalNote).where(ClinicalNote.patient_user_id == target_id, ClinicalNote.status == "finalized")
+        .order_by(ClinicalNote.created_at.desc()).limit(5)
+    ).all()
+    prescriptions = db.scalars(
+        select(Prescription).where(Prescription.patient_user_id == target_id, Prescription.status == "finalized")
+        .order_by(Prescription.created_at.desc()).limit(5)
+    ).all()
+    vitals = db.scalars(
+        select(PatientVital).where(PatientVital.patient_user_id == target_id)
+        .order_by(PatientVital.recorded_at.desc()).limit(10)
+    ).all()
+    upcoming_appts = db.scalars(
+        select(Appointment).where(
+            Appointment.patient_user_id == target_id,
+            Appointment.status.in_(["scheduled", "confirmed"]),
+            Appointment.scheduled_for >= datetime.now(timezone.utc),
+        ).order_by(Appointment.scheduled_for.asc()).limit(3)
+    ).all()
+
+    insights = []
+
+    # 1. Vital Trends Insight
+    if vitals:
+        latest_v = vitals[0]
+        if len(vitals) >= 2:
+            earliest_v = vitals[-1]
+            bp_trend = "stabilized" if latest_v.bp_systolic and latest_v.bp_systolic <= 130 else "recorded"
+            summary_txt = (
+                f"Longitudinal monitoring over {len(vitals)} recorded sessions shows blood pressure {bp_trend} "
+                f"at {latest_v.bp_systolic}/{latest_v.bp_diastolic} mmHg (from {earliest_v.bp_systolic}/{earliest_v.bp_diastolic} mmHg initially). "
+                f"Resting heart rate is {latest_v.heart_rate or 'steady'} bpm and blood oxygen saturation is optimal at {latest_v.spo2 or 98}%."
+            )
+        else:
+            summary_txt = f"Latest recorded vitals: BP {latest_v.bp_systolic}/{latest_v.bp_diastolic} mmHg, HR {latest_v.heart_rate} bpm, SpO2 {latest_v.spo2}%. Status: {latest_v.status.replace('_', ' ').title()}."
+        insights.append({
+            "id": "insight-vitals",
+            "category": "vital_trends",
+            "title": "Vital Signs Stability & Trajectory",
+            "summary": summary_txt,
+            "badge": "Clinical Trend",
+            "grounding_sources": [{"type": "vital", "id": latest_v.id, "label": f"Encounter Vital #{latest_v.id}"}],
+        })
+
+    # 2. Medication & Allergy Safety Insight
+    active_meds = []
+    for p in prescriptions:
+        for it in p.items:
+            active_meds.append(f"{it.medication_name} {it.strength or ''} ({it.frequency})")
+
+    if active_meds or allergies:
+        alg_summary = ", ".join([f"{a.allergen_or_condition} ({a.severity})" for a in allergies]) if allergies else "No active allergies documented"
+        meds_summary = ", ".join(active_meds[:4]) if active_meds else "No active prescription medications"
+        insights.append({
+            "id": "insight-safety",
+            "category": "safety_profile",
+            "title": "Medication Safety & Known Allergies",
+            "summary": f"Active regimen includes: {meds_summary}. Safety profile monitors documented alerts: {alg_summary}. Always notify prescribing clinicians before starting over-the-counter supplements.",
+            "badge": "Patient Safety",
+            "grounding_sources": [
+                *([{"type": "prescription", "id": p.id, "label": f"Rx {p.prescription_number}"} for p in prescriptions[:2]]),
+                *([{"type": "allergy", "id": a.id, "label": f"Allergy: {a.allergen_or_condition}"} for a in allergies[:2]]),
+            ],
+        })
+
+    # 3. Clinical Follow-up & Care Plan Insight
+    follow_ups = [n.follow_up_instructions for n in notes if n.follow_up_instructions]
+    if follow_ups or upcoming_appts:
+        appt_note = f"Next consultation scheduled for {upcoming_appts[0].scheduled_for.strftime('%d %b %Y')}." if upcoming_appts else "No upcoming appointments currently booked."
+        plan_note = f"Clinician instructions: {follow_ups[0]}" if follow_ups else "Maintain prescribed hydration, nutrition, and routine wellness protocols."
+        insights.append({
+            "id": "insight-care-plan",
+            "category": "care_continuity",
+            "title": "Care Continuity & Physician Guidance",
+            "summary": f"{plan_note} {appt_note}",
+            "badge": "Actionable Plan",
+            "grounding_sources": [{"type": "note", "id": notes[0].id, "label": f"Doctor Note #{notes[0].id}"}] if notes else [],
+        })
+
+    # Suggested Questions for Upcoming Consultation
+    suggested_questions = []
+    if upcoming_appts:
+        suggested_questions.append("How do my recent vital sign trends and diagnostic parameters compare to my clinical targets?")
+        if prescriptions:
+            suggested_questions.append("Should I continue my current prescription dosages or schedule any follow-up lab panels?")
+        if allergies:
+            suggested_questions.append(f"Are there any cross-reactivity precautions with my documented allergies ({allergies[0].allergen_or_condition})?")
+    else:
+        suggested_questions.append("When is my next recommended preventive health checkup or routine panel?")
+        suggested_questions.append("Are there any lifestyle or dietary adjustments to maintain my current vital sign parameters?")
+
+    record_audit(db, request, "records.insights.view", actor=user, details={"patient_id": target_id, "insights_count": len(insights)})
+    db.commit()
+
+    return {
+        "patient_user_id": target_id,
+        "patient_name": target_patient.full_name,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "is_ai_generated": True,
+        "disclaimer": "CareVoice AI insights are educational summaries synthesized from your verified health records. They do not constitute clinical diagnosis or direct medical advice.",
+        "insights": insights,
+        "suggested_questions": suggested_questions,
+    }
+
 
 # Evaluates patient vital signs against clinical protocols (SpO2, Dengue, Hypoglycemia).
 @router.post("/vitals/evaluate", response_model=VitalsEvaluationResponse)

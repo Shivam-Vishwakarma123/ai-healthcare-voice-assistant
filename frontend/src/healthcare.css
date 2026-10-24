@@ -865,14 +865,16 @@ body.cv-menu-open {
   z-index: 25;
   top: 0;
   display: flex;
-  height: 70px;
+  height: 64px;
+  min-height: 64px;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 0 clamp(16px, 3vw, 44px);
-  border-bottom: 1px solid var(--cv-line);
+  padding: 0 clamp(16px, 2.5vw, 36px);
+  border-bottom: 1px solid var(--cv-border);
   background: var(--cv-surface-translucent);
   backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }
 
 .cv-topbar-left {
@@ -889,63 +891,80 @@ body.cv-menu-open {
 .cv-breadcrumb {
   display: flex;
   align-items: center;
-  gap: 10px;
-  color: var(--cv-text-faint);
-  font-size: 12px;
+  gap: 8px;
+  color: var(--cv-text-muted);
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .cv-breadcrumb strong {
-  color: var(--cv-text-secondary);
-  font-size: 12px;
+  color: var(--cv-text-primary);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .cv-topbar-actions {
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 14px;
 }
 
 .cv-session-status {
+  display: inline-flex;
+  align-items: center;
   color: var(--cv-text-muted);
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .cv-session-status i,
 .cv-hero-kicker i {
   display: inline-block;
-  width: 7px;
-  height: 7px;
-  margin-right: 7px;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
   border-radius: 50%;
-  background: var(--cv-accent-text);
+  background: #10B981;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
 }
 
 .cv-language-toggle {
   display: inline-flex;
+  align-items: center;
+  height: 36px;
+  min-height: 36px;
+  box-sizing: border-box;
   gap: 2px;
   padding: 3px;
-  border: 1px solid var(--cv-line);
+  border: 1px solid var(--cv-border-control);
   border-radius: 9px;
   background: var(--cv-surface-muted);
 }
 
 .cv-language-toggle button {
   min-width: 32px;
-  min-height: 27px;
-  padding: 2px 6px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 8px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--cv-text-muted);
   cursor: pointer;
-  font-size: 10px;
-  font-weight: 800;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all .15s ease;
 }
 
 .cv-language-toggle button[aria-pressed="true"] {
   background: var(--cv-surface);
-  color: var(--cv-green-strong);
-  box-shadow: 0 1px 4px var(--cv-shadow-color);
+  color: var(--cv-accent);
+  box-shadow: 0 1px 3px var(--cv-shadow-color);
+  font-weight: 800;
 }
 
 .cv-mobile-signout {
@@ -1716,6 +1735,7 @@ body.cv-menu-open {
   align-items: center;
   gap: 10px;
   padding: 0 14px;
+  margin-bottom: var(--space-lg, 24px);
   border: 1px solid var(--cv-border-control);
   border-radius: 12px;
   background: var(--cv-surface);
@@ -2991,11 +3011,11 @@ body.cv-menu-open {
 /* Wide Screen Monitors (1440px+) */
 @media (min-width: 1441px) {
   .cv-main {
-    max-width: 1440px;
+    max-width: none;
   }
 
   .cv-topbar {
-    max-width: 1440px;
+    max-width: none;
   }
 
   .cv-content {
@@ -5147,7 +5167,7 @@ body.cv-menu-open {
 }
 
 .cv-clinical-table tr.cv-row-abnormal td {
-  background-color: #fffbeb;
+  background-color: var(--cv-warning-surface, #fffbeb);
 }
 
 /* Lists and Warnings */
@@ -5164,12 +5184,12 @@ body.cv-menu-open {
 
 .cv-warning-box {
   padding: 12px 14px;
-  background-color: #fef2f2;
-  border: 1px solid #fecaca;
+  background-color: var(--cv-danger-surface, #fef2f2);
+  border: 1px solid var(--cv-danger-border, #fecaca);
   border-radius: 10px;
   font-size: 12px;
   line-height: 1.5;
-  color: #991b1b;
+  color: var(--cv-danger-text, #991b1b);
 }
 
 /* Clinical Citations */
@@ -5392,11 +5412,14 @@ body.cv-menu-open {
 
   /* Target printable area and make it and all children visible */
   #cv-printable-area,
-  #cv-printable-area * {
+  #cv-printable-area *,
+  #appointment-receipt-view,
+  #appointment-receipt-view * {
     visibility: visible !important;
   }
 
-  #cv-printable-area {
+  #cv-printable-area,
+  #appointment-receipt-view {
     position: absolute !important;
     left: 0 !important;
     top: 0 !important;
