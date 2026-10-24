@@ -310,6 +310,9 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
     return matchesFilter && matchesSearch;
   });
 
+  const finalizedRxCount = prescriptions.filter((rx) => !(rx.status === "draft" || rx.is_ai_draft)).length;
+  const draftRxCount = prescriptions.filter((rx) => rx.status === "draft" || rx.is_ai_draft).length;
+
   const filteredNotes = notes.filter((n) => {
     const isDraft = n.status === "draft" || n.is_ai_draft;
     const matchesFilter =
@@ -443,13 +446,14 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
               : "Access your consolidated health history, AI triage assessments, doctor-signed prescriptions, clinical notes, and diagnostic records."
           }
         />
-        <div style={{ alignSelf: "flex-start", marginTop: "10px" }}>
+        <div className="health-records-header-actions">
           <button
+            type="button"
             className="cv-btn cv-btn-secondary"
             onClick={exportFHIRBundle}
             title="Export standard HL7 FHIR R4 JSON Bundle"
           >
-            <span>📥</span>
+            <span aria-hidden="true">📥</span>
             <span>{isHindi ? "FHIR R4 निर्यात" : "Export FHIR R4"}</span>
           </button>
         </div>
@@ -459,14 +463,17 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
 
       {/* Allergies Notice Banner */}
       {allergies.length > 0 && (
-        <div className="cv-alert cv-alert-warning" style={{ marginBottom: "24px" }}>
-          <span style={{ fontSize: "18px" }}>⚠️</span>
+        <div className="cv-alert cv-alert-warning health-records-allergy-alert" style={{ marginBottom: "24px" }}>
+          <span style={{ fontSize: "20px" }} aria-hidden="true">⚠️</span>
           <div style={{ flex: 1 }}>
-            <strong>{isHindi ? "सत्यापित मरीज एलर्जी व प्रतिकूल प्रतिक्रियाएं:" : "Recorded Patient Allergies & Adverse Reactions:"}</strong>
-            <div style={{ marginTop: "6px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
+            <strong style={{ fontSize: "14px" }}>
+              {isHindi ? "सत्यापित मरीज एलर्जी व प्रतिकूल प्रतिक्रियाएं:" : "Recorded Patient Allergies & Adverse Reactions:"}
+            </strong>
+            <div style={{ marginTop: "8px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
               {allergies.map((al) => (
-                <span key={al.id} className="cv-badge cv-badge-urgent">
-                  {al.allergen_or_condition} ({al.severity})
+                <span key={al.id} className="health-records-allergy-badge">
+                  <span aria-hidden="true">⛔</span>
+                  <span>{al.allergen_or_condition} ({al.severity})</span>
                 </span>
               ))}
             </div>
@@ -829,7 +836,7 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                   </button>
                 </div>
               ) : (
-                <div style={{ display: "grid", gap: "16px" }}>
+                <div className="health-records-cards-grid">
                   {filteredReports.map((rep) => {
                     const badge = getUrgencyBadgeConfig(rep.urgency_level);
                     const isDownloading = downloadingId === `rep-${rep.report_id}`;
@@ -1141,17 +1148,19 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                 />
                 <div className="health-records-filter-strip" role="group" aria-label={isHindi ? "पर्चे फ़िल्टर" : "Prescription status filters"}>
                   {[
-                    { id: "all", label: isHindi ? "सभी" : "All" },
-                    { id: "finalized", label: isHindi ? "अंतिम हस्ताक्षरित" : "Finalized (Signed)" },
-                    { id: "draft", label: isHindi ? "AI ड्राफ्ट" : "AI Drafts" },
+                    { id: "all", label: isHindi ? "सभी" : "All", count: prescriptions.length },
+                    { id: "finalized", label: isHindi ? "डॉक्टर हस्ताक्षरित" : "Doctor Signed", count: finalizedRxCount },
+                    { id: "draft", label: isHindi ? "AI ड्राफ्ट" : "AI Drafts", count: draftRxCount },
                   ].map((f) => (
                     <button
                       key={f.id}
                       type="button"
                       className={`cv-btn cv-btn-xs ${rxFilter === f.id ? "cv-btn-secondary" : "cv-btn-ghost"}`}
                       onClick={() => setRxFilter(f.id)}
+                      style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
                     >
-                      {f.label}
+                      <span>{f.label}</span>
+                      <span className="cv-filter-count-badge">{f.count}</span>
                     </button>
                   ))}
                 </div>
@@ -1183,28 +1192,133 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                   </button>
                 </div>
               ) : (
-                <div style={{ display: "grid", gap: "20px" }}>
+                <div className="health-records-cards-grid">
                   {filteredPrescriptions.map((rx) => {
                     const isDownloading = downloadingId === `rx-${rx.id}`;
                     const isDraft = rx.status === "draft" || rx.is_ai_draft;
                     return (
-                      <div key={rx.id} className="record-card record-card-rx">
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "10px", borderBottom: "1px solid var(--cv-border-soft)", paddingBottom: "14px", marginBottom: "14px" }}>
-                          <div>
-                            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                              <span style={{ fontSize: "20px", fontWeight: "900", color: "var(--cv-accent)" }}>℞</span>
-                              <h3 style={{ margin: 0, fontSize: "17px", color: "var(--cv-text-primary)" }}>
-                                {rx.prescription_number}
-                              </h3>
-                              <span className={`cv-badge ${isDraft ? "cv-badge-warning" : "cv-badge-success"}`} style={{ textTransform: "uppercase" }}>
-                                {isDraft ? "AI Draft" : rx.status}
-                              </span>
-                            </div>
-                            <div style={{ fontSize: "12px", color: "var(--cv-text-muted)", marginTop: "4px" }}>
-                              Prescribed by <strong style={{ color: "var(--cv-text-primary)" }}>Dr. {rx.doctor_name || "Clinician"}</strong> on {formatDate(rx.finalized_at || rx.created_at)}
-                            </div>
+                      <div key={rx.id} className={`record-card record-card-rx ${isDraft ? "is-draft" : ""}`}>
+                        <div className="record-card-rx-header">
+                          <div className="record-card-rx-title-group">
+                            <span className="rx-symbol" aria-hidden="true">℞</span>
+                            <h3 className="record-card-rx-title">{rx.prescription_number}</h3>
+                            <span className={`cv-badge ${isDraft ? "cv-badge-draft-pill" : "cv-badge-signed-pill"}`}>
+                              {isDraft
+                                ? (isHindi ? "⚡ AI ड्राफ्ट • अहस्ताक्षरित" : "⚡ AI DRAFT • UNSIGNED")
+                                : (isHindi ? "✓ डॉक्टर हस्ताक्षरित" : "✓ DOCTOR SIGNED")}
+                            </span>
                           </div>
-                          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                          <div className="record-card-rx-meta">
+                            {isDraft ? (
+                              <span>
+                                {isHindi
+                                  ? `CareVoice AI क्लिनिकल स्क्राइब • जनरेट किया गया: ${formatDate(rx.created_at)} • समीक्षा लंबित`
+                                  : `CareVoice AI Clinical Scribe • Generated on ${formatDate(rx.created_at)} • Pending Clinician Review`}
+                              </span>
+                            ) : (
+                              <span>
+                                {isHindi
+                                  ? `अधिकृत चिकित्सक Dr. ${rx.doctor_name || "Asha Demo"} द्वारा हस्ताक्षरित • ${formatDate(rx.finalized_at || rx.created_at)}`
+                                  : `Prescribed & signed by Dr. ${rx.doctor_name || "Asha Demo"} on ${formatDate(rx.finalized_at || rx.created_at)}`}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="record-card-rx-body">
+                          {isDraft && (
+                            <div className="cv-alert cv-alert-warning cv-rx-alert">
+                              <span aria-hidden="true" style={{ fontSize: "16px" }}>⚠️</span>
+                              <div>
+                                <strong>{isHindi ? "AI जनरेटेड ड्राफ्ट पर्चा:" : "AI-Generated Prescription Draft:"} </strong>
+                                {isHindi
+                                  ? "यह पर्चा CareVoice AI द्वारा तैयार किया गया ड्राफ्ट है। अधिकृत चिकित्सक द्वारा समीक्षा और ई-हस्ताक्षर के बाद ही यह मान्य होगा।"
+                                  : "This draft was synthesized by the clinical voice assistant and is pending licensed clinician review, verification, and digital electronic signature before dispensing."}
+                              </div>
+                            </div>
+                          )}
+
+                          {rx.diagnosis && (
+                            <div className="rx-diagnosis-row">
+                              <span className="rx-diagnosis-label">{isHindi ? "निदान (Diagnosis):" : "Clinical Diagnosis:"}</span>
+                              <span className="rx-diagnosis-value">{rx.diagnosis}</span>
+                            </div>
+                          )}
+
+                          {rx.allergy_warnings?.length > 0 && (
+                            <div className="cv-alert cv-alert-warning cv-rx-alert">
+                              <span aria-hidden="true" style={{ fontSize: "16px" }}>⚠️</span>
+                              <div>
+                                <strong>{isHindi ? "एलर्जी सुरक्षा जांच:" : "Allergy Safety Verification:"} </strong>
+                                {rx.allergy_warnings.join("; ")}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Medication Schedule Table */}
+                          <div className="rx-medication-wrapper">
+                            <table className="rx-medication-table">
+                              <thead>
+                                <tr>
+                                  <th style={{ width: "32%" }}>{isHindi ? "दवा व क्षमता" : "Medicine & Strength"}</th>
+                                  <th style={{ width: "20%" }}>{isHindi ? "प्रकार" : "Form & Route"}</th>
+                                  <th style={{ width: "18%" }}>{isHindi ? "खुराक" : "Frequency"}</th>
+                                  <th style={{ width: "12%" }}>{isHindi ? "अवधि" : "Duration"}</th>
+                                  <th style={{ width: "18%" }}>{isHindi ? "निर्देश" : "Instructions"}</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {rx.items?.map((it) => (
+                                  <tr key={it.id}>
+                                    <td>
+                                      <div className="rx-med-name">{it.medication_name}</div>
+                                      {it.strength && <div className="rx-med-strength">{it.strength}</div>}
+                                    </td>
+                                    <td>
+                                      <span>{it.dosage_form || "Tablet"}</span>
+                                      {it.route && <span style={{ color: "var(--cv-text-muted)" }}> • {it.route}</span>}
+                                    </td>
+                                    <td>
+                                      <span className="cv-badge cv-badge-routine">{it.frequency}</span>
+                                    </td>
+                                    <td>
+                                      <span style={{ fontWeight: "600" }}>{it.duration}</span>
+                                    </td>
+                                    <td>
+                                      <span className="rx-med-instructions">{it.instructions || "As directed"}</span>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+
+                          {rx.notes && (
+                            <div className="rx-advice-box">
+                              <div className="rx-advice-title">
+                                <span aria-hidden="true">💡</span>
+                                <span>{isHindi ? "चिकित्सक की सलाह व सावधानियां:" : "Doctor's Advice & Precautions:"}</span>
+                              </div>
+                              <div>{rx.notes}</div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="record-card-rx-footer">
+                          <div className="rx-security-tag">
+                            {isDraft ? (
+                              <span className="rx-draft-indicator">
+                                <span aria-hidden="true">⏳</span>
+                                <span>{isHindi ? "समीक्षा लंबित (ड्राफ्ट)" : "Unsigned Draft — Needs Clinician Review"}</span>
+                              </span>
+                            ) : (
+                              <span className="rx-signed-indicator">
+                                <span aria-hidden="true">🔏</span>
+                                <span>{isHindi ? "ई-हस्ताक्षरित व सत्यापित" : "Digitally Signed & Verified"}</span>
+                              </span>
+                            )}
+                          </div>
+                          <div className="record-card-rx-actions">
                             <button
                               type="button"
                               className="cv-btn cv-btn-sm cv-btn-ghost"
@@ -1214,9 +1328,9 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                                   type: isDraft ? "AI Draft Prescription (Unfinalized)" : "Clinician Signed Digital Rx",
                                   category: "Pharmacotherapy",
                                   date: formatDate(rx.finalized_at || rx.created_at),
-                                  actor: `Dr. ${rx.doctor_name || "Attending Physician"}`,
+                                  actor: isDraft ? "CareVoice AI Clinical Scribe" : `Dr. ${rx.doctor_name || "Attending Physician"}`,
                                   urgency: "routine",
-                                  status: rx.status?.toUpperCase(),
+                                  status: isDraft ? "AI DRAFT (UNSIGNED)" : "FINALIZED & SIGNED",
                                   description: rx.diagnosis ? `Clinical Diagnosis: ${rx.diagnosis}` : "Outpatient Prescription Order",
                                   diagnosis: rx.diagnosis,
                                   treatment: rx.items,
@@ -1224,14 +1338,15 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                                   instructions: rx.notes || "Take strictly as prescribed. Complete full course of treatment.",
                                   details: [
                                     { label: "Prescription Number", value: rx.prescription_number },
-                                    { label: "Status", value: rx.status?.toUpperCase() },
+                                    { label: "Clinical Status", value: isDraft ? "AI DRAFT (UNSIGNED - PENDING CLINICIAN REVIEW)" : "FINALIZED & DIGITALLY SIGNED" },
+                                    { label: "Attending Clinician", value: isDraft ? "Pending Review" : `Dr. ${rx.doctor_name || "Asha Demo"}` },
                                     { label: "Diagnosis", value: rx.diagnosis || "Unspecified" },
                                     {
                                       label: "Medications Prescribed",
                                       value: rx.items?.map((it) => `${it.medication_name} (${it.strength || ""}) - ${it.frequency}, ${it.duration}`).join("; ") || "None",
                                     },
                                     { label: "Allergy Warnings Checked", value: rx.allergy_warnings?.join("; ") || "All allergy checks passed" },
-                                    { label: "Doctor's Notes", value: rx.notes || "Follow instructions as labeled." },
+                                    { label: "Doctor's Advice", value: rx.notes || "Follow instructions as labeled." },
                                   ],
                                   downloadPath: `/records/prescriptions/${rx.id}/pdf`,
                                   downloadFilename: `prescription-${rx.prescription_number}.pdf`,
@@ -1239,10 +1354,11 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                                 })
                               }
                             >
-                              <span>👁️</span>
-                              <span>{isHindi ? "विवरण देखें" : "View"}</span>
+                              <span aria-hidden="true">👁️</span>
+                              <span>{isHindi ? "विवरण देखें" : "View Details"}</span>
                             </button>
                             <button
+                              type="button"
                               className="cv-btn cv-btn-sm cv-btn-primary cv-btn-download"
                               disabled={isDownloading}
                               onClick={() =>
@@ -1253,75 +1369,11 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                                 )
                               }
                             >
-                              <span>📥</span>
+                              <span aria-hidden="true">📥</span>
                               <span>{isDownloading ? (isHindi ? "डाउनलोड हो रहा है…" : "Downloading…") : (isHindi ? "पर्चा डाउनलोड (PDF)" : "Download Rx PDF")}</span>
                             </button>
                           </div>
                         </div>
-
-                        {isDraft && (
-                          <div className="cv-alert cv-alert-warning" style={{ marginBottom: "14px", padding: "8px 12px", fontSize: "12px" }}>
-                            <span>⚠️</span>
-                            <div>
-                              <strong>AI-Generated Prescription Draft: </strong>
-                              This draft prescription was generated by CareVoice AI and is pending licensed clinician review, modification, and digital signature before fulfillment.
-                            </div>
-                          </div>
-                        )}
-
-                        {rx.diagnosis && (
-                          <div style={{ marginBottom: "12px", fontSize: "13px" }}>
-                            <strong style={{ color: "var(--cv-text-secondary)" }}>Diagnosis: </strong>
-                            <span style={{ color: "var(--cv-text-primary)", fontWeight: "600" }}>{rx.diagnosis}</span>
-                          </div>
-                        )}
-
-                        {rx.allergy_warnings?.length > 0 && (
-                          <div className="cv-alert cv-alert-warning" style={{ marginBottom: "14px", padding: "8px 12px", fontSize: "12px" }}>
-                            <span>⚠️</span>
-                            <div>
-                              <strong>Allergy Safety Verification: </strong>
-                              {rx.allergy_warnings.join("; ")}
-                            </div>
-                          </div>
-                        )}
-
-                        {/* Medication Table */}
-                        <div style={{ overflowX: "auto", marginBottom: "12px", borderRadius: "8px", border: "1px solid var(--cv-border)" }}>
-                          <table className="cv-table">
-                            <thead>
-                              <tr>
-                                <th>Medicine & Strength</th>
-                                <th>Form / Route</th>
-                                <th>Frequency</th>
-                                <th>Duration</th>
-                                <th>Instructions</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {rx.items?.map((it) => (
-                                <tr key={it.id}>
-                                  <td>
-                                    <strong>{it.medication_name}</strong> {it.strength ? `(${it.strength})` : ""}
-                                  </td>
-                                  <td>{it.dosage_form} • {it.route}</td>
-                                  <td>
-                                    <span className="cv-badge cv-badge-routine">{it.frequency}</span>
-                                  </td>
-                                  <td>{it.duration}</td>
-                                  <td>{it.instructions || "As directed"}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-
-                        {rx.notes && (
-                          <div style={{ marginTop: "10px", padding: "10px 12px", borderRadius: "8px", background: "var(--cv-surface-soft)", fontSize: "12px", color: "var(--cv-text-secondary)" }}>
-                            <strong style={{ color: "var(--cv-text-primary)" }}>Doctor's Advice & Precautions: </strong>
-                            {rx.notes}
-                          </div>
-                        )}
                       </div>
                     );
                   })}
@@ -1405,7 +1457,7 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
                   </button>
                 </div>
               ) : (
-                <div style={{ display: "grid", gap: "16px" }}>
+                <div className="health-records-cards-grid">
                   {filteredNotes.map((n) => {
                     const isDraft = n.status === "draft" || n.is_ai_draft;
                     return (

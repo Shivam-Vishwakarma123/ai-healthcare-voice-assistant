@@ -1,5 +1,14 @@
 import { chromium } from "playwright";
 import assert from "node:assert/strict";
+import { execSync } from "node:child_process";
+
+function resetRateLimits() {
+  try {
+    execSync("docker exec healthcare-backend python -c 'from app.auth.rate_limit import reset_auth_rate_limits; reset_auth_rate_limits()'");
+  } catch {
+    // ignore
+  }
+}
 
 const VIEWPORTS = [
   { name: "320px (iPhone SE)", width: 320, height: 568 },
@@ -30,6 +39,7 @@ const ADMIN_CREDENTIALS = {
 };
 
 async function login(credentials) {
+  resetRateLimits();
   const resp = await fetch("http://127.0.0.1:8000/api/v1/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

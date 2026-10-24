@@ -54,6 +54,22 @@ function storageGet(key, fallback = "") {
   }
 }
 
+// Determines canonical role-based landing route ensuring each persona enters their dedicated workstation.
+function getDefaultPageForRole(role) {
+  switch (role) {
+    case "doctor":
+      return "Doctor workspace";
+    case "hospital_admin":
+    case "platform_admin":
+      return "Administration";
+    case "hospital_staff":
+      return "Provider dashboard";
+    case "patient":
+    default:
+      return "Overview";
+  }
+}
+
 // Master application component orchestrating auth state, bilingual localization, routing, and portal views.
 export default function App() {
   const toast = useToast();
@@ -176,7 +192,7 @@ export default function App() {
         const patientRows = account.role === "patient" ? await apiRequest("/patients/", token) : [];
         if (!active) return;
         setUser(account);
-        setPage(account.role === "patient" ? "Overview" : "Provider dashboard");
+        setPage(getDefaultPageForRole(account.role));
         setPatients(patientRows);
         try {
           window.localStorage.setItem("ahva_user", JSON.stringify(account));
@@ -313,7 +329,7 @@ export default function App() {
         throw new Error("Your browser could not save the sign-in session. Check browser storage settings and try again.");
       }
       setUser(result.user);
-      setPage(result.user.role === "patient" ? "Overview" : "Provider dashboard");
+      setPage(getDefaultPageForRole(result.user.role));
       setToken(result.access_token);
       setNotice(authMode === "register" ? "Your account was created." : "You’re signed in.");
       setBootstrapStatus({ setup_available: false, reason: "complete" });
@@ -441,12 +457,13 @@ export default function App() {
   const isAdmin = user?.role === "platform_admin" || user?.role === "hospital_admin";
   const isDoctor = user?.role === "doctor";
   const canAccessBilling = user?.role === "patient" || ["hospital_staff", "hospital_admin", "platform_admin"].includes(user?.role);
-  const homePage = user?.role === "patient" ? "Overview" : "Provider dashboard";
+  const homePage = getDefaultPageForRole(user?.role);
   const visibleNavigation = user?.role === "patient"
     ? navigation
     : [
-        ...providerNavigation.filter((item) => item.id !== "Doctor workspace" || isDoctor),
+        ...(isDoctor ? [{ id: "Doctor workspace", icon: "🩺", en: "Doctor workspace", hi: "डॉक्टर कार्यक्षेत्र" }] : []),
         ...(isAdmin ? administrationNavigation : []),
+        ...providerNavigation.filter((item) => item.id !== "Doctor workspace" && (item.id !== "Provider dashboard" || user?.role !== "platform_admin")),
         ...navigation.filter((item) => ["Find care", "Appointments"].includes(item.id)),
         ...(canAccessBilling ? navigation.filter((item) => item.id === "Billing") : []),
       ];
@@ -524,8 +541,8 @@ export default function App() {
             <>
               {page === "Overview" && (user?.role === "patient"
                 ? <DashboardPage user={user} patient={patients[0]} token={token} onNavigate={setPage} language={language} />
-                : <ProviderDashboardPage user={user} token={token} onUserUpdated={updateCurrentUser} language={language} />)}
-              {page === "Provider dashboard" && <ProviderDashboardPage user={user} token={token} onUserUpdated={updateCurrentUser} language={language} />}
+                : <ProviderDashboardPage user={user} token={token} onUserUpdated={updateCurrentUser} language={language} onNavigate={setPage} />)}
+              {page === "Provider dashboard" && <ProviderDashboardPage user={user} token={token} onUserUpdated={updateCurrentUser} language={language} onNavigate={setPage} />}
               {page === "Doctor workspace" && isDoctor && <DoctorWorkspace token={token} user={user} language={language} onNavigate={setPage} />}
               {page === "Administration" && isAdmin && <AdminManagement token={token} user={user} onUserUpdated={updateCurrentUser} onSessionInvalidated={signOut} language={language} />}
               {page === "Find care" && <CareDirectoryPage token={token} onNavigate={setPage} onAppointmentBooked={(appointment) => { setRecentAppointment(appointment); setPage("Appointments"); }} language={language} canBook={user?.role === "patient"} />}

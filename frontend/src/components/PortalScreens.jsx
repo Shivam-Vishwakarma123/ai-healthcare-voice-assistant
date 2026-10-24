@@ -385,10 +385,14 @@ export function DashboardPage({ user, patient, token, onNavigate, language = "en
 }
 
 // Healthcare provider management console for editing biography, publishing schedules, and managing qualifications.
-export function ProviderDashboardPage({ user, token, onUserUpdated, language = "en" }) {
+export function ProviderDashboardPage({ user, token, onUserUpdated, language = "en", onNavigate }) {
   const hi = language === "hi";
   const [dashboard, setDashboard] = useState(null);
   const [reviewQueue, setReviewQueue] = useState({ hospitals: [], doctors: [], qualifications: [] });
+  const [appointments, setAppointments] = useState([]);
+  const [invoices, setInvoices] = useState([]);
+  const [receptionFilter, setReceptionFilter] = useState("all");
+  const [receptionSearch, setReceptionSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -424,6 +428,14 @@ export function ProviderDashboardPage({ user, token, onUserUpdated, language = "
           description: result.hospital.description || "",
         });
       }
+      if (user?.role === "hospital_staff" || user?.role === "hospital_admin") {
+        const [apptsRes, invsRes] = await Promise.allSettled([
+          apiRequest("/providers/appointments", token),
+          apiRequest("/billing/invoices", token),
+        ]);
+        if (apptsRes.status === "fulfilled") setAppointments(Array.isArray(apptsRes.value) ? apptsRes.value : []);
+        if (invsRes.status === "fulfilled") setInvoices(Array.isArray(invsRes.value) ? invsRes.value : []);
+      }
       if (user?.role === "platform_admin") setReviewQueue(await apiRequest("/providers/review-queue", token));
     } catch (reason) {
       setError(reason?.message || "The provider workspace could not be loaded.");
@@ -433,6 +445,56 @@ export function ProviderDashboardPage({ user, token, onUserUpdated, language = "
   }
 
   useEffect(() => { loadDashboard(); }, [token, user?.role]);
+
+  async function confirmAppointment(appointmentId) {
+    await perform(
+      () => apiRequest(`/providers/appointments/${appointmentId}/confirm`, token, { method: "POST" }),
+      hi ? "मरीज का चेक-इन पूरा हुआ और आगमन की पुष्टि की गई।" : "Patient arrival confirmed. Check-in completed.",
+    );
+  }
+
+  async function cancelStaffAppointment(appointmentId) {
+    const reason = window.prompt(hi ? "रद्द करने का कारण दर्ज करें:" : "Enter cancellation reason (optional):") || "Cancelled by hospital front desk";
+    await perform(
+      () => apiRequest(`/providers/appointments/${appointmentId}/cancel`, token, { method: "PATCH", body: JSON.stringify({ reason }) }),
+      hi ? "अपॉइंटमेंट रद्द कर दिया गया।" : "Appointment cancelled.",
+    );
+  }
+
+  async function createStaffInvoice(appointment) {
+    await perform(
+      () => apiRequest("/billing/invoices", token, {
+        method: "POST",
+        body: JSON.stringify({
+          patient_user_id: appointment.patient_user_id,
+          appointment_id: appointment.id,
+          description: `Consultation fee for Dr. ${appointment.doctor_name || "Doctor"} (${appointment.specialty || "Clinic"})`,
+          amount_minor: appointment.fee_minor,
+        }),
+      }),
+      hi ? "डेस्क इनवॉइस जारी किया गया।" : "Front-desk invoice generated successfully.",
+    );
+  }
+
+  async function downloadInvoicePdf(invoiceId, invoiceNumber) {
+    try {
+      const resp = await fetch(`${API_BASE}/billing/invoices/${invoiceId}/pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!resp.ok) throw new Error(`Download failed (${resp.status})`);
+      const blob = await resp.blob();
+      const objUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objUrl;
+      a.download = `invoice-${invoiceNumber}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(objUrl);
+    } catch (err) {
+      alert(`Invoice download failed: ${err.message}`);
+    }
+  }
 
   async function perform(action, successMessage) {
     setSaving(true);
@@ -614,64 +676,335 @@ export function ProviderDashboardPage({ user, token, onUserUpdated, language = "
           )}
           {dashboard.hospital && (
             <>
-              <div className="cv-metrics"><MetricCard icon="♙" label={hi ? "डॉक्टर" : "Doctors"} value={dashboard.doctor_count} note={hi ? "इस अस्पताल में" : "Assigned to this hospital"} /><MetricCard icon="▦" label={hi ? "अपॉइंटमेंट" : "Appointments"} value={dashboard.appointment_count} note={hi ? "इस अस्पताल में" : "Scoped to this hospital"} /></div>
-              {user?.role === "hospital_admin" && (
+              {user?.role === "hospital_staff" ? (
                 <>
-                  <form className="cv-card cv-form" onSubmit={saveHospital}>
-                    <h2>{hi ? "अस्पताल प्रोफ़ाइल" : "Hospital profile"}</h2>
-                    {Object.entries(hospitalForm).map(([field, value]) => <label key={field}>{field.replaceAll("_", " ")}<input value={value} onChange={(event) => setHospitalForm({ ...hospitalForm, [field]: event.target.value })} /></label>)}
-                    <button className="cv-button cv-button-primary" disabled={saving}>{hi ? "बदलाव सेव करें" : "Save hospital details"}</button>
-                  </form>
-                  <form className="cv-card cv-form" onSubmit={addDoctor}>
-                    <h2>{hi ? "डॉक्टर प्रोफ़ाइल जोड़ें" : "Add a clinician profile"}</h2>
-                    <label>{hi ? "पूरा नाम" : "Full name"}<input required minLength={2} value={newDoctor.full_name} onChange={(event) => setNewDoctor({ ...newDoctor, full_name: event.target.value })} /></label>
-                    <label>{hi ? "विशेषज्ञता" : "Specialty"}<input required value={newDoctor.specialty} onChange={(event) => setNewDoctor({ ...newDoctor, specialty: event.target.value })} /></label>
-                    <div className="cv-form-row">
-                      <label>{hi ? "अनुभव (वर्ष)" : "Experience (years)"}<input type="number" min="0" max="80" value={newDoctor.experience_years} onChange={(event) => setNewDoctor({ ...newDoctor, experience_years: event.target.value })} /></label>
-                      <label>{hi ? "परामर्श शुल्क (₹)" : "Consultation fee (₹)"}<input type="number" min="0" max="100000" step="0.01" value={newDoctor.fee} onChange={(event) => setNewDoctor({ ...newDoctor, fee: event.target.value })} /></label>
+                  {/* Hospital Staff Front-Desk Reception & Clinic Operations Command Center */}
+                  <div className="cv-metrics" aria-label="Hospital front desk metrics">
+                    <MetricCard
+                      icon="▦"
+                      label={hi ? "कुल अपॉइंटमेंट" : "Total Appointments"}
+                      value={appointments.length || dashboard.appointment_count}
+                      note={hi ? "इस अस्पताल में" : "Scoped to this hospital"}
+                    />
+                    <MetricCard
+                      icon="⏳"
+                      label={hi ? "आगमन प्रतीक्षित" : "Pending Check-In"}
+                      value={appointments.filter((a) => a.status === "scheduled").length}
+                      note={hi ? "चेक-इन की प्रतीक्षा में" : "Awaiting patient arrival"}
+                    />
+                    <MetricCard
+                      icon="✓"
+                      label={hi ? "चेक-इन पूर्ण" : "Checked-In Arrived"}
+                      value={appointments.filter((a) => a.status === "confirmed").length}
+                      note={hi ? "आगमन की पुष्टि की गई" : "Confirmed & ready for doctor"}
+                    />
+                    <MetricCard
+                      icon="♙"
+                      label={hi ? "ड्यूटी पर डॉक्टर" : "Clinicians On-Duty"}
+                      value={dashboard.doctor_count}
+                      note={hi ? "सक्रिय डॉक्टर प्रोफ़ाइल" : "Assigned hospital clinicians"}
+                    />
+                    <MetricCard
+                      icon="₹"
+                      label={hi ? "अस्पताल इनवॉइस" : "Facility Invoices"}
+                      value={invoices.length}
+                      note={hi ? "बिलिंग डेस्क रिकॉर्ड" : "Desk billing records"}
+                    />
+                  </div>
+
+                  {/* Front-Desk Patient Reception & Check-In Queue */}
+                  <section className="cv-card" style={{ marginTop: "1.5rem" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem", marginBottom: "1rem" }}>
+                      <div>
+                        <h2 style={{ margin: 0, fontSize: "1.25rem" }}>
+                          🛎️ {hi ? "मरीज रिसेप्शन एवं चेक-इन कतार" : "Front-Desk Reception & Patient Check-In Queue"}
+                        </h2>
+                        <p style={{ margin: "0.2rem 0 0 0", fontSize: "0.88rem", color: "var(--cv-text-muted)" }}>
+                          {hi
+                            ? "आगमन की पुष्टि करें, चेक-इन दर्ज करें, और बिलिंग डेस्क इनवॉइस जारी करें।"
+                            : "Confirm patient arrival, mark check-ins, and initiate front-desk billing handoffs."}
+                        </p>
+                      </div>
+
+                      {/* Filter Chips */}
+                      <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+                        {[
+                          { id: "all", label: hi ? "सभी" : "All Visits", count: appointments.length },
+                          { id: "scheduled", label: hi ? "चेक-इन प्रतीक्षित" : "Pending Check-In", count: appointments.filter((a) => a.status === "scheduled").length },
+                          { id: "confirmed", label: hi ? "आगमन पुष्ट" : "Checked-In", count: appointments.filter((a) => a.status === "confirmed").length },
+                          { id: "cancelled", label: hi ? "रद्द" : "Cancelled", count: appointments.filter((a) => a.status === "cancelled").length },
+                        ].map((flt) => (
+                          <button
+                            key={flt.id}
+                            type="button"
+                            className={`cv-btn cv-btn-xs ${receptionFilter === flt.id ? "cv-btn-primary" : "cv-btn-ghost"}`}
+                            style={{ borderRadius: "20px", padding: "0.3rem 0.8rem", fontSize: "0.82rem" }}
+                            onClick={() => setReceptionFilter(flt.id)}
+                          >
+                            {flt.label} ({flt.count})
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                    <label>{hi ? "परिचय" : "Biography"}<textarea rows={3} maxLength={2000} value={newDoctor.bio} onChange={(event) => setNewDoctor({ ...newDoctor, bio: event.target.value })} /></label>
-                    <button className="cv-button cv-button-secondary" disabled={saving}>{hi ? "समीक्षा हेतु भेजें" : "Create pending profile"}</button>
-                  </form>
+
+                    {/* Search Bar */}
+                    <div style={{ marginBottom: "1rem" }}>
+                      <input
+                        type="text"
+                        className="cv-input"
+                        placeholder={hi ? "मरीज, डॉक्टर या अपॉइंटमेंट ID से खोजें…" : "Search by patient name, doctor, or appointment ID…"}
+                        value={receptionSearch}
+                        onChange={(e) => setReceptionSearch(e.target.value)}
+                        style={{ maxWidth: "450px" }}
+                      />
+                    </div>
+
+                    {/* Reception Appointment Rows */}
+                    {(() => {
+                      const filtered = appointments
+                        .filter((a) => {
+                          if (receptionFilter !== "all" && a.status !== receptionFilter) return false;
+                          if (!receptionSearch.trim()) return true;
+                          const q = receptionSearch.toLowerCase();
+                          return (
+                            String(a.id).includes(q) ||
+                            String(a.patient_user_id).includes(q) ||
+                            (a.doctor_name || "").toLowerCase().includes(q) ||
+                            (a.specialty || "").toLowerCase().includes(q)
+                          );
+                        });
+
+                      if (filtered.length === 0) {
+                        return (
+                          <div style={{ padding: "2rem", textAlign: "center", color: "var(--cv-text-muted)" }}>
+                            <p style={{ margin: 0 }}>
+                              {hi ? "इस फ़िल्टर के तहत कोई अपॉइंटमेंट नहीं मिला।" : "No appointments found matching current filter."}
+                            </p>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div style={{ display: "flex", flexDirection: "column", gap: "0.8rem" }}>
+                          {filtered.map((appt) => {
+                            const isScheduled = appt.status === "scheduled";
+                            const isConfirmed = appt.status === "confirmed";
+                            const isCancelled = appt.status === "cancelled";
+                            return (
+                              <div
+                                key={appt.id}
+                                style={{
+                                  display: "flex",
+                                  justifyContent: "space-between",
+                                  alignItems: "center",
+                                  padding: "1rem 1.2rem",
+                                  borderRadius: "8px",
+                                  border: "1px solid var(--cv-border-soft)",
+                                  background: "var(--cv-surface-card)",
+                                  flexWrap: "wrap",
+                                  gap: "0.8rem",
+                                }}
+                              >
+                                <div>
+                                  <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
+                                    <span style={{ fontWeight: "700", fontSize: "1rem" }}>
+                                      Visit #{appt.id}
+                                    </span>
+                                    <span style={{ fontSize: "0.85rem", color: "var(--cv-text-muted)" }}>
+                                      {appt.scheduled_for ? new Date(appt.scheduled_for).toLocaleString() : "Date TBD"}
+                                    </span>
+                                    <span className={`cv-badge ${isConfirmed ? "cv-badge-signed-pill" : isScheduled ? "cv-badge-draft-pill" : "cv-badge-routine"}`}>
+                                      {appt.status.toUpperCase()}
+                                    </span>
+                                    <span className="cv-status" style={{ fontSize: "0.75rem", textTransform: "capitalize" }}>
+                                      {appt.consultation_type?.replace("_", " ")}
+                                    </span>
+                                  </div>
+
+                                  <div style={{ marginTop: "0.3rem", fontSize: "0.88rem" }}>
+                                    <span><b>Patient:</b> Patient #{appt.patient_user_id}</span>
+                                    <span style={{ margin: "0 0.5rem", color: "var(--cv-border-soft)" }}>|</span>
+                                    <span><b>Doctor:</b> Dr. {appt.doctor_name || "Assigned Doctor"} ({appt.specialty || "Clinic"})</span>
+                                    <span style={{ margin: "0 0.5rem", color: "var(--cv-border-soft)" }}>|</span>
+                                    <span><b>Fee:</b> {formatMoney(appt.fee_minor || 0)}</span>
+                                  </div>
+
+                                  {appt.invoice_id && (
+                                    <div style={{ marginTop: "0.2rem", fontSize: "0.8rem", color: "var(--cv-success-text)" }}>
+                                      ✓ Invoiced (Invoice #{appt.invoice_id} • Status: {appt.invoice_status || "issued"})
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Desk Actions */}
+                                <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
+                                  {isScheduled && (
+                                    <button
+                                      type="button"
+                                      className="cv-btn cv-btn-xs cv-btn-primary"
+                                      onClick={() => confirmAppointment(appt.id)}
+                                      disabled={saving}
+                                      title="Mark patient arrived and confirm check-in"
+                                    >
+                                      ✓ {hi ? "आगमन पुष्टि (चेक-इन)" : "Confirm Arrival / Check-In"}
+                                    </button>
+                                  )}
+
+                                  {!appt.invoice_id && appt.fee_minor > 0 && !isCancelled && (
+                                    <button
+                                      type="button"
+                                      className="cv-btn cv-btn-xs cv-btn-secondary"
+                                      onClick={() => createStaffInvoice(appt)}
+                                      disabled={saving}
+                                      title="Generate hospital invoice for this visit"
+                                    >
+                                      ₹ {hi ? "इनवॉइस जारी करें" : "Issue Desk Invoice"}
+                                    </button>
+                                  )}
+
+                                  {appt.invoice_id && (
+                                    <button
+                                      type="button"
+                                      className="cv-btn cv-btn-xs cv-btn-outline"
+                                      onClick={() => downloadInvoicePdf(appt.invoice_id, appt.invoice_id)}
+                                      title="Download binary PDF invoice"
+                                    >
+                                      📥 {hi ? "इनवॉइस PDF" : "Invoice PDF"}
+                                    </button>
+                                  )}
+
+                                  {!isCancelled && (
+                                    <button
+                                      type="button"
+                                      className="cv-btn cv-btn-xs cv-btn-danger"
+                                      onClick={() => cancelStaffAppointment(appt.id)}
+                                      disabled={saving}
+                                    >
+                                      ✕ {hi ? "रद्द करें" : "Cancel"}
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+                  </section>
+
+                  {/* Facility Invoices & Billing Desk Ledger */}
+                  {invoices.length > 0 && (
+                    <section className="cv-card" style={{ marginTop: "1.5rem" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+                        <div>
+                          <h2 style={{ margin: 0, fontSize: "1.2rem" }}>
+                            ₹ {hi ? "अस्पताल बिलिंग लेज़र" : "Hospital Facility Invoices Ledger"}
+                          </h2>
+                          <p style={{ margin: "0.2rem 0 0 0", fontSize: "0.85rem", color: "var(--cv-text-muted)" }}>
+                            {hi ? "अस्पताल से जारी किए गए इनवॉइस और भुगतान स्थिति" : "Official hospital issued bills and verification records"}
+                          </p>
+                        </div>
+                        <span style={{ fontSize: "0.85rem", color: "var(--cv-text-muted)" }}>
+                          Total: {invoices.length} invoices
+                        </span>
+                      </div>
+
+                      <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+                        {invoices.slice(0, 5).map((inv) => (
+                          <div
+                            key={inv.id}
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              padding: "0.8rem 1rem",
+                              borderRadius: "6px",
+                              border: "1px solid var(--cv-border-soft)",
+                              background: "var(--cv-surface-soft)",
+                              flexWrap: "wrap",
+                              gap: "0.5rem",
+                            }}
+                          >
+                            <div>
+                              <b>{inv.invoice_number}</b> — {inv.description}
+                              <div style={{ fontSize: "0.8rem", color: "var(--cv-text-muted)", marginTop: "2px" }}>
+                                Created: {new Date(inv.created_at).toLocaleDateString()} • Amount: {formatMoney(inv.amount_minor)} • Status: <span style={{ textTransform: "uppercase", fontWeight: "700" }}>{inv.status}</span>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              className="cv-btn cv-btn-xs cv-btn-outline"
+                              onClick={() => downloadInvoicePdf(inv.id, inv.invoice_number)}
+                            >
+                              📥 Download PDF
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  )}
+
+                  {/* Clinicians at this hospital */}
+                  <section className="cv-card" style={{ marginTop: "1.5rem" }}>
+                    <h2>{hi ? "इस अस्पताल के डॉक्टर" : "Clinicians On-Duty at this Hospital"}</h2>
+                    {dashboard.doctors?.length ? dashboard.doctors.map((doctor) => (
+                      <div className="cv-review-row" key={doctor.id}>
+                        <span>
+                          <strong>Dr. {doctor.full_name}</strong><br />
+                          {doctor.specialties.join(", ")} · Status: {doctor.verification_status} · Fee: {formatMoney(doctor.fee_minor || 0)} · {doctor.schedules.length} {hi ? "समय-सारणी" : "schedule entries"}
+                        </span>
+                      </div>
+                    )) : (
+                      <p className="cv-subtle">{hi ? "अभी डॉक्टर प्रोफ़ाइल नहीं हैं।" : "No clinician profiles are assigned to this hospital."}</p>
+                    )}
+                  </section>
+                </>
+              ) : (
+                <>
+                  {/* Hospital Administrator Management View */}
+                  <div className="cv-metrics">
+                    <MetricCard icon="♙" label={hi ? "डॉक्टर" : "Doctors"} value={dashboard.doctor_count} note={hi ? "इस अस्पताल में" : "Assigned to this hospital"} />
+                    <MetricCard icon="▦" label={hi ? "अपॉइंटमेंट" : "Appointments"} value={dashboard.appointment_count} note={hi ? "इस अस्पताल में" : "Scoped to this hospital"} />
+                  </div>
+                  {user?.role === "hospital_admin" && (
+                    <>
+                      <form className="cv-card cv-form" onSubmit={saveHospital}>
+                        <h2>{hi ? "अस्पताल प्रोफ़ाइल" : "Hospital profile"}</h2>
+                        {Object.entries(hospitalForm).map(([field, value]) => (
+                          <label key={field}>
+                            {field.replaceAll("_", " ")}
+                            <input value={value} onChange={(event) => setHospitalForm({ ...hospitalForm, [field]: event.target.value })} />
+                          </label>
+                        ))}
+                        <button className="cv-button cv-button-primary" disabled={saving}>
+                          {hi ? "बदलाव सेव करें" : "Save hospital details"}
+                        </button>
+                      </form>
+                      <form className="cv-card cv-form" onSubmit={addDoctor}>
+                        <h2>{hi ? "डॉक्टर प्रोफ़ाइल जोड़ें" : "Add a clinician profile"}</h2>
+                        <label>{hi ? "पूरा नाम" : "Full name"}<input required minLength={2} value={newDoctor.full_name} onChange={(event) => setNewDoctor({ ...newDoctor, full_name: event.target.value })} /></label>
+                        <label>{hi ? "विशेषज्ञता" : "Specialty"}<input required value={newDoctor.specialty} onChange={(event) => setNewDoctor({ ...newDoctor, specialty: event.target.value })} /></label>
+                        <div className="cv-form-row">
+                          <label>{hi ? "अनुभव (वर्ष)" : "Experience (years)"}<input type="number" min="0" max="80" value={newDoctor.experience_years} onChange={(event) => setNewDoctor({ ...newDoctor, experience_years: event.target.value })} /></label>
+                          <label>{hi ? "परामर्श शुल्क (₹)" : "Consultation fee (₹)"}<input type="number" min="0" max="100000" step="0.01" value={newDoctor.fee} onChange={(event) => setNewDoctor({ ...newDoctor, fee: event.target.value })} /></label>
+                        </div>
+                        <label>{hi ? "परिचय" : "Biography"}<textarea rows={3} maxLength={2000} value={newDoctor.bio} onChange={(event) => setNewDoctor({ ...newDoctor, bio: event.target.value })} /></label>
+                        <button className="cv-button cv-button-secondary" disabled={saving}>{hi ? "समीक्षा हेतु भेजें" : "Create pending profile"}</button>
+                      </form>
+                    </>
+                  )}
+                  <section className="cv-card">
+                    <h2>{hi ? "इस अस्पताल के डॉक्टर" : "Clinicians at this hospital"}</h2>
+                    {dashboard.doctors?.length ? dashboard.doctors.map((doctor) => (
+                      <div className="cv-review-row" key={doctor.id}>
+                        <span><strong>{doctor.full_name}</strong><br />{doctor.specialties.join(", ")} · {doctor.verification_status} · {doctor.schedules.length} {hi ? "समय-सारणी" : "schedule entries"}</span>
+                      </div>
+                    )) : <p className="cv-subtle">{hi ? "अभी डॉक्टर प्रोफ़ाइल नहीं हैं।" : "No clinician profiles are assigned to this hospital."}</p>}
+                  </section>
                 </>
               )}
-              <section className="cv-card">
-                <h2>{hi ? "इस अस्पताल के डॉक्टर" : "Clinicians at this hospital"}</h2>
-                {dashboard.doctors?.length ? dashboard.doctors.map((doctor) => <div className="cv-review-row" key={doctor.id}>
-                  <span><strong>{doctor.full_name}</strong><br />{doctor.specialties.join(", ")} · {doctor.verification_status} · {doctor.schedules.length} {hi ? "समय-सारणी" : "schedule entries"}</span>
-                </div>) : <p className="cv-subtle">{hi ? "अभी डॉक्टर प्रोफ़ाइल नहीं हैं।" : "No clinician profiles are assigned to this hospital."}</p>}
-              </section>
             </>
           )}
-          {dashboard.role === "platform_admin" && (
-            <>
-              <div className="cv-metrics"><MetricCard icon="⌂" label="Hospitals" value={dashboard.hospital_count} note="Persistent provider records" /><MetricCard icon="♙" label="Doctors" value={dashboard.doctor_count} note="Persistent provider records" /><MetricCard icon="!" label="Pending review" value={dashboard.pending_hospitals + dashboard.pending_doctors} note="Not shown in public directory" /></div>
-              <form className="cv-card cv-form" onSubmit={addHospital}>
-                <h2>{hi ? "अस्पताल प्रोफ़ाइल जोड़ें" : "Add a hospital profile"}</h2>
-                <label>{hi ? "अस्पताल का नाम" : "Hospital name"}<input required minLength={2} maxLength={180} value={newHospital.name} onChange={(event) => setNewHospital({ ...newHospital, name: event.target.value })} /></label>
-                <div className="cv-form-row">
-                  <label>{hi ? "शहर" : "City"}<input required maxLength={80} value={newHospital.city} onChange={(event) => setNewHospital({ ...newHospital, city: event.target.value })} /></label>
-                  <label>{hi ? "राज्य" : "State"}<input required maxLength={80} value={newHospital.state} onChange={(event) => setNewHospital({ ...newHospital, state: event.target.value })} /></label>
-                </div>
-                <label>{hi ? "पता (वैकल्पिक)" : "Address (optional)"}<input maxLength={255} value={newHospital.address} onChange={(event) => setNewHospital({ ...newHospital, address: event.target.value })} /></label>
-                <div className="cv-form-row">
-                  <label>{hi ? "फोन (वैकल्पिक)" : "Phone (optional)"}<input type="tel" maxLength={32} value={newHospital.phone} onChange={(event) => setNewHospital({ ...newHospital, phone: event.target.value })} /></label>
-                  <label>{hi ? "वेबसाइट (वैकल्पिक)" : "Website (optional)"}<input type="url" maxLength={255} value={newHospital.website} onChange={(event) => setNewHospital({ ...newHospital, website: event.target.value })} /></label>
-                </div>
-                <label>{hi ? "सेवाएँ / विभाग" : "Services / departments"}<input maxLength={1000} value={newHospital.departments} onChange={(event) => setNewHospital({ ...newHospital, departments: event.target.value })} /></label>
-                <label>{hi ? "विवरण" : "Description"}<textarea rows={3} maxLength={2000} value={newHospital.description} onChange={(event) => setNewHospital({ ...newHospital, description: event.target.value })} /></label>
-                <button className="cv-button cv-button-primary" disabled={saving}>{hi ? "समीक्षा हेतु भेजें" : "Create pending hospital"}</button>
-              </form>
-              <section className="cv-card">
-                <h2>{hi ? "सत्यापन समीक्षा कतार" : "Verification review queue"}</h2>
-                {[...reviewQueue.hospitals.map((item) => ({ ...item, kind: "hospitals" })), ...reviewQueue.doctors.map((item) => ({ ...item, kind: "doctors" })), ...reviewQueue.qualifications.map((item) => ({ ...item, kind: "qualifications" }))].map((item) => (
-                  <div className="cv-review-row" key={`${item.kind}-${item.id}`}><span>{item.kind === "hospitals" ? `Hospital · ${item.name}` : item.kind === "doctors" ? `Doctor · ${item.full_name} · ${item.specialty}` : `Qualification · ${item.degree} · ${item.institution} (doctor ${item.doctor_id})`}</span><button className="cv-button cv-button-secondary" disabled={saving} onClick={() => review(item.kind, item.id)}>{hi ? "सत्यापित करें" : "Verify"}</button></div>
-                ))}
-                {!reviewQueue.hospitals.length && !reviewQueue.doctors.length && !reviewQueue.qualifications.length && <p className="cv-subtle">{hi ? "कोई प्रोफ़ाइल समीक्षा की प्रतीक्षा में नहीं है।" : "No provider profiles are awaiting review."}</p>}
-              </section>
-            </>
-          )}
-          {dashboard.role === "hospital_staff" && <section className="cv-card"><ScreenTitle title={dashboard.hospital.name} description={`${dashboard.hospital.city}, ${dashboard.hospital.state}`} /><p>{hi ? "यह केवल-पठन कार्यक्षेत्र है।" : "This hospital staff workspace is read-only."}</p></section>}
         </div>
       )}
     </>

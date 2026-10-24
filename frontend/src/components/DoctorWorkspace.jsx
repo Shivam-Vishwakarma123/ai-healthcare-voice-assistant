@@ -9,7 +9,7 @@ const API_BASE = (import.meta.env?.VITE_API_BASE_URL || "http://localhost:8000/a
 // Clinician workstation managing assigned patients, ambient encounters, clinical notes, prescriptions, and protocol evaluations.
 export function DoctorWorkspace({ token, user, language = "en", onNavigate }) {
   const isHindi = language === "hi";
-  const [activeTab, setActiveTab] = useState("patients");
+  const [activeTab, setActiveTab] = useState("overview");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -424,6 +424,7 @@ export function DoctorWorkspace({ token, user, language = "en", onNavigate }) {
       {/* Navigation Sub-Tabs */}
       <div style={{ display: "flex", gap: "0.5rem", borderBottom: "1px solid var(--border-color)", paddingBottom: "0.5rem", marginBottom: "1.5rem", overflowX: "auto" }}>
         {[
+          { id: "overview", label: isHindi ? "सिंहावलोकन" : "Clinician Overview", icon: "📊" },
           { id: "patients", label: isHindi ? "सौंपे गए मरीज" : "Assigned Patients", icon: "👥", count: workspace?.assigned_patients?.length },
           { id: "scribe", label: isHindi ? "एम्बिएंट स्क्राइब" : "Ambient Scribe", icon: "🎙️" },
           { id: "notes", label: isHindi ? "क्लिनिकल नोट्स" : "Clinical Notes", icon: "✍️" },
@@ -447,6 +448,288 @@ export function DoctorWorkspace({ token, user, language = "en", onNavigate }) {
         <div style={{ padding: "2rem", textAlign: "center" }}>Loading clinician workspace…</div>
       ) : (
         <>
+          {/* TAB 0: CLINICIAN OVERVIEW DASHBOARD */}
+          {activeTab === "overview" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+              {/* Executive Clinical Workload KPIs */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "1rem" }}>
+                <div className="cv-card" style={{ padding: "1.2rem", borderLeft: "4px solid var(--cv-accent, #0284c7)" }}>
+                  <div style={{ fontSize: "0.85rem", color: "var(--cv-text-muted, #64748b)", textTransform: "uppercase", fontWeight: "700" }}>
+                    {isHindi ? "आज के अपॉइंटमेंट" : "Today's Consultations"}
+                  </div>
+                  <div style={{ fontSize: "2rem", fontWeight: "800", color: "var(--cv-text-primary, #0f172a)", margin: "0.4rem 0" }}>
+                    {workspace?.today_appointments?.length || 0}
+                  </div>
+                  <div style={{ fontSize: "0.8rem", color: "var(--cv-text-muted, #64748b)" }}>
+                    {isHindi ? "शेड्यूल किए गए मरीज" : "Scheduled on consultation roster"}
+                  </div>
+                </div>
+
+                <div className="cv-card" style={{ padding: "1.2rem", borderLeft: "4px solid #10b981" }}>
+                  <div style={{ fontSize: "0.85rem", color: "var(--cv-text-muted, #64748b)", textTransform: "uppercase", fontWeight: "700" }}>
+                    {isHindi ? "सौंपे गए मरीज" : "Assigned Patients"}
+                  </div>
+                  <div style={{ fontSize: "2rem", fontWeight: "800", color: "var(--cv-text-primary, #0f172a)", margin: "0.4rem 0" }}>
+                    {workspace?.assigned_patients?.length || 0}
+                  </div>
+                  <div style={{ fontSize: "0.8rem", color: "var(--cv-text-muted, #64748b)" }}>
+                    {isHindi ? "सक्रिय क्लिनिकल रिकॉर्ड" : "Active longitudinal patient records"}
+                  </div>
+                </div>
+
+                <div className="cv-card" style={{ padding: "1.2rem", borderLeft: "4px solid #f59e0b" }}>
+                  <div style={{ fontSize: "0.85rem", color: "var(--cv-text-muted, #64748b)", textTransform: "uppercase", fontWeight: "700" }}>
+                    {isHindi ? "AI आकलन इनबॉक्स" : "AI Triage Inbound"}
+                  </div>
+                  <div style={{ fontSize: "2rem", fontWeight: "800", color: "var(--cv-text-primary, #0f172a)", margin: "0.4rem 0" }}>
+                    {workspace?.recent_ai_assessments?.length || 0}
+                  </div>
+                  <div style={{ fontSize: "0.8rem", color: "var(--cv-text-muted, #64748b)" }}>
+                    {isHindi ? "समीक्षा की प्रतीक्षा में" : "Pending clinician review & sign-off"}
+                  </div>
+                </div>
+
+                <div className="cv-card" style={{ padding: "1.2rem", borderLeft: "4px solid #ef4444" }}>
+                  <div style={{ fontSize: "0.85rem", color: "var(--cv-text-muted, #64748b)", textTransform: "uppercase", fontWeight: "700" }}>
+                    {isHindi ? "एलर्जी / जोखिम अलर्ट" : "Allergy / High-Risk"}
+                  </div>
+                  <div style={{ fontSize: "2rem", fontWeight: "800", color: "var(--cv-text-primary, #0f172a)", margin: "0.4rem 0" }}>
+                    {workspace?.assigned_patients?.filter((p) => p.active_allergies_count > 0).length || 0}
+                  </div>
+                  <div style={{ fontSize: "0.8rem", color: "var(--cv-text-muted, #64748b)" }}>
+                    {isHindi ? "सावधानी की आवश्यकता" : "Patients with documented allergies"}
+                  </div>
+                </div>
+              </div>
+
+              {/* Today's Consultation Schedule & Intake Queue */}
+              <div className="cv-card" style={{ padding: "1.5rem" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", flexWrap: "wrap", gap: "0.8rem" }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: "1.2rem" }}>
+                      📅 {isHindi ? "आज की परामर्श अनुसूची" : "Today's Consultation Schedule & Intake Queue"}
+                    </h3>
+                    <p style={{ margin: "0.3rem 0 0 0", fontSize: "0.88rem", color: "var(--cv-text-muted, #64748b)" }}>
+                      {isHindi
+                        ? "वास्तविक समय परामर्श कतार — एम्बिएंट स्क्राइब, क्लिनिकल नोट्स, और पर्चा लेखन 1-क्लिक में शुरू करें।"
+                        : "Actionable consultation roster with direct 1-click clinical tools for documentation, ambient scribe, and prescribing."}
+                    </p>
+                  </div>
+                  <button
+                    className="cv-btn cv-btn-sm cv-btn-primary"
+                    onClick={() => setActiveTab("scribe")}
+                  >
+                    🎙️ {isHindi ? "एम्बिएंट स्क्राइब खोलें" : "Launch Ambient Scribe"}
+                  </button>
+                </div>
+
+                {!workspace?.today_appointments || workspace.today_appointments.length === 0 ? (
+                  <div style={{ padding: "2rem 1rem", textAlign: "center", background: "var(--cv-surface-soft, rgba(0,0,0,0.02))", borderRadius: "10px", border: "1px dashed var(--cv-border-soft, #cbd5e1)" }}>
+                    <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>📋</div>
+                    <h4 style={{ margin: "0 0 0.4rem 0" }}>{isHindi ? "आज कोई अपॉइंटमेंट निर्धारित नहीं है" : "No Consultations Scheduled for Today"}</h4>
+                    <p style={{ fontSize: "0.88rem", color: "var(--cv-text-muted, #64748b)", margin: "0 0 1rem 0" }}>
+                      {isHindi
+                        ? `आपके पास ${workspace?.assigned_patients?.length || 0} सौंपे गए मरीज हैं। आप नीचे दी गई सूची से किसी भी मरीज के रिकॉर्ड देख सकते हैं या एम्बिएंट स्क्राइब शुरू कर सकते हैं।`
+                        : `You have ${workspace?.assigned_patients?.length || 0} assigned patients on record. Select an assigned patient below to review longitudinal history, author encounter notes, or formulate prescriptions.`}
+                    </p>
+                    <div style={{ display: "flex", gap: "0.6rem", justifyContent: "center" }}>
+                      <button className="cv-btn cv-btn-sm cv-btn-secondary" onClick={() => setActiveTab("patients")}>
+                        👥 {isHindi ? "सौंपे गए मरीज देखें" : "View Assigned Patients"}
+                      </button>
+                      <button className="cv-btn cv-btn-sm cv-btn-outline" onClick={() => setActiveTab("protocols")}>
+                        ⚡ {isHindi ? "प्रोटोकॉल मॉनिटर" : "Clinical Protocol Monitor"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                    {workspace.today_appointments.map((appt) => (
+                      <div
+                        key={appt.appointment_id}
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          padding: "1rem 1.2rem",
+                          borderRadius: "8px",
+                          border: "1px solid var(--cv-border-soft, #e2e8f0)",
+                          background: "var(--cv-surface-card, #ffffff)",
+                          flexWrap: "wrap",
+                          gap: "1rem",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+                          <div style={{ textAlign: "center", minWidth: "70px", padding: "0.4rem 0.6rem", background: "var(--cv-accent-surface, #e0f2fe)", borderRadius: "6px" }}>
+                            <div style={{ fontSize: "1.1rem", fontWeight: "800", color: "var(--cv-accent, #0284c7)" }}>
+                              {appt.appointment_time
+                                ? new Date(appt.appointment_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                                : "TODAY"}
+                            </div>
+                            <small style={{ fontSize: "0.7rem", color: "var(--cv-accent, #0284c7)", fontWeight: "600", textTransform: "uppercase" }}>
+                              {appt.is_virtual ? "Virtual" : "Clinic"}
+                            </small>
+                          </div>
+                          <div>
+                            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                              <h4 style={{ margin: 0, fontSize: "1.05rem" }}>{appt.patient_name}</h4>
+                              <span style={{ fontSize: "0.78rem", color: "var(--cv-text-muted, #64748b)" }}>
+                                (Patient #{appt.patient_user_id})
+                              </span>
+                              <span className={`cv-badge ${appt.status === "confirmed" ? "cv-badge-signed-pill" : "cv-badge-routine"}`}>
+                                {appt.status}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: "0.85rem", color: "var(--cv-text-muted, #64748b)", marginTop: "0.2rem" }}>
+                              <b>Chief Complaint:</b> {appt.reason || "General Medical Consultation"}
+                              {appt.notes && <span> • <i>Notes: {appt.notes}</i></span>}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 1-Click Action Bar */}
+                        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                          <button
+                            className="cv-btn cv-btn-xs cv-btn-primary"
+                            onClick={() => {
+                              setSelectedPatientId(appt.patient_user_id);
+                              setNoteForm((prev) => ({
+                                ...prev,
+                                patient_user_id: appt.patient_user_id,
+                                appointment_id: appt.appointment_id,
+                                chief_complaint: appt.reason || prev.chief_complaint,
+                              }));
+                              setRxForm((prev) => ({
+                                ...prev,
+                                patient_user_id: appt.patient_user_id,
+                                appointment_id: appt.appointment_id,
+                              }));
+                              setActiveTab("scribe");
+                            }}
+                            title="Start ambient consultation scribe for this patient visit"
+                          >
+                            🎙️ Ambient Scribe
+                          </button>
+
+                          <button
+                            className="cv-btn cv-btn-xs cv-btn-secondary"
+                            onClick={() => {
+                              loadPatientDetails(appt.patient_user_id);
+                              setNoteForm((prev) => ({
+                                ...prev,
+                                patient_user_id: appt.patient_user_id,
+                                appointment_id: appt.appointment_id,
+                                chief_complaint: appt.reason || prev.chief_complaint,
+                              }));
+                              setActiveTab("notes");
+                            }}
+                            title="Author SOAP consultation note"
+                          >
+                            ✍️ SOAP Note
+                          </button>
+
+                          <button
+                            className="cv-btn cv-btn-xs cv-btn-outline"
+                            onClick={() => {
+                              loadPatientDetails(appt.patient_user_id);
+                              setRxForm((prev) => ({
+                                ...prev,
+                                patient_user_id: appt.patient_user_id,
+                                appointment_id: appt.appointment_id,
+                              }));
+                              setActiveTab("prescribe");
+                            }}
+                            title="Formulate and sign prescription"
+                          >
+                            ℞ Prescribe
+                          </button>
+
+                          <button
+                            className="cv-btn cv-btn-xs cv-btn-ghost"
+                            onClick={() => {
+                              loadPatientDetails(appt.patient_user_id);
+                              setActiveTab("history");
+                            }}
+                            title="View longitudinal clinical history"
+                          >
+                            📋 History
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Recent Pre-Consultation AI Triage Assessments Preview */}
+              {workspace?.recent_ai_assessments?.length > 0 && (
+                <div className="cv-card" style={{ padding: "1.5rem" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+                    <h3 style={{ margin: 0, fontSize: "1.15rem" }}>
+                      📥 {isHindi ? "हालिया AI आकलन (समीक्षा हेतु)" : "Pending Pre-Consultation AI Triage Intake"}
+                    </h3>
+                    <button className="cv-btn cv-btn-xs cv-btn-outline" onClick={() => setActiveTab("inbox")}>
+                      {isHindi ? "सभी देखें" : "View All Inbox"} ({workspace.recent_ai_assessments.length}) →
+                    </button>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "1rem" }}>
+                    {workspace.recent_ai_assessments.slice(0, 3).map((a) => {
+                      const badge = getUrgencyBadgeConfig(a.urgency_level);
+                      return (
+                        <div
+                          key={a.id}
+                          style={{
+                            padding: "1rem",
+                            borderRadius: "8px",
+                            border: "1px solid var(--cv-border-soft, #e2e8f0)",
+                            background: "var(--cv-surface-card, #ffffff)",
+                            display: "flex",
+                            flexDirection: "column",
+                            justifyContent: "space-between",
+                          }}
+                        >
+                          <div>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "6px" }}>
+                              <span style={{ fontSize: "0.8rem", color: "var(--cv-text-muted, #64748b)" }}>
+                                Patient: <b>{a.patient_name}</b>
+                              </span>
+                              <span className={`cv-badge ${badge.className}`} style={{ fontSize: "0.75rem", padding: "2px 8px" }}>
+                                {badge.icon} {badge.label}
+                              </span>
+                            </div>
+                            <h4 style={{ margin: "0.4rem 0 0.3rem 0", fontSize: "0.98rem" }}>{a.title}</h4>
+                            <p style={{ margin: "0 0 0.8rem 0", fontSize: "0.85rem", color: "var(--cv-text-muted, #64748b)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                              {a.summary}
+                            </p>
+                          </div>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid var(--cv-border-soft, #e2e8f0)", paddingTop: "0.6rem" }}>
+                            <span style={{ fontSize: "0.75rem", color: "var(--cv-text-muted, #64748b)" }}>
+                              {new Date(a.created_at).toLocaleDateString()}
+                            </span>
+                            <button
+                              className="cv-btn cv-btn-xs cv-btn-primary"
+                              onClick={() => {
+                                loadPatientDetails(a.patient_user_id);
+                                setNoteForm((prev) => ({
+                                  ...prev,
+                                  patient_user_id: a.patient_user_id,
+                                  chief_complaint: a.title,
+                                  history_of_present_illness: `Patient pre-consultation AI triage intake: ${a.summary}`,
+                                }));
+                                setActiveTab("notes");
+                              }}
+                            >
+                              ✍️ Create Note
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* TAB 1: ASSIGNED PATIENTS */}
           {activeTab === "patients" && (
             <div>

@@ -4857,6 +4857,21 @@ body.cv-menu-open {
 }
 
 /* Record Card Enhancements */
+/* Responsive Grid for Health Records & Prescriptions */
+.health-records-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 540px), 1fr));
+  gap: 20px;
+  align-items: stretch;
+}
+
+@media (max-width: 840px) {
+  .health-records-cards-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+}
+
 .record-card {
   padding: 20px;
   border: 1px solid var(--cv-border);
@@ -4872,7 +4887,270 @@ body.cv-menu-open {
 }
 
 .record-card-rx {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 100%;
   border-left: 4px solid var(--cv-accent);
+}
+
+.record-card-rx.is-draft {
+  border-left: 4px solid var(--cv-warning);
+}
+
+.record-card-rx-header {
+  border-bottom: 1px solid var(--cv-border-soft);
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+}
+
+.record-card-rx-title-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-bottom: 6px;
+}
+
+.rx-symbol {
+  font-size: 22px;
+  font-weight: 900;
+  color: var(--cv-accent);
+  line-height: 1;
+}
+
+.record-card-rx.is-draft .rx-symbol {
+  color: var(--cv-warning);
+}
+
+.record-card-rx-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--cv-text-primary);
+  letter-spacing: -0.01em;
+  word-break: break-word;
+}
+
+.cv-badge-signed-pill {
+  background: var(--cv-success-surface);
+  color: var(--cv-success-text);
+  border: 1px solid var(--cv-success-border);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.cv-badge-draft-pill {
+  background: var(--cv-warning-surface);
+  color: var(--cv-warning-text);
+  border: 1px solid var(--cv-warning-border);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.record-card-rx-meta {
+  font-size: 12px;
+  color: var(--cv-text-muted);
+  line-height: 1.45;
+}
+
+.record-card-rx-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.cv-rx-alert {
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.cv-rx-alert-warning {
+  background: var(--cv-warning-surface);
+  border: 1px solid var(--cv-warning-border);
+  color: var(--cv-warning-text);
+}
+
+.rx-diagnosis-row {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.rx-diagnosis-label {
+  font-weight: 700;
+  color: var(--cv-text-secondary);
+  margin-right: 6px;
+}
+
+.rx-diagnosis-value {
+  color: var(--cv-text-primary);
+  font-weight: 600;
+}
+
+.rx-medication-wrapper {
+  overflow-x: auto;
+  border-radius: 8px;
+  border: 1px solid var(--cv-border);
+  background: var(--cv-surface);
+  -webkit-overflow-scrolling: touch;
+}
+
+.rx-medication-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+}
+
+.rx-medication-table th {
+  background: var(--cv-surface-soft);
+  color: var(--cv-text-secondary);
+  font-weight: 700;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--cv-border);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.rx-medication-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--cv-border-soft);
+  color: var(--cv-text-primary);
+  vertical-align: top;
+}
+
+.rx-medication-table tr:last-child td {
+  border-bottom: none;
+}
+
+.rx-med-name {
+  font-weight: 700;
+  color: var(--cv-text-primary);
+}
+
+.rx-med-strength {
+  font-size: 11px;
+  color: var(--cv-text-muted);
+  margin-top: 2px;
+}
+
+.rx-med-instructions {
+  color: var(--cv-text-secondary);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.rx-advice-box {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--cv-surface-soft);
+  border: 1px solid var(--cv-border);
+  font-size: 12px;
+  color: var(--cv-text-secondary);
+  line-height: 1.5;
+}
+
+.rx-advice-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  color: var(--cv-text-primary);
+  margin-bottom: 4px;
+}
+
+.record-card-rx-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  border-top: 1px solid var(--cv-border-soft);
+  padding-top: 14px;
+  margin-top: auto;
+}
+
+.rx-security-tag {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.rx-signed-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--cv-success-text);
+  font-weight: 700;
+}
+
+.rx-draft-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--cv-warning-text);
+  font-weight: 700;
+}
+
+.record-card-rx-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.health-records-allergy-alert {
+  margin-bottom: 24px;
+  border-radius: 12px;
+}
+
+.health-records-allergy-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  background: var(--cv-surface);
+  color: var(--cv-warning-text);
+  border: 1px solid var(--cv-warning-border);
+  box-shadow: var(--cv-shadow-sm);
+}
+
+.cv-filter-count-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--cv-surface-muted);
+  color: var(--cv-text-muted);
+}
+
+.cv-btn-secondary .cv-filter-count-badge {
+  background: var(--cv-accent);
+  color: #ffffff;
 }
 
 .record-card-urgent {

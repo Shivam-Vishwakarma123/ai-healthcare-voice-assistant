@@ -61,6 +61,14 @@ class ClinicalNote(Base):
     appointment = relationship("Appointment", foreign_keys=[appointment_id])
     finalized_by = relationship("User", foreign_keys=[finalized_by_user_id])
 
+    @property
+    def doctor_name(self) -> str | None:
+        return self.doctor.full_name if self.doctor else None
+
+    @property
+    def patient_name(self) -> str | None:
+        return self.patient_user.full_name if self.patient_user else None
+
 
 class Prescription(Base):
     __tablename__ = "prescriptions"
@@ -103,6 +111,14 @@ class Prescription(Base):
     items: Mapped[list[PrescriptionItem]] = relationship(
         back_populates="prescription", cascade="all, delete-orphan", order_by="PrescriptionItem.id.asc()"
     )
+
+    @property
+    def doctor_name(self) -> str | None:
+        return self.doctor.full_name if self.doctor else None
+
+    @property
+    def patient_name(self) -> str | None:
+        return self.patient_user.full_name if self.patient_user else None
 
 
 class PrescriptionItem(Base):
