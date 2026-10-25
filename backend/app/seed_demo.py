@@ -1856,8 +1856,13 @@ def _ensure_demo_clinical_records(
         elif not (existing_doc.extracted_data or {}).get("parameters"):
             existing_doc.extracted_data = structured_extracted_data
 
-    # 6. Comprehensive Clinical Records for Sneha Vishwakarma (sneha@gmail.com) if present
-    sneha = db.scalar(select(User).where(User.email == "sneha@gmail.com"))
+    # 6. Comprehensive synthetic records only for an explicitly marked test account.
+    sneha = db.scalar(
+        select(User).where(
+            User.email == "sneha@gmail.com",
+            User.is_test_account.is_(True),
+        )
+    )
     if sneha:
         # Sneha Allergies
         sneha_allergies = [

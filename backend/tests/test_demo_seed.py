@@ -9,6 +9,7 @@ from app.auth.security import hash_password, verify_password
 from app.core.config import settings
 from app.core.database import Base
 from app.models.billing import Invoice, Payment
+from app.models.clinical import ClinicalNote, MedicalDocument, MedicalReport, PatientAllergy, PatientVital, Prescription
 from app.models.patient import Patient
 from app.models.providers import (
     Appointment,
@@ -31,6 +32,11 @@ def _seeded_database():
     Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine, class_=Session, expire_on_commit=False)
     return engine, sessions
+
+
+@pytest.fixture(autouse=True)
+def demo_documents_are_isolated_from_the_repository(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.seed_demo.DOCUMENTS_DIR", str(tmp_path))
 
 
 def test_demo_seed_is_repeatable_and_relationships_are_consistent():
@@ -190,6 +196,33 @@ def test_seed_stops_on_identity_conflict_without_committing_partial_records():
         with sessions() as db:
             assert db.scalar(select(func.count()).select_from(Hospital)) == 0
             assert db.scalar(select(func.count()).select_from(Doctor)) == 0
+    finally:
+        engine.dispose()
+
+
+def test_demo_seed_does_not_attach_clinical_fixtures_to_an_unmarked_patient():
+    engine, sessions = _seeded_database()
+    try:
+        with sessions.begin() as db:
+            patient = User(
+                full_name="Existing Patient",
+                email="sneha@gmail.com",
+                password_hash=hash_password("existing-patient-password"),
+                role="patient",
+                is_test_account=False,
+            )
+            db.add(patient)
+            db.flush()
+            patient_id = patient.id
+
+        with sessions.begin() as db:
+            seed_demo_data(db)
+
+        with sessions() as db:
+            for model in (ClinicalNote, MedicalDocument, MedicalReport, PatientAllergy, PatientVital, Prescription):
+                assert db.scalar(
+                    select(func.count()).select_from(model).where(model.patient_user_id == patient_id)
+                ) == 0
     finally:
         engine.dispose()
 

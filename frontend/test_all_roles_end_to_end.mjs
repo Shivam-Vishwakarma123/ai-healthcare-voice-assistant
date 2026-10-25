@@ -1,9 +1,27 @@
 import { chromium } from "playwright";
 import assert from "node:assert/strict";
 import { execSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 const BASE_URL = "http://127.0.0.1:3000";
 const API_URL = "http://127.0.0.1:8000/api/v1";
+const CREDENTIALS_PATH = resolve("../.qa-test-credentials.env");
+const SCREENSHOT_DIR = resolve("qa-screenshots");
+if (!existsSync(CREDENTIALS_PATH)) {
+  throw new Error("Missing ignored .qa-test-credentials.env; see docs/qa/QA_AUDIT_REPORT.md for setup.");
+}
+const localCredentials = Object.fromEntries(
+  readFileSync(CREDENTIALS_PATH, "utf8").split(/\r?\n/)
+    .filter((line) => line && !line.startsWith("#"))
+    .map((line) => { const at = line.indexOf("="); return [line.slice(0, at), line.slice(at + 1)]; }),
+);
+function credential(role, field) {
+  const key = `CV_QA_${role.toUpperCase()}_${field}`;
+  if (!localCredentials[key]) throw new Error(`Missing ${key} in ignored local credential file.`);
+  return localCredentials[key];
+}
+mkdirSync(SCREENSHOT_DIR, { recursive: true });
 
 function resetRateLimits() {
   try {
@@ -16,57 +34,41 @@ function resetRateLimits() {
 const ROLE_CREDENTIALS = [
   {
     role: "patient",
-    email: "patient01@demo.carevoice.test",
-    password: "CareVoiceDemo2026!",
+    login: credential("patient", "LOGIN"),
+    password: credential("patient", "PASSWORD"),
     expectedPage: "Overview",
     expectedHeading: "Aarav Demo",
   },
   {
     role: "doctor",
-    email: "doctor01@demo.carevoice.test",
-    password: "CareVoiceDemo2026!",
+    login: credential("doctor", "LOGIN"),
+    password: credential("doctor", "PASSWORD"),
     expectedPage: "Doctor workspace",
     expectedHeading: "Doctor Clinical Workspace",
   },
   {
     role: "hospital_staff",
-    email: "hospital.staff",
-    password: "HospitalStaff@2026!",
+    login: credential("hospital_staff", "LOGIN"),
+    password: credential("hospital_staff", "PASSWORD"),
     expectedPage: "Provider dashboard",
     expectedHeading: "Hospital dashboard",
   },
   {
     role: "hospital_admin",
-    email: "hospital-admin01@demo.carevoice.test",
-    password: "CareVoiceDemo2026!",
+    login: credential("hospital_admin", "LOGIN"),
+    password: credential("hospital_admin", "PASSWORD"),
     expectedPage: "Administration",
     expectedHeading: "Administrative Console",
   },
   {
     role: "platform_admin",
-    email: "platform.admin",
-    password: "PlatformTest@2026!",
+    login: credential("platform_admin", "LOGIN"),
+    password: credential("platform_admin", "PASSWORD"),
     expectedPage: "Administration",
     expectedHeading: "Administrative Console",
   },
 ];
-
-async function loginApi(loginId, password) {
-  resetRateLimits();
-  const body = loginId.includes("@")
-    ? { email: loginId, password }
-    : { username: loginId, password };
-  const resp = await fetch(`${API_URL}/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!resp.ok) {
-    const err = await resp.text();
-    throw new Error(`Login failed for ${loginId} (${resp.status}): ${err}`);
-  }
-  return await resp.json();
-}
+const selectedRoles = process.env.CV_QA_ROLE_FILTER?.split(",").map((role) => role.trim()).filter(Boolean);
 
 async function runRoleAudit() {
   console.log("===============================================================================");
@@ -78,29 +80,40 @@ async function runRoleAudit() {
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
   });
 
-  for (const cred of ROLE_CREDENTIALS) {
+  for (const cred of ROLE_CREDENTIALS.filter((item) => !selectedRoles || selectedRoles.includes(item.role))) {
     console.log(`\n-------------------------------------------------------------------------------`);
-    console.log(`AUDITING ROLE: [${cred.role.toUpperCase()}] (${cred.email})`);
+    console.log(`AUDITING ROLE: [${cred.role.toUpperCase()}]`);
     console.log(`-------------------------------------------------------------------------------`);
 
-    // 1. Backend Login & Token Verification
-    const auth = await loginApi(cred.email, cred.password);
-    console.log(`✓ Authenticated: ${auth.user.full_name} | Role: ${auth.user.role} | ID: ${auth.user.id}`);
-    assert.equal(auth.user.role, cred.role, `Role mismatch for ${cred.email}`);
-
-    // 2. Browser Session Setup
+    // Authenticate through the rendered UI and retain sanitized browser/network diagnostics.
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-    page.on("pageerror", (err) => console.error(`[Page Error - ${cred.role}]:`, err));
-
+    const pageErrors = [];
+    const failedApiResponses = [];
+    const failedRequests = [];
+    page.on("pageerror", (err) => pageErrors.push(err.message));
+    page.on("requestfailed", (request) => failedRequests.push(`${new URL(request.url()).pathname} (${request.failure()?.errorText || "unknown"})`));
+    page.on("response", (response) => {
+      if (response.url().startsWith(API_URL) && response.status() >= 400) {
+        failedApiResponses.push(`${response.status()} ${new URL(response.url()).pathname}`);
+      }
+    });
     await page.goto(BASE_URL);
-    await page.evaluate((auth) => {
-      localStorage.setItem("ahva_token", auth.access_token);
-      localStorage.setItem("ahva_user", JSON.stringify(auth.user));
-      localStorage.setItem("carevoice_theme", "light");
-    }, auth);
-
+    await page.getByRole("button", { name: "Sign in", exact: true }).first().click({ noWaitAfter: true });
+    await page.getByPlaceholder("Username or email address").fill(cred.login);
+    await page.getByLabel("Password", { exact: true }).fill(cred.password);
+    await page.getByRole("button", { name: "Sign in", exact: true }).last().click();
+    await page.locator(".cv-breadcrumb strong").waitFor({ state: "visible", timeout: 30000 });
     await page.reload();
-    await page.waitForTimeout(1000);
+    await page.waitForFunction(
+      (expected) => document.querySelector(".cv-breadcrumb strong")?.textContent?.trim() === expected,
+      cred.expectedPage,
+      { timeout: 20000 },
+    );
+    await page.waitForFunction(
+      () => (document.querySelector(".cv-content")?.innerText?.trim().length || 0) > 50,
+      null,
+      { timeout: 20000 },
+    );
 
     // 3. Verify Role-Specific Default Landing Page
     console.log(`Checking default landing page for role [${cred.role}]...`);
@@ -121,7 +134,7 @@ async function runRoleAudit() {
       console.log("  ✓ Patient Welcome Header confirmed.");
 
       // Navigate to Health Records
-      await page.locator(".cv-nav-item:has-text('Health records')").click();
+      await page.getByRole("button", { name: "Health records", exact: true }).click();
       await page.waitForSelector(".health-records-tabs", { timeout: 10000 });
       console.log("  ✓ Health Records 12-tab navigation loaded.");
 
@@ -138,8 +151,106 @@ async function runRoleAudit() {
       console.log(`  ✓ Doctor Signed badges: ${signedPill} | AI Draft badges: ${draftPill}`);
 
       // Capture screenshot
-      await page.screenshot({ path: `audit-role-patient.png` });
+      await page.screenshot({ path: resolve(SCREENSHOT_DIR, "audit-role-patient.png") });
       console.log("  ✓ Captured audit-role-patient.png");
+
+      // Exercise theme/language controls and check layout overflow at the requested widths.
+      await page.getByRole("button", { name: "Overview", exact: true }).click();
+      await page.waitForSelector(".cv-patient-dashboard", { timeout: 10000 });
+      const themeSelect = page.getByRole("main").getByRole("combobox", { name: "Color theme" });
+      const viewportResults = [];
+      for (const width of [320, 375, 390, 430, 768, 1024, 1280, 1440]) {
+        await page.setViewportSize({ width, height: 900 });
+        for (const mode of ["light", "dark"]) {
+          await themeSelect.selectOption(mode);
+          const layout = await page.evaluate(() => ({
+            width: window.innerWidth,
+            scrollWidth: document.documentElement.scrollWidth,
+            theme: document.documentElement.dataset.theme,
+          }));
+          assert.equal(layout.theme, mode, `${mode} theme must apply at ${width}px`);
+          assert.ok(layout.scrollWidth <= layout.width + 1, `Horizontal overflow at ${width}px in ${mode} mode`);
+          viewportResults.push(`${width}:${mode}=PASS`);
+          if (width === 320 && mode === "dark") {
+            await page.screenshot({ path: resolve(SCREENSHOT_DIR, "patient-320-dark.png") });
+          }
+          if (width === 1440 && mode === "light") {
+            await page.screenshot({ path: resolve(SCREENSHOT_DIR, "patient-1440-light.png") });
+          }
+        }
+      }
+      await page.emulateMedia({ colorScheme: "light" });
+      await themeSelect.selectOption("system");
+      await page.waitForFunction(() => document.documentElement.dataset.theme === "light");
+      await page.emulateMedia({ colorScheme: "dark" });
+      await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
+      await page.getByRole("button", { name: "हि", exact: true }).first().click();
+      await page.waitForFunction(() => document.documentElement.lang === "hi");
+      await page.setViewportSize({ width: 390, height: 844 });
+      const hindiOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
+      assert.equal(hindiOverflow, false, "Hindi dashboard must not overflow at 390px");
+      await page.setViewportSize({ width: 1440, height: 900 });
+      console.log(`  ✓ Theme checks, Hindi nav, and 16 viewport/theme combinations passed (${viewportResults.join(", ")}).`);
+      await page.getByRole("button", { name: "EN", exact: true }).first().click();
+      await page.waitForFunction(() => document.documentElement.lang === "en");
+      await themeSelect.selectOption("system");
+      await page.setViewportSize({ width: 1440, height: 900 });
+
+      const patientRoutes = [
+        ["Find care", ".cv-search"],
+        ["Appointments", ".cv-appointment-list"],
+        ["Symptom check", ".cv-page-title, form"],
+        ["CareVoice assistant", ".cv-assistant-layout, .cv-voice-assistant, .cv-page-title"],
+        ["Health profile", ".cv-page-title, form"],
+        ["Notifications", ".cv-page-title, form"],
+      ];
+      for (const [label, contentSelector] of patientRoutes) {
+        const providerLoads = label === "Find care"
+          ? Promise.all(["/providers/doctors", "/providers/hospitals"].map((path) => page.waitForResponse(
+            (response) => new URL(response.url()).pathname === `${new URL(API_URL).pathname}${path}` && response.status() === 200,
+            { timeout: 20000 },
+          )))
+          : null;
+        await page.getByRole("button", { name: label, exact: true }).click();
+        await page.locator(".cv-breadcrumb strong").getByText(label, { exact: true }).waitFor({ state: "visible", timeout: 15000 });
+        await page.locator(contentSelector).first().waitFor({ state: "visible", timeout: 15000 });
+        if (providerLoads) await providerLoads;
+      }
+
+      // Use the marked RBAC patient account and a fixed description so repeated audit runs reuse one invoice.
+      const patientAccountId = await page.evaluate(() => JSON.parse(localStorage.getItem("ahva_user") || "{}").id);
+      const qaInvoiceDescription = "QA synthetic Razorpay Test Mode checkout";
+      const adminPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      await adminPage.goto(BASE_URL);
+      await adminPage.getByRole("button", { name: "Sign in", exact: true }).first().click({ noWaitAfter: true });
+      await adminPage.getByPlaceholder("Username or email address").fill(credential("platform_admin", "LOGIN"));
+      await adminPage.getByLabel("Password", { exact: true }).fill(credential("platform_admin", "PASSWORD"));
+      await adminPage.getByRole("button", { name: "Sign in", exact: true }).last().click();
+      await adminPage.locator(".cv-breadcrumb strong").waitFor({ state: "visible", timeout: 30000 });
+      await adminPage.getByRole("button", { name: "Billing", exact: true }).click();
+      await adminPage.getByLabel("Patient account ID").waitFor({ state: "visible", timeout: 15000 });
+      await adminPage.getByText("Razorpay Test Mode ready", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
+      const existingQaInvoice = adminPage.locator(".invoice-row").filter({ hasText: qaInvoiceDescription });
+      if (await existingQaInvoice.count() === 0) {
+        await adminPage.getByLabel("Patient account ID").fill(String(patientAccountId));
+        await adminPage.getByLabel("Amount (₹)").fill("1.00");
+        await adminPage.getByLabel("Description").fill(qaInvoiceDescription);
+        await adminPage.getByRole("button", { name: "Create invoice", exact: true }).click();
+        await adminPage.locator(".invoice-row").filter({ hasText: qaInvoiceDescription }).waitFor({ state: "visible", timeout: 20000 });
+      }
+      assert.match(await adminPage.locator(".invoice-row").filter({ hasText: qaInvoiceDescription }).innerText(), /Unpaid/);
+      await adminPage.getByRole("button", { name: /sign out/i }).click();
+      await adminPage.close();
+
+      await page.getByRole("button", { name: "Billing", exact: true }).click();
+      await page.locator(".cv-breadcrumb strong").getByText("Billing", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
+      await page.getByText("Razorpay Test Mode ready", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
+      const qaInvoiceRow = page.locator(".invoice-row").filter({ hasText: qaInvoiceDescription });
+      await qaInvoiceRow.waitFor({ state: "visible", timeout: 15000 });
+      const payNow = qaInvoiceRow.getByRole("button", { name: "Pay now", exact: true });
+      assert.ok(await payNow.isEnabled(), "The synthetic unpaid invoice must expose Test Mode checkout.");
+      assert.ok(await qaInvoiceRow.getByText("Unpaid", { exact: true }).isVisible(), "The synthetic QA invoice must remain unpaid before checkout.");
+      console.log("  ✓ Patient routes rendered; Razorpay Test Mode checkout is enabled for the synthetic invoice.");
     }
 
     if (cred.role === "doctor") {
@@ -173,14 +284,16 @@ async function runRoleAudit() {
       console.log("  ✓ Clinical Protocol Monitor loaded with NEWS2/Dengue/SNOOP inputs.");
 
       // Capture screenshot
-      await page.screenshot({ path: `audit-role-doctor.png` });
+      await page.screenshot({ path: resolve(SCREENSHOT_DIR, "audit-role-doctor.png") });
       console.log("  ✓ Captured audit-role-doctor.png");
     }
 
     if (cred.role === "hospital_staff") {
       console.log("Testing Hospital Staff Front-Desk Reception Hub...");
       // Verify Front-Desk Reception Header
-      const hasReception = await page.locator("text=Front-Desk Reception & Patient Check-In Queue").isVisible();
+      const receptionHeading = page.locator(".cv-provider-dashboard h2").filter({ hasText: "Front-Desk Reception & Patient Check-In Queue" });
+      await receptionHeading.waitFor({ state: "visible", timeout: 15000 });
+      const hasReception = await receptionHeading.isVisible();
       assert.ok(hasReception, "Hospital staff dashboard must render Front-Desk Reception Queue");
       console.log("  ✓ Front-Desk Reception Queue header confirmed.");
 
@@ -189,44 +302,47 @@ async function runRoleAudit() {
       assert.ok(metricsText.includes("Total Appointments") && metricsText.includes("Pending Check-In"), "Metrics must display reception queue stats");
       console.log("  ✓ Front-Desk Operations KPIs verified.");
 
-      // Test check-in button if any scheduled appointments exist
-      const checkInBtn = page.locator("button:has-text('Confirm Arrival / Check-In')").first();
-      if (await checkInBtn.isVisible()) {
-        console.log("  Found scheduled visit awaiting arrival. Testing Check-In action...");
-        await checkInBtn.click();
-        await page.waitForTimeout(1000);
-        console.log("  ✓ Check-in action completed.");
-      } else {
-        console.log("  ✓ Reception queue displayed cleanly (all visits already confirmed or none pending).");
-      }
+      console.log("  ✓ Reception queue displayed; mutation controls were not activated.");
 
       // Capture screenshot
-      await page.screenshot({ path: `audit-role-hospital-staff.png` });
+      await page.screenshot({ path: resolve(SCREENSHOT_DIR, "audit-role-hospital-staff.png") });
       console.log("  ✓ Captured audit-role-hospital-staff.png");
     }
 
     if (cred.role === "hospital_admin" || cred.role === "platform_admin") {
       console.log(`Testing Admin Console for [${cred.role}]...`);
-      // Verify Admin Management Console
-      const adminHeading = await page.textContent("h1, h2");
-      console.log(`  ✓ Admin console loaded with heading.`);
-
-      // Verify User Management Table or Tabs
-      const hasUsers = await page.locator(".cv-user-row, .cv-card, table").first().isVisible();
-      assert.ok(hasUsers, "Admin console must display users or management controls");
+      const adminWorkspace = page.locator(".cv-admin-management");
+      await adminWorkspace.waitFor({ state: "visible", timeout: 15000 });
+      await adminWorkspace.locator(".cv-loading").waitFor({ state: "hidden", timeout: 30000 });
+      const adminHeading = await adminWorkspace.locator(".cv-admin-heading h2").textContent();
+      assert.match(adminHeading || "", /Administration workspace/i);
+      const sectionCount = await adminWorkspace.locator(".cv-admin-section").count();
+      assert.ok(sectionCount > 0, "Admin console must render management sections");
       console.log("  ✓ Management records and controls displayed.");
 
       // Capture screenshot
-      await page.screenshot({ path: `audit-role-${cred.role}.png` });
+      await page.screenshot({ path: resolve(SCREENSHOT_DIR, `audit-role-${cred.role}.png`) });
       console.log(`  ✓ Captured audit-role-${cred.role}.png`);
     }
 
+    const storedSession = await page.evaluate(() => ({
+      token: Boolean(localStorage.getItem("ahva_token")),
+      user: Boolean(localStorage.getItem("ahva_user")),
+    }));
+    assert.deepEqual(storedSession, { token: true, user: true }, "UI session must persist after refresh");
+    console.log(`  Session persisted; page errors=${pageErrors.length}, API errors=${failedApiResponses.length}, failed requests=${failedRequests.length}`);
+    if (pageErrors.length) console.log(`  Page errors: ${pageErrors.join(" | ")}`);
+    if (failedApiResponses.length) console.log(`  API errors: ${failedApiResponses.join(", ")}`);
+    if (failedRequests.length) console.log(`  Failed requests: ${failedRequests.join(", ")}`);
+    await page.getByRole("button", { name: /sign out/i }).click();
+    await page.getByRole("button", { name: "Sign in", exact: true }).waitFor({ state: "visible", timeout: 10000 });
+    assert.equal(await page.evaluate(() => localStorage.getItem("ahva_token")), null, "Logout must clear token");
     await page.close();
   }
 
   await browser.close();
   console.log("\n===============================================================================");
-  console.log("🎉 ALL 5 APPLICATION ROLES SUCCESSFULLY AUDITED AND VERIFIED END-TO-END!");
+  console.log(`✓ UI role journey completed for ${ROLE_CREDENTIALS.filter((item) => !selectedRoles || selectedRoles.includes(item.role)).length} selected role(s).`);
   console.log("===============================================================================\n");
 }
 

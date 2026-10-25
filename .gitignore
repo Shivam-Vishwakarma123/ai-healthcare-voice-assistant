@@ -21,3 +21,5 @@ htmlcov/
 .env
 .env.*
 !.env.example
+.qa-test-credentials.env
+/frontend/qa-screenshots/

@@ -75,7 +75,9 @@ class Settings(BaseSettings):
     razorpay_webhook_secret: str = ""
     razorpay_api_base_url: str = "https://api.razorpay.com/v1"
     razorpay_checkout_config_id: str = ""
-    payment_mode: str = "live"
+    # Never enable a real payment provider implicitly in local development.
+    # Production must opt into live mode explicitly after setting production config.
+    payment_mode: str = "test"
     appointment_refund_policy: str = "manual_review"
     model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
 
@@ -101,6 +103,8 @@ class Settings(BaseSettings):
         self.razorpay_checkout_config_id = self.razorpay_checkout_config_id.strip()
         if self.payment_mode not in {"demo", "live", "test"}:
             raise ValueError("PAYMENT_MODE must be demo, test, or live.")
+        if self.app_env.strip().lower() in {"development", "test"} and self.payment_mode != "test":
+            raise ValueError("Development and test environments must use PAYMENT_MODE=test.")
         if (
             (self.app_env.strip().lower() in {"development", "test"} or self.payment_mode == "test")
             and self.payment_mode in {"live", "test"}

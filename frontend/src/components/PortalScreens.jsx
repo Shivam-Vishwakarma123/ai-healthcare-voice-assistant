@@ -44,6 +44,22 @@ function LoadingState({ label = "Loading…" }) {
   return <div className="cv-loading" role="status"><span className="cv-spinner" aria-hidden="true" />{label}</div>;
 }
 
+function localizeMatchReason(reason, language) {
+  if (language !== "hi") return reason;
+  if (reason.startsWith("Specialty matches: ")) return `विशेषज्ञता मेल खाती है: ${reason.slice("Specialty matches: ".length)}`;
+  if (reason === "Specialty does not match the requested criteria") return "विशेषज्ञता अनुरोधित मानदंड से मेल नहीं खाती";
+  if (reason.startsWith("Located in ")) return `स्थान: ${reason.slice("Located in ".length)}`;
+  if (reason.startsWith("No matching hospital location for ")) return `अस्पताल का स्थान ${reason.slice("No matching hospital location for ".length)} से मेल नहीं खाता`;
+  if (reason.startsWith("Supports ")) return `समर्थित भाषा: ${reason.slice("Supports ".length)}`;
+  if (reason.endsWith(" is not listed as a supported language")) return `${reason.slice(0, -" is not listed as a supported language".length)} समर्थित भाषाओं में सूचीबद्ध नहीं है`;
+  const consultation = reason.match(/^(Offers |)(in person|online|phone)( consultations?| consultation is not listed)$/);
+  if (consultation) {
+    const label = consultation[2] === "in person" ? "व्यक्तिगत" : consultation[2] === "online" ? "ऑनलाइन" : "फ़ोन पर";
+    return consultation[1] ? `${label} परामर्श उपलब्ध है` : `${label} परामर्श सूचीबद्ध नहीं है`;
+  }
+  return reason;
+}
+
 // Expandable inline drawer displaying clinician or hospital profile details, verified degrees, and hours.
 function ProviderInlineDetails({ type, detail, loading, error, onRetry, language }) {
   const hi = language === "hi";
@@ -654,7 +670,7 @@ export function ProviderDashboardPage({ user, token, onUserUpdated, language = "
                   <label>{hi ? "शुरू" : "Start"}<input type="time" value={scheduleForm.starts_at} onChange={(event) => setScheduleForm({ ...scheduleForm, starts_at: event.target.value })} /></label>
                   <label>{hi ? "समाप्त" : "End"}<input type="time" value={scheduleForm.ends_at} onChange={(event) => setScheduleForm({ ...scheduleForm, ends_at: event.target.value })} /></label>
                 </div>
-                <label>{hi ? "परामर्श प्रकार" : "Consultation type"}<select value={scheduleForm.consultation_type} onChange={(event) => setScheduleForm({ ...scheduleForm, consultation_type: event.target.value })}><option value="in_person">In person</option><option value="online">Online</option><option value="phone">Phone</option></select></label>
+                <label>{hi ? "परामर्श प्रकार" : "Consultation type"}<select value={scheduleForm.consultation_type} onChange={(event) => setScheduleForm({ ...scheduleForm, consultation_type: event.target.value })}><option value="in_person">{hi ? "व्यक्तिगत" : "In person"}</option><option value="online">{hi ? "ऑनलाइन" : "Online"}</option><option value="phone">{hi ? "फ़ोन पर" : "Phone"}</option></select></label>
                 <button className="cv-button cv-button-primary" disabled={saving}>{hi ? "समय-सारणी सेव करें" : "Save schedule"}</button>
                 <p className="cv-subtle">{hi ? "यह साप्ताहिक समय है, तत्काल उपलब्ध स्लॉट नहीं।" : "This publishes recurring hours; it does not claim real-time slot availability."}</p>
               </form>
@@ -1236,7 +1252,7 @@ export function CareDirectoryPage({ token, onNavigate, onAppointmentBooked, lang
         </div>
         <div className="cv-form-row">
           <label>{hi ? "विशेषज्ञता" : "Specialty"}<input value={recommendationInput.specialty} onChange={(event) => setRecommendationInput({ ...recommendationInput, specialty: event.target.value })} /></label>
-          <label>{hi ? "परामर्श प्रकार" : "Consultation type"}<select value={recommendationInput.consultation_type} onChange={(event) => setRecommendationInput({ ...recommendationInput, consultation_type: event.target.value })}><option value="">{hi ? "कोई भी" : "Any"}</option><option value="in_person">In person</option><option value="online">Online</option><option value="phone">Phone</option></select></label>
+          <label>{hi ? "परामर्श प्रकार" : "Consultation type"}<select value={recommendationInput.consultation_type} onChange={(event) => setRecommendationInput({ ...recommendationInput, consultation_type: event.target.value })}><option value="">{hi ? "कोई भी" : "Any"}</option><option value="in_person">{hi ? "व्यक्तिगत" : "In person"}</option><option value="online">{hi ? "ऑनलाइन" : "Online"}</option><option value="phone">{hi ? "फ़ोन पर" : "Phone"}</option></select></label>
         </div>
         <button className="cv-button cv-button-secondary" disabled={recommendationBusy}>{recommendationBusy ? (hi ? "खोज रहे हैं…" : "Finding matches…") : (hi ? "मिलान देखें" : "Show matches")}</button>
         <p className="cv-subtle">{hi ? "मिलान केवल सत्यापित प्रोफ़ाइल के प्रकाशित मानदंडों पर आधारित हैं। यह निदान या डॉक्टर की गुणवत्ता रेटिंग नहीं है।" : "Matches use only verified profiles and the criteria you provide. They are not a diagnosis or provider-quality ratings."}</p>
@@ -1248,7 +1264,7 @@ export function CareDirectoryPage({ token, onNavigate, onAppointmentBooked, lang
         <div className="cv-doctor-grid">{recommendations.map((item) => <article className="cv-doctor-card" key={item.doctor_id}>
           <h3>{item.doctor_name}</h3><p className="cv-specialty">{item.specialty}</p><p className="cv-location">{item.hospital_name || (hi ? "स्वतंत्र प्रदाता" : "Independent provider")}</p>
           <p><strong>{hi ? "मानदंड मिलान" : "Criteria match"}: {Math.round(item.score * 100)}%</strong></p>
-          <ul>{item.match_reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+          <ul>{item.match_reasons.map((reason) => <li key={reason}>{localizeMatchReason(reason, language)}</li>)}</ul>
           <p className="cv-subtle">{item.availability_note}</p>
           <button
             className="cv-button cv-button-quiet"
