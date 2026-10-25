@@ -205,14 +205,21 @@
 
 .voice-layout {
   display: grid;
-  grid-template-columns: minmax(250px, .85fr) minmax(0, 1.2fr);
-  gap: 18px;
-  align-items: start;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  align-items: stretch;
 }
 
-.voice-layout .voice-card {
-  padding: 35px 25px;
+.voice-layout .voice-card,
+.voice-layout .chat-card {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  margin: 0;
 }
+
+.voice-layout .voice-card { padding: 35px 25px; }
+.voice-layout .chat-card { padding: 20px; }
 
 .voice-card h2 {
   font: 800 22px Manrope;
@@ -337,11 +344,19 @@
 }
 
 .public-triage label {
-  display: block;
+  display: grid;
+  gap: 4px;
   margin: 14px 0 6px;
   font-size: 13px;
   font-weight: 700;
   color: var(--cv-text-primary);
+}
+
+.cv-triage-hint {
+  display: block;
+  color: var(--cv-text-muted);
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .public-triage textarea {

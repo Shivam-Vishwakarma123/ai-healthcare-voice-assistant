@@ -49,6 +49,21 @@ async function login(credentials) {
   return await resp.json();
 }
 
+async function assertDialogFits(page, selector, label, widths = [320, 768, 1440]) {
+  for (const width of widths) {
+    await page.setViewportSize({ width, height: width < 500 ? 700 : 900 });
+    await page.waitForTimeout(50);
+    const box = await page.locator(selector).evaluate((node) => {
+      const rect = node.getBoundingClientRect();
+      return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height };
+    });
+    assert.ok(box.width > 0 && box.height > 0, `${label} should remain visible at ${width}px`);
+    assert.ok(box.left >= -1 && box.right <= width + 1, `${label} should fit horizontally at ${width}px: ${JSON.stringify(box)}`);
+    assert.ok(box.top >= -1 && box.bottom <= (width < 500 ? 700 : 900) + 1, `${label} should fit vertically at ${width}px: ${JSON.stringify(box)}`);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+}
+
 async function runComprehensiveAudit() {
   console.log("================================================================================");
   console.log("CAREVOICE AI — COMPREHENSIVE MULTI-PAGE & MULTI-VIEWPORT VERIFICATION AUDIT");
@@ -145,6 +160,15 @@ async function runComprehensiveAudit() {
     assert.equal(metricCards.length, 8, "Expected 8 clickable metric cards");
     const chart = await page.waitForSelector(".cv-svg-chart");
     assert.ok(chart);
+    const metricTabs = page.locator(".cv-chip-group[role='tablist'] [role='tab']");
+    const metricTabCount = await metricTabs.count();
+    for (let i = 0; i < metricTabCount; i += 1) {
+      const tab = metricTabs.nth(i);
+      await tab.click();
+      assert.equal(await tab.getAttribute("aria-selected"), "true", `Vitals metric tab ${i + 1} should select`);
+    }
+    const chartRanges = page.locator(".cv-chip-group[role='group'] button");
+    for (let i = 0; i < await chartRanges.count(); i += 1) await chartRanges.nth(i).click();
     console.log("  ✓ 8 metric cards, physiological vitals chart, and welcome card validated.");
 
     // 2. Find Care Page Check
@@ -155,7 +179,23 @@ async function runComprehensiveAudit() {
       return window.getComputedStyle(document.querySelector(".cv-search")).marginBottom;
     });
     assert.equal(searchMargin, "24px", "Expected 24px deliberate spacing below search");
-    console.log("  ✓ Search input present with deliberate 24px bottom spacing.");
+    const providerProfile = page.locator(".cv-doctor-card button:has-text('View profile')").first();
+    if (await providerProfile.count()) {
+      await providerProfile.click();
+      await page.waitForSelector(".cv-modal-backdrop .cv-modal");
+      await assertDialogFits(page, ".cv-modal-backdrop .cv-modal", "Provider profile modal");
+      await page.locator(".cv-modal-close").click();
+      await page.waitForSelector(".cv-modal-backdrop", { state: "detached" });
+    }
+    const bookingButton = page.locator(".cv-doctor-card button:has-text('Book visit')").first();
+    if (await bookingButton.count()) {
+      await bookingButton.click();
+      await page.waitForSelector(".cv-dialog[role='dialog']");
+      await assertDialogFits(page, ".cv-dialog[role='dialog']", "Appointment booking dialog");
+      await page.locator(".cv-dialog-close").click();
+      await page.waitForSelector(".cv-dialog[role='dialog']", { state: "detached" });
+    }
+    console.log("  ✓ Search spacing and provider/booking modal alignment passed at desktop, tablet, and mobile widths.");
 
     // 3. Appointments Page & Receipt Modal Check
     console.log("Checking [Appointments] & In-Page Receipt Modal...");
@@ -164,6 +204,11 @@ async function runComprehensiveAudit() {
     const viewReceiptBtn = await page.locator("button:has-text('View receipt')").first();
     await viewReceiptBtn.click();
     await page.waitForSelector("#appointment-receipt-view");
+    await page.screenshot({ path: "qa-screenshots/appointment-receipt-modal-desktop.png" });
+    await page.setViewportSize({ width: 320, height: 700 });
+    await page.screenshot({ path: "qa-screenshots/appointment-receipt-modal-mobile.png" });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await assertDialogFits(page, ".cv-modal", "Appointment receipt modal");
     const receiptId = await page.textContent("[data-testid='receipt-id']");
     assert.ok(receiptId?.trim().length > 0);
     // Ensure we did not navigate to Billing
@@ -172,7 +217,23 @@ async function runComprehensiveAudit() {
     // Close modal
     await page.locator(".cv-modal-receipt-content button:has-text('Close')").click();
     await page.waitForSelector("#appointment-receipt-view", { state: "detached" });
-    console.log(`  ✓ Receipt modal opened in-page (${receiptId?.trim()}), closed cleanly, route retained.`);
+    const historyButton = page.locator(".cv-appointment-actions button:has-text('History')").first();
+    if (await historyButton.count()) {
+      await historyButton.click();
+      await page.waitForSelector(".cv-modal-history-list");
+      await assertDialogFits(page, ".cv-modal", "Appointment history modal");
+      await page.locator(".cv-modal-close").click();
+      await page.waitForSelector(".cv-modal-history-list", { state: "detached" });
+    }
+    const rescheduleButton = page.locator(".cv-appointment-actions button:has-text('Reschedule')").first();
+    if (await rescheduleButton.count()) {
+      await rescheduleButton.click();
+      await page.waitForSelector(".cv-dialog[role='dialog']");
+      await assertDialogFits(page, ".cv-dialog[role='dialog']", "Reschedule appointment dialog");
+      await page.locator(".cv-dialog-close").click();
+      await page.waitForSelector(".cv-dialog[role='dialog']", { state: "detached" });
+    }
+    console.log(`  ✓ Receipt, history${await historyButton.count() ? ", and reschedule" : ""} dialogs fit desktop/tablet/mobile and close cleanly; receipt ${receiptId?.trim()}.`);
 
     // 4. Health Records Page Check
     console.log("Checking [Health records]...");
@@ -180,23 +241,83 @@ async function runComprehensiveAudit() {
     await page.waitForSelector("[role='tablist'], .health-records-tabs");
     const tabButtons = await page.$$("[role='tab']");
     assert.ok(tabButtons.length >= 10, "Expected at least 10 health record tabs");
-    // Switch to Prescriptions tab
-    const rxTab = await page.locator("[role='tab']:has-text('Prescriptions')");
-    await rxTab.click();
-    await page.waitForTimeout(200);
-    console.log(`  ✓ Health records rendered with ${tabButtons.length} responsive tabs, tab navigation operational.`);
+    for (const tab of tabButtons) {
+      await tab.click();
+      assert.equal(await tab.getAttribute("aria-selected"), "true", `Health record tab ${await tab.textContent()} should select`);
+    }
+    const reportsTab = page.locator(".health-records-tab").filter({ hasText: "AI Reports" });
+    if (await reportsTab.count()) {
+      await reportsTab.click();
+      const reportDetail = page.locator("button:has-text('View Details')").first();
+      if (await reportDetail.count()) {
+        await reportDetail.click();
+        await page.waitForSelector(".cv-record-detail-container");
+        await assertDialogFits(page, ".cv-modal", "Clinical record details modal");
+        await page.setViewportSize({ width: 320, height: 700 });
+        await page.screenshot({ path: "qa-screenshots/clinical-record-modal-mobile.png" });
+        const mobileRecordLayout = await page.evaluate(() => {
+          const body = document.querySelector(".cv-modal-record-body");
+          const content = document.querySelector(".cv-record-detail-body");
+          const footer = body.querySelector(":scope > .cv-modal-actions");
+          const dialog = document.querySelector(".cv-modal");
+          return {
+            contentHeight: content.clientHeight,
+            contentTextLength: content.innerText.trim().length,
+            wrapperScrolls: body.scrollHeight > body.clientHeight + 1,
+            footerVisible: footer.getBoundingClientRect().bottom <= dialog.getBoundingClientRect().bottom + 1,
+          };
+        });
+        assert.ok(mobileRecordLayout.contentHeight > 100 && mobileRecordLayout.contentTextLength > 100, "Clinical report content should remain visible and scrollable on mobile");
+        assert.equal(mobileRecordLayout.wrapperScrolls, false, "Clinical record modal must not add a second scrollbar on mobile");
+        assert.ok(mobileRecordLayout.footerVisible, "Clinical record modal action footer should remain visible on mobile");
+        await page.setViewportSize({ width: 1440, height: 900 });
+        const scrollModel = await page.evaluate(() => {
+          const body = document.querySelector(".cv-modal-record-body");
+          const content = document.querySelector(".cv-record-detail-body");
+          const footer = document.querySelector(".cv-modal-record-body > .cv-modal-actions");
+          const dialog = document.querySelector(".cv-modal");
+          return {
+            bodyOverflow: getComputedStyle(body).overflowY,
+            bodyScrolls: body.scrollHeight > body.clientHeight + 1,
+            contentHeight: content.clientHeight,
+            footerVisible: footer.getBoundingClientRect().bottom <= dialog.getBoundingClientRect().bottom + 1,
+          };
+        });
+        assert.equal(scrollModel.bodyOverflow, "hidden", "Record modal wrapper should not create a second scrollbar");
+        assert.equal(scrollModel.bodyScrolls, false, "Record modal wrapper should not scroll independently of its clinical content");
+        assert.ok(scrollModel.contentHeight > 0 && scrollModel.footerVisible, "Clinical content scroll area and action footer should remain visible");
+        await page.locator(".cv-modal-close").click();
+        await page.waitForSelector(".cv-record-detail-container", { state: "detached" });
+        console.log("  ✓ Clinical record modal uses one content scroller and keeps its action footer visible at 320/768/1440 px.");
+      }
+    }
+    console.log(`  ✓ All ${tabButtons.length} health record tabs selected and their panels rendered.`);
 
     // 5. Symptom Check Page Check
     console.log("Checking [Symptom check]...");
     await page.locator(".cv-nav-item:has-text('Symptom check')").click();
     await page.waitForSelector(".cv-card, form, .cv-page-title");
-    console.log("  ✓ Symptom check triage form rendered.");
+    await page.locator("#public-triage-symptoms").fill("fever");
+    await page.locator(".cv-triage-submit").click();
+    await page.waitForSelector(".triage-result");
+    console.log("  ✓ Rule-based symptom safety form accepted a synthetic input and rendered a result.");
 
     // 6. Assistant Page Check
     console.log("Checking [Assistant]...");
     await page.locator(".cv-nav-item:has-text('assistant')").click();
     await page.waitForSelector(".cv-assistant-layout, .cv-voice-assistant, .cv-page-title");
-    console.log("  ✓ CareVoice AI Assistant rendered.");
+    const assistantInput = page.locator(".chat-form textarea");
+    await assistantInput.fill("What does a blood pressure reading measure?");
+    await page.locator(".chat-form button[type='submit']").click();
+    const assistantOutcome = await Promise.race([
+      page.locator(".chat-message.assistant").waitFor({ state: "visible", timeout: 20000 }).then(() => "response").catch(() => "timeout"),
+      page.locator(".cv-toast-error").waitFor({ state: "visible", timeout: 20000 }).then(() => "toast").catch(() => "timeout"),
+    ]);
+    if (assistantOutcome === "toast") {
+      const toastText = await page.locator(".cv-toast-error .cv-toast-message").innerText();
+      assert.doesNotMatch(toastText, /ollama|docker compose|model .*not downloaded/i, "Assistant infrastructure errors must not expose setup commands to patients");
+    }
+    console.log(`  ✓ Assistant layout rendered and synthetic question reached ${assistantOutcome === "response" ? "a response" : assistantOutcome === "toast" ? "a safe user-facing fallback" : "the bounded wait"}.`);
 
     // 7. Profile Page Check
     console.log("Checking [Profile]...");

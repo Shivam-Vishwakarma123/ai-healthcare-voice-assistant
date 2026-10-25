@@ -1,38 +1,41 @@
 # CareVoice QA Repair Backlog
 
-Updated from the live audit on 2026-10-25. Items distinguish confirmed code/runtime findings from flows that still lack test evidence.
+Updated 2026-10-25 from source review, local service checks, automated tests, and the Playwright role audit.
 
-## P1 — Finish hosted checkout close and payment outcome coverage
+## P1 — Complete Test Mode payment outcomes
 
-- **Evidence:** Runtime is safely in Razorpay Test Mode; a Test Mode order request returned 200 and the hosted checkout iframe became visible. The synthetic invoice remains unpaid and its order remains uncompleted. Automated inspection did not identify the hosted iframe's close control.
-- **Affected:** `frontend/src/components/Billing.jsx`, `backend/app/routes/billing_routes.py`, `backend/app/services/payment_service.py`, Razorpay checkout QA harness.
-- **Next step:** Identify and verify the supported close/cancel interaction without entering payment details. Then exercise the provider's documented Test Mode success/failure cases, signature verification, and webhook idempotency using synthetic fixtures.
-- **Acceptance:** Closing or failing checkout leaves the invoice unpaid; verified Test Mode success alone marks it paid; invalid signatures and duplicate webhooks do not change state.
+- **Status:** **BLOCKED / NOT TESTED** for hosted checkout outcomes. The UI advertised Test Mode readiness and an unpaid synthetic invoice offered Pay now. This audit did not open the hosted checkout or submit a payment.
+- **Reproduction:** Sign in with the marked synthetic patient account, open Billing, locate the marked unpaid invoice, and choose Pay now; then test provider cancellation/failure and the documented Test Mode success fixture. Verify the invoice remains unpaid until server verification confirms capture.
+- **Next:** Run only with Razorpay Test Mode credentials and provider test tooling. Exercise checkout dismissal/failure, server signature acceptance/rejection, webhook signature validation, and duplicate event handling.
+- **Acceptance:** Cancellation/failure leaves invoice unpaid; only verified captured payment changes it to paid; duplicate/invalid webhooks do not duplicate or alter payment state.
 
-## P1 — Complete write workflows and tenant-boundary checks
+## P1 — Complete role-scoped workflow and tenant tests
 
-- **Evidence:** UI login, role landing, refresh persistence, logout, dashboard loads, and several read routes pass for all five roles. Booking, schedule conflicts, profile/notification writes, clinical mutations, admin mutations, patient ownership, and cross-hospital isolation were not exercised live.
-- **Affected:** Provider, patient, clinical, assistant, billing, and admin route families.
-- **Next step:** Continue with the marked RBAC test accounts and isolated synthetic records. Verify validation, persistence, duplicate submissions, 401/403/404 behavior, and tenant boundaries without changing non-test data.
-- **Acceptance:** Expected reads and writes pass for each role; cross-owner/tenant access is denied; state remains correct after refresh and repeated requests.
+- **Status:** **PARTIAL.** Five role sign-in/landing/refresh/logout journeys passed. Dashboard reads passed. Booking, clinical writes, profile/notification writes, refunds, admin mutations, and cross-owner/tenant denial were not exercised end to end.
+- **Reproduction/next:** Use marked synthetic accounts and appointments to test booking conflicts, reschedule/cancel, patient records, clinical notes/prescriptions, notification preferences, refunds, account administration, and cross-patient/hospital reads and writes. Refresh after successful writes and verify persisted state.
+- **Acceptance:** Each intended role's actions persist; unauthorized owners/tenants receive appropriate denials; repeated requests do not duplicate records.
 
-## P2 — Expand rendered UI matrix beyond the patient overview
+## P2 — Accessibility and Hindi editorial review
 
-- **Evidence:** Patient Overview passed Light/Dark at all eight requested widths and System mode under both emulated OS preferences. Hindi navigation and 390px overflow passed. Other roles/routes and complete translation coverage were not inspected in every combination.
-- **Affected:** `frontend/src/App.jsx`, shared theme tokens, role pages, forms, tables, modals, toasts, and mobile navigation.
-- **Next step:** Run the route-by-route visual matrix for every role at 320, 375, 390, 430, 768, 1024, 1280, and 1440px; cover Light, Dark, System light, System dark, English, and Hindi where applicable.
-- **Acceptance:** No clipped controls or unintended overflow; readable contrast and visible focus; translations, toasts, and mobile navigation work across tested pages.
+- **Status:** **PARTIAL.** All 27 signed-in role views passed 436 page/theme/language/width checks. Two narrow-screen clipping defects were fixed. Hindi DPDP interface copy was localized and the prefilled predictable share PIN was removed.
+- **Next:** Review medical terminology and dynamic/API-provided messages with a Hindi editor; check mobile drawer, modal, toast, focus, and touch behavior with keyboard and assistive technology; measure semantic color contrast in both themes.
+- **Acceptance:** Clear, consistent Hindi and English; visible focus and usable touch targets; readable contrast and no clipped controls in both themes.
 
-## P2 — Reduce or split the frontend bundle
+## P2 — Reduce the frontend main bundle
 
-- **Evidence:** Production build succeeds with a 609.99 kB minified JavaScript chunk, above Vite's 500 kB advisory threshold.
-- **Affected:** `frontend/src/App.jsx` and Vite build configuration.
-- **Next step:** Inspect bundle composition and consider lazy-loading major role workspaces/pages.
-- **Acceptance:** Reduce the main chunk or document an intentional threshold, then rerun build and route smoke checks.
+- **Status:** **OPEN, non-blocking.** `npm run build` succeeds, but Vite reports a 613.52 kB minified JavaScript chunk above its 500 kB advisory.
+- **Reproduction:** `cd frontend && npm run build`.
+- **Next:** Inspect composition and lazy-load major role workspaces/routes where it improves startup without breaking state or navigation. Re-run build and browser route smoke tests.
 
-## Closed / verified in this run
+## Closed in this run
 
-- **Development payment-mode default risk:** default and example configuration now use Test Mode; development/test validation rejects Demo and Live modes, and a live-prefixed key is rejected. Backend suite passes with the new guard.
-- **Startup/access blocker:** Docker daemon access worked with granted permission; Compose stack is healthy and the backend readiness endpoint returns 200.
-- **Demo fixture readiness:** the idempotent local demo seeder completed with zero creations; one fixed-marker synthetic service invoice was created/reused for Test Mode QA. No records were deleted.
-- **Demo seeder patient-safety guard:** an unsafe legacy fixture branch could attach synthetic records to an existing unmarked patient. It now requires `is_test_account=True`; a regression test verifies that unmarked patient receives no seeded clinical rows. Pytest-generated PDFs are isolated in temporary directories. Thirteen generated PDFs observed during this audit were removed because they were absent at the start; the database and pre-existing medical-document image were preserved.
+- **P2 — Dark palette and reading hierarchy:** replaced green-tinted dark surfaces with neutral slate, kept green for actions/active states, switched the body stack to Inter with Devanagari support, enlarged dense clinical copy, and separated notifications into responsive rows. The patient viewport/theme matrix and notification browser view passed after these changes.
+- **P3 — Hindi font fallback:** added explicit Devanagari-capable font families to shared font stacks in `frontend/src/healthcare.css`.
+- **P3 — Primary button shadow:** repaired invalid CSS shadow color in `frontend/src/App.css`.
+- **P2 — 320 px responsive clipping:** insight/record and DPDP grids now fit the viewport; verified at 320 px in Hindi Dark and across the full 436-check matrix.
+- **P2 — Hindi DPDP copy and share PIN:** localized visible status and controls, and removed the default `1234` PIN so each share requires a chosen 4–8 digit code.
+- **QA harness role boundary:** `frontend/test_all_roles_end_to_end.mjs` now uses hospital staff for hospital-scoped invoice setup and selects only an unbilled appointment. If none exists, it skips the write and reports a blocker. The current staff account had no unbilled synthetic appointment, so this branch was not exercised.
+- **Regression checks:** frontend 13/13 tests pass; backend 168 tests pass; production build succeeds with the bundle advisory. All 12 health record tabs, chart metric/range controls, receipt modal, and all patient role views passed focused browser checks.
+- **P2 — Screenshot-driven appointment and modal layout:** separated payment details from appointment actions, localized Hindi appointment statuses, and fixed the clinical-record body collapsing on mobile. The report now remains scrollable above a visible footer at 320/768/1440 px. Provider, booking, receipt, history, and reschedule dialogs fit their viewports.
+- **P2 — Symptom and assistant alignment/errors:** spaced the symptom label and hint, let the form use its full responsive column, aligned voice/chat panels, and hid model/Docker internals behind a localized safe assistant fallback.
+- **Regression recheck:** all-role matrix 436 checks / zero findings; focused route audit zero page errors; frontend 13/13; build succeeds with 614.48 kB advisory; `git diff --check` passes.

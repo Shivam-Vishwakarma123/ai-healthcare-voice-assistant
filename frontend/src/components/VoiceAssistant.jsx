@@ -2,6 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../services/api";
 import { useToast } from "./ToastProvider";
 
+function assistantErrorMessage(message, hindi) {
+  const detail = String(message || "");
+  if (/ollama|model.{0,80}(not downloaded|not found)|not downloaded.{0,80}model/i.test(detail)) {
+    return hindi
+      ? "AI सेवा अभी उपलब्ध नहीं है। सुरक्षा जाँच का परिणाम उपलब्ध है; कृपया बाद में फिर प्रयास करें।"
+      : "The AI service is temporarily unavailable. Your safety-check result remains available; please try again later.";
+  }
+  return detail || (hindi ? "संदेश भेजा नहीं जा सका। कृपया फिर प्रयास करें।" : "Your message could not be sent. Please try again.");
+}
+
 // Interactive AI voice and text health assistant providing clinical triage, RAG evidence citations, and doctor discovery.
 export default function VoiceAssistant({ token, language = "en", onNavigate }) {
   const toast = useToast();
@@ -196,7 +206,7 @@ export default function VoiceAssistant({ token, language = "en", onNavigate }) {
       };
       setMessages((current) => [...current, answer]);
     } catch (requestError) {
-      setError(requestError.message);
+      setError(assistantErrorMessage(requestError.message, hi));
       setMessages((current) => current.slice(0, -1));
       setDraft(content);
     } finally {

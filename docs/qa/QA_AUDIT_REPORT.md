@@ -1,59 +1,107 @@
 # CareVoice Health QA Audit
 
 **Run date:** 2026-10-25  
-**Overall result:** **PARTIAL PASS** — the local application is running, core UI journeys pass for all five roles, and the Test Mode checkout opens. Several write workflows and payment settlement cases remain untested.
+**Result:** **PASS for the requested UI audit** — all five roles and 27 signed-in views were checked across English/Hindi, Light/Dark/System themes, and responsive widths. Patient core views and interactive tabs also passed focused workflows. **NOT TESTED:** clinical/admin writes, live AI/voice outcomes, hosted checkout outcomes, and assistive technology behavior.
+
+**Status counts:** **PASS** — frontend 13/13, backend 168/168, production build, 436 role/view/theme/language/responsive layout checks, and focused patient/doctor/admin workflows. **FAIL** — no product failure confirmed in completed checks. **BLOCKED** — no eligible unbilled synthetic hospital appointment for creating another scoped invoice. **NOT TESTED** — live checkout outcomes, clinical/admin mutation workflows, and assistive technology behavior.
 
 ## Runtime and data safety
 
-- The working tree was already modified when this continuation began. Existing edits were preserved. This run additionally changed `backend/app/core/config.py`, `backend/tests/test_runtime_configuration.py`, and `frontend/test_all_roles_end_to_end.mjs`, and updated these QA documents.
-- Docker CLI and daemon access were verified. Compose services were already running; the backend was restarted once to load the payment configuration guard. Final state: PostgreSQL and backend healthy, frontend healthy, Ollama healthy, and pgAdmin running.
-- Verified local URLs: frontend [http://127.0.0.1:3000](http://127.0.0.1:3000), backend [http://127.0.0.1:8000](http://127.0.0.1:8000), PostgreSQL `127.0.0.1:5432`. `/api/v1/health/live` and `/api/v1/health/ready` returned **200** after restart.
-- Runtime settings were inspected without displaying secrets: `APP_ENV=development`, database host `db` on the local Compose network, `PAYMENT_MODE=test`, and the configured Razorpay key ID has the `rzp_test_` prefix. The user's `.env` was not read into output or modified.
-- The database contained 42 users, five marked RBAC test accounts, and one marked RBAC test hospital. The browser journeys used the repository's fictional `.test` demo identities and marked synthetic invoice. Running the repository's additive demo seeder reported **zero database rows created**.
-- A source review found a legacy branch in `backend/app/seed_demo.py` that could attach synthetic records to an existing patient selected by a hard-coded identity without requiring `is_test_account`. That identity was not used in browser QA, and the live seeder reported zero database rows created. The branch now requires a marked test account. The seeder and its tests now write PDFs to temporary test directories. Thirteen PDFs that appeared in the repository during this audit were absent at the start and were removed; database rows and the pre-existing medical-document image were left untouched.
-- A fixed-description ₹1 synthetic QA service invoice was created through the platform-admin UI only if absent. The invoice is still unpaid. Its Test Mode payment-order state is `created`; no payment details were entered and no payment was captured.
+- **PASS:** The working tree was clean at audit start. Existing project files and database contents were preserved.
+- **PASS:** `docker compose ps` showed PostgreSQL, backend, and frontend healthy; Ollama was healthy and pgAdmin was running. Frontend `http://127.0.0.1:3000/` and backend `/api/v1/health/live` both returned HTTP 200.
+- **PASS:** Browser checks used the repository's ignored local QA credential file for marked synthetic QA accounts. No credentials or environment values were printed in this report.
+- **PASS:** The app exposed “Razorpay Test Mode ready”; the patient had a marked synthetic unpaid invoice with an enabled Pay now action. No checkout was opened and no payment was submitted in this run.
+- **BLOCKED:** Hospital staff had no unbilled synthetic appointment available to create a new hospital-scoped test invoice. The audit script now skips that write and records the limitation rather than creating an unrelated manual invoice.
 
-## Payment configuration and checkout
+## Route and role inventory
 
-- **PASS:** Development and test configurations now reject `PAYMENT_MODE=demo` and `PAYMENT_MODE=live`; they require `PAYMENT_MODE=test`. The default and `.env.example` are also set to `test`. Production retains its separate explicit configuration path. A development/test key ID with a live prefix remains rejected.
-- **PASS:** The Billing page displayed “Razorpay Test Mode ready” and the no-real-payment message. The Razorpay Test Mode `/billing/checkout` request returned **200**, and the hosted checkout iframe became visible.
-- An existing `DEMO-SEED-V1` unpaid invoice was rejected with **409** because it belongs to a past appointment. This is the intended past-appointment payment guard. A marker-named manual service invoice was then created for the fictional demo patient and used for the Test Mode order.
-- **NOT TESTED:** Payment completion, decline, timeout, server-side signature acceptance/rejection, and webhook handling. No payment was made. The browser automation could not identify the hosted checkout close button in the iframe; its browser session ended before payment details were entered. The invoice remains unpaid and the test order remains uncompleted.
+The frontend uses a single React app with state-based workspace navigation rather than separate URL routes for each signed-in page. Public path states in `frontend/src/App.jsx` include `/`, `/reset-password`, and `/setup/administrator`. The available signed-in workspace views discovered in source are:
 
-## Executed checks
-
-| Check | Result | Evidence |
+| View | Role availability | Browser result |
 |---|---|---|
-| Docker / Compose runtime | **PASS** | Final `docker compose ps`: database, backend, and frontend healthy; optional Ollama healthy and pgAdmin running. |
-| Frontend health | **PASS** | `http://127.0.0.1:3000/` loaded in the in-app browser and Playwright. |
-| Backend health | **PASS** | Live and readiness endpoints returned 200 after backend restart. |
-| Frontend unit tests | **PASS** | `npm test`: 13 test files, 13 passed, 0 failed. |
-| Frontend production build | **PASS** | `npm run build` completed. Vite reported a 609.99 kB minified JS chunk, above its 500 kB advisory threshold. |
-| Backend tests | **PASS** | `docker exec healthcare-backend pytest -q`: 168 passed, 3 deprecation warnings. |
-| API smoke / access control | **PASS** | Authenticated provider directory, speech-to-text config, notifications, billing config/invoices/payments/refunds returned 200. Unauthenticated patient/provider/admin routes returned 401. |
-| UI login, routing, refresh, logout | **PASS** | Patient, doctor, hospital staff, hospital admin, and platform admin logged in through the rendered sign-in form, reached their expected dashboard, persisted session on reload, and logged out. |
-| Browser Console / API diagnostics | **PASS with dev noise** | Role journeys recorded 0 uncaught page errors and 0 HTTP API errors. Two provider fetches were reported as `net::ERR_ABORTED` during React Strict Mode effect cleanup; the corresponding provider list requests returned 200. |
-| Demo seeder data boundary | **PASS after fix** | A legacy source path was found that did not require a marked test account. The path now requires `is_test_account=True`; a regression test covers an unmarked existing patient. The seed call reported zero database rows created. |
-| Patient routes | **PASS (render smoke)** | Find Care, Appointments, Health Records, Symptom Check, Assistant, Health Profile, Notifications, and Billing rendered. Health Records displayed 12 tabs and six synthetic prescription records. Provider list responses were 200. |
-| Responsive/theme/language | **PASS (patient overview scope)** | Light and Dark at 320, 375, 390, 430, 768, 1024, 1280, and 1440 px; no horizontal overflow. System theme followed emulated light and dark OS preferences. Hindi navigation/lang switch passed and Hindi dashboard had no overflow at 390 px. |
-| Razorpay Test Mode | **PARTIAL PASS** | Runtime mode and test-key prefix verified; Billing UI configuration passed; hosted checkout opened. Payment completion/cancellation callback behavior was not verified. |
-| Hosted checkout close/cancel | **BLOCKED** | Checkout iframe opened, but automation could not locate its close control. No card/UPI details were entered; invoice remains unpaid. |
-| Payment success, decline, signatures, webhooks | **NOT TESTED** | No payment was completed; provider callback and signature paths were not exercised. |
+| Overview / patient dashboard | Patient; provider dashboard is rendered for non-patients if selected | **PASS** patient render and refresh |
+| Find care | Patient and staff roles | **PASS** patient render; provider directory requests returned successfully, with two React Strict Mode aborts during cleanup |
+| Appointments | Patient and staff roles | **PASS** patient render smoke |
+| Health records / Medical records alias | Patient-facing | **PASS** patient 12-tab view; six prescription cards rendered |
+| Symptom check | Patient-facing | **PASS** patient render smoke; form outcomes not submitted |
+| CareVoice assistant | Patient-facing | **PASS** render smoke; no AI chat or voice request submitted |
+| Health profile | Patient-facing | **PASS** render smoke; profile writes not submitted |
+| DPDP Privacy | Patient-facing | **PASS** patient view across all themes/languages and responsive widths; Hindi labels reviewed at 320 px |
+| Notifications | Patient-facing | **PASS** render smoke; preference writes not submitted |
+| Billing | Patient, hospital staff/admin, platform admin | **PASS** Test Mode status and synthetic unpaid invoice displayed; no checkout completion |
+| Provider dashboard | Hospital staff and hospital admin; role-dependent for other providers | **PASS** hospital staff and hospital admin landing views |
+| Doctor workspace | Doctor | **PASS** overview, seven tabs, Ambient Scribe, and Protocol Monitor render |
+| Administration | Hospital admin and platform admin | **PASS** management workspace render for both roles |
+| Sign in / registration | Public | **PASS** used to sign in through UI; registration validation not exercised |
+| Password recovery and initial administrator setup | Public paths above | **NOT TESTED** |
 
-## Role results
+## Browser results
 
-| Role | UI login and expected dashboard | Role-specific rendered checks | Browser errors |
-|---|---|---|---|
-| Patient | **PASS** — Overview | Health records/prescriptions, responsive/theme/language matrix, core route rendering, Billing Test Mode readiness | 0 JS, 0 HTTP API; 2 expected aborted duplicate provider requests |
-| Doctor | **PASS** — Doctor workspace | Overview KPIs, seven workspace tabs, Ambient Scribe, Protocol Monitor | 0 JS, 0 HTTP API |
-| Hospital staff | **PASS** — Provider dashboard | Reception queue and operations KPIs | 0 JS, 0 HTTP API |
-| Hospital admin | **PASS** — Administration | Management workspace and sections | 0 JS, 0 HTTP API |
-| Platform admin | **PASS** — Administration | Management workspace and sections | 0 JS, 0 HTTP API |
+- **PASS:** Patient overview was checked at 320, 375, 390, 430, 768, 1024, 1280, and 1440 px in Light and Dark: 16 combinations, no horizontal overflow. Rechecked after the updated slate dark palette and typography changes.
+- **PASS:** Patient dashboard followed emulated System Light and Dark preferences. Hindi navigation was toggled and the Hindi dashboard had no overflow at 390 px.
+- **PASS:** Patient, doctor, hospital staff, hospital admin, and platform admin sign-in, role landing, refresh persistence, and logout were exercised. The platform admin passed on an isolated retry after a timeout during the first full run.
+- **PASS:** The final browser run recorded zero uncaught page errors and zero failed API responses on all five roles. Two provider requests were aborted during React Strict Mode cleanup; corresponding provider requests returned successfully.
+- **PASS:** The all-role matrix checked 436 page/theme/language/width combinations with zero off-screen content, empty views, failed API responses, or uncaught page errors. Each of the 27 role views was checked at 320, 430, 768, and 1440 px; patient Overview additionally used 375, 390, 1024, and 1280 px. Every view was checked in English Light and Hindi Dark plus explicit Light, Dark, and OS-following System in both languages.
+- **PASS:** Patient Overview and DPDP Privacy were visually inspected at 320 px in Hindi Dark. Health-record navigation activated all 12 tabs; dashboard vitals metric and time-range controls were exercised. The appointment receipt opened and closed in place. No payment or clinical record was submitted.
+- **NOT TESTED:** Keyboard-only navigation, screen reader behavior, modal focus trapping, live toast appearance, complete translation review of every dynamic/server-generated message, and mutation/API authorization workflows.
 
-Screenshots from the current browser run are in the ignored `frontend/qa-screenshots/` folder: role dashboards, patient 320px Dark and 1440px Light, and Billing Test Mode.
+## Razorpay and billing
 
-## Coverage still not established
+- **PASS:** Runtime Billing UI reported Razorpay Test Mode ready. A marked synthetic unpaid invoice displayed an enabled Pay now action.
+- **PASS (automated):** Backend payment, signature, webhook/idempotency, and Test Mode suites are included in the passing backend suite (168 tests total). These use test fixtures/mocks; they do not represent a live provider settlement.
+- **NOT TESTED:** Hosted checkout open/cancel, provider decline, successful test payment, payment signature acceptance/rejection against Razorpay, and live webhook delivery. No payment was submitted.
+- **BLOCKED:** No unbilled synthetic hospital appointment was available to issue another scoped invoice during this run.
+- **Security note:** Payment is not marked paid by opening checkout; server verification and webhook behavior were not manually exercised in this browser run.
 
-**NOT TESTED:** booking and schedule conflicts; appointment confirmation, rescheduling, cancellation, receipts and persistence; profile updates/deletion; notification preference writes; symptom form submission and clinical safety outcomes; AI chat responses, voice recording/transcription, microphone permission and RAG citations; clinical notes, prescriptions, report generation and signing; invoice PDF/refund mutation; checkout success/failure and signature/webhook cases; admin user provisioning/deactivation; cross-patient ownership and cross-hospital tenant isolation; full Hindi translation and toast rendering across every route; all roles at every viewport; keyboard/focus and screen-reader behavior.
+## Commands and outcomes
 
-The browser checks were real local UI checks, but route rendering should not be read as proof that each listed workflow's mutations and failure cases work end to end.
+| Command/check | Result |
+|---|---|
+| `git status --short` at start | **PASS** — clean working tree |
+| `docker compose ps` | **PASS** — database, frontend, backend healthy; Ollama healthy |
+| Local frontend and backend health requests | **PASS** — HTTP 200 / HTTP 200 |
+| `cd frontend && npm test` (after UI fixes) | **PASS** — 13 files, 13 passed, 0 failed |
+| `cd frontend && npm run build` (latest visual fixes) | **PASS with advisory** — build succeeded; 613.52 kB minified JS chunk exceeds Vite's 500 kB advisory threshold |
+| `docker compose exec -T backend pytest -q` | **PASS** — 168 passed, 3 deprecation warnings, 59.31s |
+| `node test_all_roles_end_to_end.mjs` (Playwright, escalated for browser access) | **PASS for patient visual recheck** — patient routes, notification list, and viewport/theme matrix passed; checkout remained unpaid |
+| `node audit_all_roles_ui_matrix.mjs` (Playwright) | **PASS** — 436 checks; five roles, 26 views, English/Hindi, Light/Dark/System, no layout or runtime/API findings |
+| `node verify_all_pages_and_viewports.mjs` (Playwright) | **PASS** — ten patient widths, all 12 record tabs, dashboard charts/ranges, receipt modal, all patient pages, doctor workspace, hospital administration; zero page errors |
+| `CV_QA_ROLE_FILTER=patient CV_QA_VIEW_FILTER='DPDP Privacy' node audit_all_roles_ui_matrix.mjs` | **PASS** — 16 focused layout/theme/language checks after Hindi copy and secure-PIN default fixes |
+| Playwright audit without escalation | **BLOCKED by sandbox** — Chrome exited with SIGTRAP/operation-not-permitted; the same audit ran with approved local browser access |
+
+## Confirmed fixes
+
+- `frontend/src/healthcare.css`: added explicit Noto Sans Devanagari and common Windows Indic fallback families to the shared body/display font stacks.
+- `frontend/src/App.css`: corrected an invalid shadow color value on primary buttons.
+- Dark theme surface tokens now use neutral slate shades while green remains the action/selection accent. Body text uses Inter with Noto Sans Devanagari fallback; insight and health-record preview copy is more readable.
+- Notifications now render as separated, responsive rows with aligned channel/status badges.
+- Fixed 320 px clipping in patient insight/record cards and DPDP privacy panels by allowing their responsive grids to shrink below the desktop 320 px card minimum.
+- DPDP Privacy Hindi mode now localizes the visible status, share-link, verification, guide, and export controls. Removed the prefilled `1234` share PIN; patients must choose their own 4–8 digit PIN.
+- `frontend/test_all_roles_end_to_end.mjs`: invoice setup now uses the hospital staff account and only selects an unbilled hospital appointment. It skips the invoice write when no eligible appointment exists. This fixed the harness's incorrect assumption that a manually entered patient ID was billable for that hospital.
+
+## Remaining issues and exact next steps
+
+- **P2 — Bundle size:** Vite warns that the main JS chunk is 613.52 kB minified. Reproduce with `cd frontend && npm run build`; inspect lazy loading before changing bundling.
+- **P1 — Payment outcome coverage:** use Razorpay Test Mode only. Verify checkout close/failure leaves the invoice unpaid, and test server signature/webhook behavior with provider test tooling or fixtures. The current run did not submit a payment.
+- **P1 — Scoped synthetic billing fixture:** create or identify a marked synthetic appointment without an invoice at the hospital assigned to the QA staff account; rerun the role script to test checkout initialization.
+- **P2 — Accessibility follow-up:** keyboard focus, modal focus trapping, toast announcements, contrast sampling, screen-reader landmarks, and form validation need a dedicated assistive technology audit.
+- **P2 — Mutation/API coverage:** exercise appointment booking/conflicts/cancel/reschedule, profile and notification writes, symptom assessment, AI response/voice, clinical note/prescription workflows, refunds, admin mutations, and cross-patient/tenant access using isolated synthetic records.
+
+## Files changed in this run
+
+- `frontend/src/App.css`, `frontend/src/healthcare.css` — readable Inter/Devanagari font stack, neutral slate dark surfaces, green action accents, valid primary action shadow, and responsive privacy card grid.
+- `frontend/src/patientDashboard.css` — more readable insight and record preview typography; narrow cards now shrink correctly.
+- `frontend/src/components/DPDPPrivacyCenter.jsx` — localized Hindi privacy UI and no default/predictable share PIN.
+- `frontend/src/components/PortalScreens.jsx` — semantic notification row structure.
+- `frontend/test_all_roles_end_to_end.mjs` — role-correct invoice fixture setup and updated visual screenshots.
+- `frontend/audit_all_roles_ui_matrix.mjs`, `frontend/verify_all_pages_and_viewports.mjs` — exhaustive responsive/theme/language and focused workflow browser checks.
+- `docs/qa/QA_AUDIT_REPORT.md`, `docs/qa/UI_UX_AUDIT.md`, `docs/qa/REPAIR_BACKLOG.md` — current run findings and evidence.
+
+## Screenshot-driven follow-up (2026-10-25)
+
+- Fixed appointment row alignment by separating payment details from receipt controls, adding stable wide-screen columns, responsive action grids, and Hindi labels for appointment statuses.
+- Fixed mobile clinical-record modal collapse: the narrow layout now reserves a readable report scroller, compacts the record header, gives actions a two-column layout, and keeps the footer visible. Verified its single-scroll behavior at 320, 768, and 1440 px.
+- Fixed symptom form label/hint spacing and removed the narrow desktop-width cap from its responsive card. Aligned assistant voice and chat panels and replaced raw Ollama/Docker model errors with a localized safe fallback.
+- Browser audit now opens and closes provider, booking, receipt, history, and reschedule dialogs at mobile/tablet/desktop widths; activates all 12 health-record tabs; submits synthetic symptom and assistant prompts; and checks doctor/admin landing views. Result: **PASS, zero page errors**.
+- Re-ran `node audit_all_roles_ui_matrix.mjs`: **436 checks, 27 role views, five roles, zero visual findings, zero page/API errors** across English/Hindi, Light/Dark/System, and responsive widths.
+- Re-ran `cd frontend && npm test`: **13 passed, 0 failed**. `npm run build` succeeds; the 614.48 kB minified JS chunk remains above Vite's 500 kB advisory threshold. `git diff --check` passes.

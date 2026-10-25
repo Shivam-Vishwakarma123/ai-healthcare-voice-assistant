@@ -177,6 +177,9 @@ async function runRoleAudit() {
           if (width === 1440 && mode === "light") {
             await page.screenshot({ path: resolve(SCREENSHOT_DIR, "patient-1440-light.png") });
           }
+          if (width === 1440 && mode === "dark") {
+            await page.screenshot({ path: resolve(SCREENSHOT_DIR, "patient-overview-dark-updated.png"), fullPage: true });
+          }
         }
       }
       await page.emulateMedia({ colorScheme: "light" });
@@ -215,42 +218,59 @@ async function runRoleAudit() {
         await page.locator(".cv-breadcrumb strong").getByText(label, { exact: true }).waitFor({ state: "visible", timeout: 15000 });
         await page.locator(contentSelector).first().waitFor({ state: "visible", timeout: 15000 });
         if (providerLoads) await providerLoads;
+        if (label === "Notifications") {
+          await page.screenshot({ path: resolve(SCREENSHOT_DIR, "notifications-dark-refresh.png"), fullPage: true });
+        }
       }
+      await page.getByRole("button", { name: "DPDP Privacy", exact: true }).click();
+      await page.locator(".cv-breadcrumb strong").getByText("DPDP Privacy", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
+      await page.locator(".cv-page-title, .cv-card").first().waitFor({ state: "visible", timeout: 15000 });
 
       // Use the marked RBAC patient account and a fixed description so repeated audit runs reuse one invoice.
-      const patientAccountId = await page.evaluate(() => JSON.parse(localStorage.getItem("ahva_user") || "{}").id);
       const qaInvoiceDescription = "QA synthetic Razorpay Test Mode checkout";
-      const adminPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-      await adminPage.goto(BASE_URL);
-      await adminPage.getByRole("button", { name: "Sign in", exact: true }).first().click({ noWaitAfter: true });
-      await adminPage.getByPlaceholder("Username or email address").fill(credential("platform_admin", "LOGIN"));
-      await adminPage.getByLabel("Password", { exact: true }).fill(credential("platform_admin", "PASSWORD"));
-      await adminPage.getByRole("button", { name: "Sign in", exact: true }).last().click();
-      await adminPage.locator(".cv-breadcrumb strong").waitFor({ state: "visible", timeout: 30000 });
-      await adminPage.getByRole("button", { name: "Billing", exact: true }).click();
-      await adminPage.getByLabel("Patient account ID").waitFor({ state: "visible", timeout: 15000 });
-      await adminPage.getByText("Razorpay Test Mode ready", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
-      const existingQaInvoice = adminPage.locator(".invoice-row").filter({ hasText: qaInvoiceDescription });
+      const staffPage = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      await staffPage.goto(BASE_URL);
+      await staffPage.getByRole("button", { name: "Sign in", exact: true }).first().click({ noWaitAfter: true });
+      await staffPage.getByPlaceholder("Username or email address").fill(credential("hospital_staff", "LOGIN"));
+      await staffPage.getByLabel("Password", { exact: true }).fill(credential("hospital_staff", "PASSWORD"));
+      await staffPage.getByRole("button", { name: "Sign in", exact: true }).last().click();
+      await staffPage.locator(".cv-breadcrumb strong").waitFor({ state: "visible", timeout: 30000 });
+      await staffPage.getByRole("button", { name: "Billing", exact: true }).click();
+      await staffPage.getByLabel("Patient account ID").waitFor({ state: "visible", timeout: 15000 });
+      await staffPage.getByText("Razorpay Test Mode ready", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
+      const existingQaInvoice = staffPage.locator(".invoice-row").filter({ hasText: qaInvoiceDescription });
       if (await existingQaInvoice.count() === 0) {
-        await adminPage.getByLabel("Patient account ID").fill(String(patientAccountId));
-        await adminPage.getByLabel("Amount (₹)").fill("1.00");
-        await adminPage.getByLabel("Description").fill(qaInvoiceDescription);
-        await adminPage.getByRole("button", { name: "Create invoice", exact: true }).click();
-        await adminPage.locator(".invoice-row").filter({ hasText: qaInvoiceDescription }).waitFor({ state: "visible", timeout: 20000 });
+        const appointmentSelect = staffPage.locator(".invoice-form select");
+        const eligibleAppointments = await appointmentSelect.locator("option").evaluateAll((options) => options
+          .filter((option) => option.value)
+          .map((option) => option.value));
+        if (eligibleAppointments.length) {
+          await appointmentSelect.selectOption(eligibleAppointments[0]);
+          await staffPage.getByLabel("Description").fill(qaInvoiceDescription);
+          await staffPage.getByRole("button", { name: "Create invoice", exact: true }).click();
+          await staffPage.locator(".invoice-row").filter({ hasText: qaInvoiceDescription }).waitFor({ state: "visible", timeout: 20000 });
+        } else {
+          console.log("  BLOCKED: no unbilled synthetic appointment is available for a hospital-scoped QA invoice.");
+        }
       }
-      assert.match(await adminPage.locator(".invoice-row").filter({ hasText: qaInvoiceDescription }).innerText(), /Unpaid/);
-      await adminPage.getByRole("button", { name: /sign out/i }).click();
-      await adminPage.close();
+      if (await staffPage.locator(".invoice-row").filter({ hasText: qaInvoiceDescription }).count()) {
+        assert.match(await staffPage.locator(".invoice-row").filter({ hasText: qaInvoiceDescription }).innerText(), /Unpaid/);
+      }
+      await staffPage.getByRole("button", { name: /sign out/i }).click();
+      await staffPage.close();
 
       await page.getByRole("button", { name: "Billing", exact: true }).click();
       await page.locator(".cv-breadcrumb strong").getByText("Billing", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
       await page.getByText("Razorpay Test Mode ready", { exact: true }).waitFor({ state: "visible", timeout: 15000 });
       const qaInvoiceRow = page.locator(".invoice-row").filter({ hasText: qaInvoiceDescription });
-      await qaInvoiceRow.waitFor({ state: "visible", timeout: 15000 });
-      const payNow = qaInvoiceRow.getByRole("button", { name: "Pay now", exact: true });
-      assert.ok(await payNow.isEnabled(), "The synthetic unpaid invoice must expose Test Mode checkout.");
-      assert.ok(await qaInvoiceRow.getByText("Unpaid", { exact: true }).isVisible(), "The synthetic QA invoice must remain unpaid before checkout.");
-      console.log("  ✓ Patient routes rendered; Razorpay Test Mode checkout is enabled for the synthetic invoice.");
+      if (await qaInvoiceRow.count()) {
+        const payNow = qaInvoiceRow.getByRole("button", { name: "Pay now", exact: true });
+        assert.ok(await payNow.isEnabled(), "The synthetic unpaid invoice must expose Test Mode checkout.");
+        assert.ok(await qaInvoiceRow.getByText("Unpaid", { exact: true }).isVisible(), "The synthetic QA invoice must remain unpaid before checkout.");
+        console.log("  ✓ Patient routes rendered; Razorpay Test Mode checkout is enabled for the synthetic invoice.");
+      } else {
+        console.log("  BLOCKED: no eligible unbilled synthetic appointment was available to issue a QA invoice.");
+      }
     }
 
     if (cred.role === "doctor") {

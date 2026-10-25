@@ -261,23 +261,23 @@ export function NotificationsPage({ token, user, onUserUpdated, language = "en" 
             description={hi ? "जब आप अपॉइंटमेंट बुक करेंगे, समय बदलेंगे या भुगतान करेंगे, तो यहाँ संदेश दिखाई देंगे।" : "Notices will appear here when you book appointments, reschedule, or complete payments."}
           />
         ) : (
-          <div className="cv-invoice-list">
+          <div className="cv-notification-list">
             {notifications.map((item) => (
-              <div key={item.id} className="cv-invoice-row">
-                <div>
+              <article key={item.id} className="cv-notification-row">
+                <div className="cv-notification-copy">
                   <b>{hi ? item.title_hi : item.title}</b>
                   <p>{hi ? item.message_hi : item.message}</p>
                   <small style={{ color: "var(--cv-text-muted)", fontSize: "11px" }}>
                     {new Date(item.created_at).toLocaleString(hi ? "hi-IN" : "en-IN", { timeZone: "Asia/Kolkata" })} IST
                   </small>
                 </div>
-                <span className="cv-status" style={{ textTransform: "uppercase" }}>
+                <span className="cv-status cv-notification-channel" style={{ textTransform: "uppercase" }}>
                   {item.channel}
                 </span>
-                <span className={`cv-status ${item.status === "failed" ? "cv-status-cancelled" : ""}`}>
+                <span className={`cv-status cv-notification-status ${item.status === "failed" ? "cv-status-cancelled" : ""}`}>
                   {item.status}
                 </span>
-              </div>
+              </article>
             ))}
           </div>
         )}
@@ -1516,6 +1516,16 @@ export function AppointmentsPage({ token, language = "en", user, patient, recent
   const upcoming = sorted.filter((item) => item.status !== "cancelled" && new Date(item.scheduled_for) >= new Date());
   const history = sorted.filter((item) => item.status === "cancelled" || new Date(item.scheduled_for) < new Date());
   const canConfirm = ["doctor", "hospital_staff", "hospital_admin", "platform_admin"].includes(user?.role);
+  const statusLabel = (status) => {
+    if (!hi) return status;
+    return ({
+      scheduled: "निर्धारित",
+      confirmed: "पुष्ट",
+      completed: "पूर्ण",
+      cancelled: "रद्द",
+      no_show: "अनुपस्थित",
+    })[status] || status;
+  };
 
   function listItems(rows, emptyTitle, emptyDescription) {
     return rows.length ? <div className="cv-appointment-list">{rows.map((appointment) => {
@@ -1525,15 +1535,16 @@ export function AppointmentsPage({ token, language = "en", user, patient, recent
       <article className="cv-appointment-row" key={appointment.id}>
         <span className="cv-date-chip"><b>{formatAppointmentDatePart(appointment.scheduled_for, "day", hi ? "hi-IN" : "en-IN")}</b><small>{formatAppointmentDatePart(appointment.scheduled_for, "month", hi ? "hi-IN" : "en-IN")}</small></span>
         <div className="cv-appointment-details"><h3>{appointment.doctor_name || (hi ? "चिकित्सक" : "Clinician")}</h3><p>{appointment.specialty || (hi ? "विशेषज्ञता सूचीबद्ध नहीं" : "Specialty not listed")} · {appointment.hospital_name || (hi ? "अस्पताल सूचीबद्ध नहीं" : "Location not listed")}</p><time dateTime={appointment.scheduled_for}>{formatAppointmentDateTime(appointment.scheduled_for, hi ? "hi-IN" : "en-IN")} IST</time></div>
-        <span className={`cv-status cv-status-${appointment.status}`}>{appointment.status}</span>
+        <span className={`cv-status cv-status-${appointment.status}`}>{statusLabel(appointment.status)}</span>
         {user?.role === "patient" && <div className="cv-appointment-payment" aria-label={hi ? "भुगतान स्थिति" : "Payment status"}>
-          <span>{hi ? "परामर्श शुल्क" : "Consultation fee"}: {formatMoney(appointment.fee_minor)}</span>
-          {paymentState === "paid" ? <><span className="cv-status cv-status-paid">{appointment.payment_is_demo ? (hi ? "डेमो भुगतान · वास्तविक भुगतान नहीं" : "DEMO paid · not a real payment") : (hi ? "भुगतान हुआ" : "Paid")}</span><button className="cv-button cv-button-quiet" type="button" onClick={() => setSelectedReceiptAppointment(appointment)}>{hi ? "रसीद देखें" : "View receipt"}</button></> : ["refunded", "partially_refunded"].includes(paymentState) ? <><span className="cv-status">{paymentState === "refunded" ? (hi ? "रिफंड हुआ" : "Refunded") : (hi ? "आंशिक रिफंड" : "Partially refunded")}</span><button className="cv-button cv-button-quiet" type="button" onClick={() => setSelectedReceiptAppointment(appointment)}>{hi ? "विवरण देखें" : "View details"}</button></> : paymentState === "invoice_cancelled" ? <span className="cv-subtle">{hi ? "इनवॉइस रद्द" : "Invoice cancelled"}</span> : paymentAction ? <><span className="cv-subtle">{paymentState === "pending" ? (hi ? "भुगतान लंबित" : "Payment pending") : paymentState === "failed" ? (hi ? "भुगतान विफल" : "Payment failed") : paymentState === "cancelled" ? (hi ? "भुगतान रद्द" : "Payment cancelled") : (hi ? "भुगतान बाकी" : "Payment due")}</span><button className={`cv-button ${paymentAction === "pay" ? "cv-button-primary" : "cv-button-quiet"}`} type="button" disabled={paymentAction === "check_status" ? loading : paymentStartId !== null} onClick={() => paymentAction === "check_status" ? loadAppointments() : startAppointmentPayment(appointment)}>{paymentAction === "check_status" ? (loading ? (hi ? "जाँच रहे हैं…" : "Checking…") : (hi ? "भुगतान स्थिति जाँचें" : "Check payment status")) : paymentStartId === appointment.id ? (hi ? "तैयार हो रहा है…" : "Preparing…") : paymentAction === "retry" ? (hi ? "फिर भुगतान करें" : "Retry payment") : (hi ? "अभी भुगतान करें" : "Pay now")}</button></> : <span className="cv-subtle">{paymentState === "not_due" ? (appointment.payment_block_reason === "past" ? (hi ? "बीते हुए अपॉइंटमेंट के लिए भुगतान उपलब्ध नहीं है" : "Payment unavailable for a past appointment") : appointment.payment_block_reason === "cancelled" ? (hi ? "रद्द अपॉइंटमेंट के लिए भुगतान उपलब्ध नहीं है" : "Payment unavailable for a cancelled appointment") : (hi ? "इस अपॉइंटमेंट के लिए नया भुगतान उपलब्ध नहीं है" : "New payment is unavailable for this appointment")) : (hi ? "क्लिनिक का इनवॉइस अभी जारी नहीं हुआ" : "Clinic invoice not issued yet")}</span>}
+          <span className="cv-appointment-fee">{hi ? "परामर्श शुल्क" : "Consultation fee"}: {formatMoney(appointment.fee_minor)}</span>
+          {paymentState === "paid" ? <span className="cv-status cv-status-paid">{appointment.payment_is_demo ? (hi ? "डेमो भुगतान · वास्तविक भुगतान नहीं" : "DEMO paid · not a real payment") : (hi ? "भुगतान हुआ" : "Paid")}</span> : ["refunded", "partially_refunded"].includes(paymentState) ? <span className="cv-status">{paymentState === "refunded" ? (hi ? "रिफंड हुआ" : "Refunded") : (hi ? "आंशिक रिफंड" : "Partially refunded")}</span> : paymentState === "invoice_cancelled" ? <span className="cv-subtle">{hi ? "इनवॉइस रद्द" : "Invoice cancelled"}</span> : paymentAction ? <><span className="cv-subtle">{paymentState === "pending" ? (hi ? "भुगतान लंबित" : "Payment pending") : paymentState === "failed" ? (hi ? "भुगतान विफल" : "Payment failed") : paymentState === "cancelled" ? (hi ? "भुगतान रद्द" : "Payment cancelled") : (hi ? "भुगतान बाकी" : "Payment due")}</span><button className={`cv-button ${paymentAction === "pay" ? "cv-button-primary" : "cv-button-quiet"}`} type="button" disabled={paymentAction === "check_status" ? loading : paymentStartId !== null} onClick={() => paymentAction === "check_status" ? loadAppointments() : startAppointmentPayment(appointment)}>{paymentAction === "check_status" ? (loading ? (hi ? "जाँच रहे हैं…" : "Checking…") : (hi ? "भुगतान स्थिति जाँचें" : "Check payment status")) : paymentStartId === appointment.id ? (hi ? "तैयार हो रहा है…" : "Preparing…") : paymentAction === "retry" ? (hi ? "फिर भुगतान करें" : "Retry payment") : (hi ? "अभी भुगतान करें" : "Pay now")}</button></> : <span className="cv-subtle">{paymentState === "not_due" ? (appointment.payment_block_reason === "past" ? (hi ? "बीते हुए अपॉइंटमेंट के लिए भुगतान उपलब्ध नहीं है" : "Payment unavailable for a past appointment") : appointment.payment_block_reason === "cancelled" ? (hi ? "रद्द अपॉइंटमेंट के लिए भुगतान उपलब्ध नहीं है" : "Payment unavailable for a cancelled appointment") : (hi ? "इस अपॉइंटमेंट के लिए नया भुगतान उपलब्ध नहीं है" : "New payment is unavailable for this appointment")) : (hi ? "क्लिनिक का इनवॉइस अभी जारी नहीं हुआ" : "Clinic invoice not issued yet")}</span>}
         </div>}
         <div className="cv-appointment-actions">
           <button className="cv-button cv-button-quiet cv-button-download" type="button" onClick={() => downloadAppointmentSlip(appointment.id)} title="Download appointment confirmation slip PDF">
             📄 {hi ? "स्लिप (PDF)" : "Slip (PDF)"}
           </button>
+          {user?.role === "patient" && ["paid", "refunded", "partially_refunded"].includes(paymentState) && <button className="cv-button cv-button-quiet" type="button" onClick={() => setSelectedReceiptAppointment(appointment)}>{paymentState === "paid" ? (hi ? "रसीद देखें" : "View receipt") : (hi ? "विवरण देखें" : "View details")}</button>}
           {appointment.status === "scheduled" && canConfirm && <button className="cv-button cv-button-quiet" disabled={confirmingId === appointment.id} onClick={() => confirmAppointment(appointment)}>{confirmingId === appointment.id ? (hi ? "पुष्टि हो रही है…" : "Confirming…") : (hi ? "पुष्टि करें" : "Confirm")}</button>}
           {["scheduled", "confirmed"].includes(appointment.status) && new Date(appointment.scheduled_for) >= new Date() && <button className="cv-button cv-button-quiet" disabled={rescheduleBusy} onClick={() => { setSelectedRescheduleAppointment(appointment); setRescheduleTime(""); setRescheduleType(appointment.consultation_type); setError(""); }}>{hi ? "समय बदलें" : "Reschedule"}</button>}
           {["scheduled", "confirmed"].includes(appointment.status) && new Date(appointment.scheduled_for) >= new Date() && <button className="cv-button cv-button-quiet" disabled={cancellingId === appointment.id} onClick={() => cancelAppointment(appointment)}>{cancellingId === appointment.id ? (hi ? "रद्द हो रहा है…" : "Cancelling…") : (hi ? "रद्द करें" : "Cancel")}</button>}

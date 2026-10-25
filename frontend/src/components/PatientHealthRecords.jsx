@@ -2878,6 +2878,9 @@ export function PatientHealthRecords({ token, language = "en", onNavigate }) {
           onClose={() => setSelectedRecordModal(null)}
           size="large"
           title={selectedRecordModal.title || (isHindi ? "क्लिनिकल रिकॉर्ड विवरण" : "Clinical Record Details")}
+          language={language}
+          className="cv-modal-clinical-record"
+          bodyClassName="cv-modal-record-body"
         >
           <div id="cv-printable-area" className="cv-record-detail-container">
             {/* Official Clinic / Hospital Letterhead Header */}

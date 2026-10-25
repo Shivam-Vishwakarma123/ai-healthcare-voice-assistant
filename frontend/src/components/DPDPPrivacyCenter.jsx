@@ -27,7 +27,7 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
   const [processingErasure, setProcessingErasure] = useState(false);
 
   // 48-Hour PIN-Protected Share Link State
-  const [sharePin, setSharePin] = useState("1234");
+  const [sharePin, setSharePin] = useState("");
   const [generatedShare, setGeneratedShare] = useState(null);
   const [generatingShare, setGeneratingShare] = useState(false);
   const [shareError, setShareError] = useState("");
@@ -90,11 +90,12 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
       });
       setErasureScheduled(true);
       setErasureNotice(
-        res.message ||
-        "All consultation conversations scheduled for permanent erasure under DPDP Act 2023 with a 48-hour cooling-off safety period."
+        res.message || (isHindi
+          ? "DPDP अधिनियम 2023 के तहत सभी परामर्श वार्तालापों को 48 घंटे की सुरक्षा अवधि के बाद मिटाने के लिए निर्धारित किया गया है।"
+          : "All consultation conversations scheduled for permanent erasure under DPDP Act 2023 with a 48-hour cooling-off safety period.")
       );
     } catch (err) {
-      setErasureNotice(`Erasure request failed: ${err.message}`);
+      setErasureNotice(isHindi ? `मिटाने का अनुरोध विफल: ${err.message}` : `Erasure request failed: ${err.message}`);
     } finally {
       setProcessingErasure(false);
     }
@@ -124,7 +125,7 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
       setVerifyToken(res.share_token);
       setVerifyPin(sharePin);
     } catch (err) {
-      setShareError(err.message || "Could not generate share link.");
+      setShareError(err.message || (isHindi ? "शेयर लिंक नहीं बनाया जा सका।" : "Could not generate share link."));
     } finally {
       setGeneratingShare(false);
     }
@@ -157,7 +158,7 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
       );
       setSharedSummaryResult(res);
     } catch (err) {
-      setVerifyError(err.message || "Invalid PIN, expired token, or access denied.");
+      setVerifyError(err.message || (isHindi ? "पिन अमान्य है, टोकन की अवधि समाप्त हो गई है या पहुँच अस्वीकृत है।" : "Invalid PIN, expired token, or access denied."));
     } finally {
       setVerifying(false);
     }
@@ -180,7 +181,7 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
       );
       setPatientGuide(guide);
     } catch (err) {
-      setGuideError(err.message || "Failed to load patient guide. Ensure encounter is finalized by doctor.");
+      setGuideError(err.message || (isHindi ? "मरीज गाइड लोड नहीं हुई। सुनिश्चित करें कि डॉक्टर ने मुलाक़ात को अंतिम रूप दिया है।" : "Failed to load patient guide. Ensure encounter is finalized by doctor."));
     } finally {
       setLoadingGuide(false);
     }
@@ -215,7 +216,7 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
   return (
     <div className="cv-privacy-center">
       <ScreenTitle
-        eyebrow="DIGITAL PERSONAL DATA PROTECTION (DPDP ACT 2023)"
+        eyebrow={isHindi ? "डिजिटल व्यक्तिगत डेटा संरक्षण अधिनियम (डीपीडीपी अधिनियम 2023)" : "DIGITAL PERSONAL DATA PROTECTION (DPDP ACT 2023)"}
         title={isHindi ? "DPDP गोपनीयता व सहमति केंद्र" : "DPDP Privacy & Consent Center"}
         description={
           isHindi
@@ -224,7 +225,7 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
         }
       />
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "20px" }}>
+      <div className="cv-privacy-grid">
         {/* SECTION 1: Patient Data Consent Management */}
         <div className="cv-card cv-privacy-card">
           <div className="cv-card-header">
@@ -302,7 +303,7 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
             disabled={savingConsent}
             style={{ width: "100%", justifyContent: "center" }}
           >
-            {savingConsent ? "Saving..." : (isHindi ? "सहमति निर्देश अपडेट करें" : "Update Consent Directives")}
+            {savingConsent ? (isHindi ? "सहेजा जा रहा है…" : "Saving…") : (isHindi ? "सहमति निर्देश अपडेट करें" : "Update Consent Directives")}
           </button>
         </div>
 
@@ -322,18 +323,18 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
 
           {erasureScheduled ? (
             <div className="cv-alert cv-alert-warning" style={{ margin: "16px 0" }}>
-              <div style={{ fontWeight: "700" }}>⏳ Erasure Scheduled Under DPDP Act</div>
+              <div style={{ fontWeight: "700" }}>{isHindi ? "⏳ DPDP अधिनियम के तहत डेटा मिटाना निर्धारित" : "⏳ Erasure Scheduled Under DPDP Act"}</div>
               <p style={{ margin: "4px 0 0", fontSize: "0.85rem" }}>
-                {erasureNotice || "Your consultation data is queued for permanent deletion. Safety cooling-off period active for 48 hours."}
+                {erasureNotice || (isHindi ? "आपका परामर्श डेटा स्थायी रूप से मिटाने के लिए कतार में है। 48 घंटे की सुरक्षा अवधि सक्रिय है।" : "Your consultation data is queued for permanent deletion. Safety cooling-off period active for 48 hours.")}
               </p>
             </div>
           ) : (
             <div style={{ margin: "16px 0", padding: "12px", background: "var(--cv-surface-soft)", borderRadius: "8px" }}>
               <div style={{ fontSize: "0.85rem", color: "var(--cv-text-secondary)" }}>
-                Status: <strong>No pending erasure requests</strong>
+                {isHindi ? "स्थिति:" : "Status:"} <strong>{isHindi ? "मिटाने का कोई अनुरोध लंबित नहीं है" : "No pending erasure requests"}</strong>
               </div>
               <small style={{ color: "var(--cv-text-muted)", display: "block", marginTop: "4px" }}>
-                Finalized clinical notes and signed prescriptions are retained under medical records compliance regulations.
+                {isHindi ? "अंतिम रूप दिए गए क्लिनिकल नोट और हस्ताक्षरित पर्चे चिकित्सा रिकॉर्ड अनुपालन नियमों के अनुसार सुरक्षित रखे जाते हैं।" : "Finalized clinical notes and signed prescriptions are retained under medical records compliance regulations."}
               </small>
             </div>
           )}
@@ -345,7 +346,7 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
             disabled={processingErasure}
             style={{ width: "100%", justifyContent: "center" }}
           >
-            {processingErasure ? "Scheduling..." : (isHindi ? "परामर्श इतिहास मिटाने का अनुरोध करें" : "Request Consultation History Erasure")}
+            {processingErasure ? (isHindi ? "अनुरोध दर्ज हो रहा है…" : "Scheduling…") : (isHindi ? "परामर्श इतिहास मिटाने का अनुरोध करें" : "Request Consultation History Erasure")}
           </button>
         </div>
       </div>
@@ -373,7 +374,7 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
               className="cv-input"
               value={sharePin}
               onChange={(e) => setSharePin(e.target.value.replace(/\D/g, ""))}
-              placeholder="e.g. 5839"
+              placeholder={isHindi ? "उदाहरण: 5839" : "e.g. 5839"}
             />
           </div>
 
@@ -383,7 +384,7 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
             onClick={handleGenerateShareLink}
             disabled={generatingShare}
           >
-            {generatingShare ? "Generating..." : (isHindi ? "🔒 सुरक्षित शेयर लिंक बनाएं" : "🔒 Generate Secure Share Link")}
+            {generatingShare ? (isHindi ? "बनाया जा रहा है…" : "Generating…") : (isHindi ? "🔒 सुरक्षित शेयर लिंक बनाएं" : "🔒 Generate Secure Share Link")}
           </button>
         </div>
 
@@ -393,15 +394,15 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
           <div className="cv-share-result-box" style={{ padding: "14px", background: "var(--cv-surface-tint)", borderRadius: "8px", border: "1px solid var(--cv-accent-soft)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px" }}>
               <div>
-                <strong>Share Token:</strong> <code style={{ fontSize: "0.9rem" }}>{generatedShare.share_token}</code>
-                <span className="cv-badge cv-badge-routine" style={{ marginLeft: "8px" }}>Valid for 48 Hours</span>
+                <strong>{isHindi ? "शेयर टोकन:" : "Share Token:"}</strong> <code style={{ fontSize: "0.9rem" }}>{generatedShare.share_token}</code>
+                <span className="cv-badge cv-badge-routine" style={{ marginLeft: "8px" }}>{isHindi ? "48 घंटे तक मान्य" : "Valid for 48 Hours"}</span>
               </div>
               <button type="button" className="cv-btn cv-btn-secondary" onClick={handleCopyShareLink}>
-                {copiedLink ? "✓ Copied Link!" : "📋 Copy Share Link"}
+                {copiedLink ? (isHindi ? "✓ लिंक कॉपी हुआ!" : "✓ Copied Link!") : (isHindi ? "📋 शेयर लिंक कॉपी करें" : "📋 Copy Share Link")}
               </button>
             </div>
             <div style={{ marginTop: "8px", fontSize: "0.85rem", color: "var(--cv-text-muted)" }}>
-              Share this link and inform the recipient of your PIN (<code>{sharePin}</code>). The recipient cannot view records without entering this PIN.
+              {isHindi ? <>यह लिंक साझा करें और प्राप्तकर्ता को अपना पिन (<code>{sharePin}</code>) बताएं। पिन दर्ज किए बिना प्राप्तकर्ता रिकॉर्ड नहीं देख सकता।</> : <>Share this link and inform the recipient of your PIN (<code>{sharePin}</code>). The recipient cannot view records without entering this PIN.</>}
             </div>
           </div>
         )}
@@ -416,7 +417,7 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
               type="text"
               className="cv-input"
               style={{ flex: "2", minWidth: "220px" }}
-              placeholder="Paste Share Token"
+            placeholder={isHindi ? "शेयर टोकन यहाँ चिपकाएँ" : "Paste Share Token"}
               value={verifyToken}
               onChange={(e) => setVerifyToken(e.target.value)}
             />
@@ -424,7 +425,7 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
               type="password"
               className="cv-input"
               style={{ flex: "1", minWidth: "100px" }}
-              placeholder="Enter PIN"
+              placeholder={isHindi ? "पिन दर्ज करें" : "Enter PIN"}
               value={verifyPin}
               onChange={(e) => setVerifyPin(e.target.value)}
             />
@@ -434,7 +435,7 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
               onClick={handleVerifyShare}
               disabled={verifying}
             >
-              {verifying ? "Verifying..." : "Decrypt & View Record"}
+              {verifying ? (isHindi ? "जाँच हो रही है…" : "Verifying…") : (isHindi ? "डिक्रिप्ट करके रिकॉर्ड देखें" : "Decrypt & View Record")}
             </button>
           </div>
 
@@ -442,11 +443,11 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
 
           {sharedSummaryResult && (
             <div className="cv-shared-record-preview" style={{ marginTop: "14px", padding: "14px", background: "var(--cv-surface-soft)", borderRadius: "8px" }}>
-              <h4 style={{ margin: "0 0 6px" }}>✓ Decrypted Patient Clinical Summary: {sharedSummaryResult.patient_name}</h4>
+              <h4 style={{ margin: "0 0 6px" }}>✓ {isHindi ? "डिक्रिप्ट किया गया क्लिनिकल सारांश:" : "Decrypted Patient Clinical Summary:"} {sharedSummaryResult.patient_name}</h4>
               <p style={{ margin: 0, fontSize: "0.85rem" }}>
-                <strong>Overview:</strong> Age {sharedSummaryResult.age || "N/A"}, {sharedSummaryResult.gender || "N/A"} •
-                Active Allergies: {sharedSummaryResult.active_allergies?.length || 0} •
-                Prescriptions: {sharedSummaryResult.recent_prescriptions?.length || 0}
+                <strong>{isHindi ? "सारांश:" : "Overview:"}</strong> {isHindi ? "आयु" : "Age"} {sharedSummaryResult.age || "N/A"}, {sharedSummaryResult.gender || "N/A"} •
+                {isHindi ? "सक्रिय एलर्जी:" : "Active Allergies:"} {sharedSummaryResult.active_allergies?.length || 0} •
+                {isHindi ? "पर्चे:" : "Prescriptions:"} {sharedSummaryResult.recent_prescriptions?.length || 0}
               </p>
             </div>
           )}
@@ -473,7 +474,7 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
             <input
               type="number"
               className="cv-input"
-              placeholder="e.g. 100"
+              placeholder={isHindi ? "उदाहरण: 100" : "e.g. 100"}
               value={guideApptId}
               onChange={(e) => setGuideApptId(e.target.value)}
             />
@@ -486,7 +487,7 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
               value={guideLanguage}
               onChange={(e) => setGuideLanguage(e.target.value)}
             >
-              <option value="en">English (Medical Guide)</option>
+              <option value="en">{isHindi ? "अंग्रेज़ी (चिकित्सा गाइड)" : "English (Medical Guide)"}</option>
               <option value="hi">हिन्दी (Hindi Patient Guide)</option>
             </select>
           </div>
@@ -497,7 +498,7 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
             onClick={handleFetchPatientGuide}
             disabled={loadingGuide}
           >
-            {loadingGuide ? "Generating..." : (isHindi ? "गाइड तैयार करें" : "Generate Patient Guide")}
+            {loadingGuide ? (isHindi ? "तैयार हो रही है…" : "Generating…") : (isHindi ? "गाइड तैयार करें" : "Generate Patient Guide")}
           </button>
         </div>
 
@@ -525,14 +526,14 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
 
             {patientGuide.follow_up_instructions && (
               <div style={{ margin: "12px 0" }}>
-                <h4 style={{ margin: "0 0 4px" }}>📋 Follow-Up:</h4>
+                <h4 style={{ margin: "0 0 4px" }}>📋 {isHindi ? "आगे की देखभाल:" : "Follow-Up:"}</h4>
                 <p style={{ margin: 0 }}>{patientGuide.follow_up_instructions}</p>
               </div>
             )}
 
             {patientGuide.red_flag_warnings?.length > 0 && (
               <div className="cv-alert cv-alert-warning" style={{ margin: "12px 0" }}>
-                <strong>⚠️ Red-Flags & Emergency Contacts:</strong>
+                <strong>⚠️ {isHindi ? "गंभीर चेतावनी और आपातकालीन संपर्क:" : "Red-Flags & Emergency Contacts:"}</strong>
                 <ul style={{ margin: "4px 0", paddingLeft: "20px" }}>
                   {patientGuide.red_flag_warnings.map((w, i) => <li key={i}>{w}</li>)}
                 </ul>
@@ -541,7 +542,7 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
 
             <div style={{ marginTop: "12px", display: "flex", justifyContent: "flex-end" }}>
               <button type="button" className="cv-btn cv-btn-secondary" onClick={() => window.print()}>
-                🖨️ Print Patient Guide
+                🖨️ {isHindi ? "मरीज गाइड प्रिंट करें" : "Print Patient Guide"}
               </button>
             </div>
           </div>
@@ -569,7 +570,7 @@ export function DPDPPrivacyCenter({ token, user, language = "en", onNavigate }) 
             onClick={handleExportFHIR}
             disabled={exportingFHIR}
           >
-            {exportingFHIR ? "Exporting..." : "📥 Export HL7 FHIR R4 JSON Bundle"}
+            {exportingFHIR ? (isHindi ? "निर्यात हो रहा है…" : "Exporting…") : (isHindi ? "📥 HL7 FHIR R4 JSON बंडल निर्यात करें" : "📥 Export HL7 FHIR R4 JSON Bundle")}
           </button>
         </div>
       </div>

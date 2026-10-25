@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 
 // Accessible modal dialog primitive managing keyboard navigation, focus trap, and background scroll locking.
-export default function Modal({ isOpen, onClose, title, children, size = "medium", language = "en" }) {
+export default function Modal({ isOpen, onClose, title, children, size = "medium", language = "en", className = "", bodyClassName = "" }) {
   const dialogRef = useRef(null);
   const hi = language === "hi";
 
@@ -66,7 +66,7 @@ export default function Modal({ isOpen, onClose, title, children, size = "medium
     >
       <div
         ref={dialogRef}
-        className={`cv-modal cv-modal-${size}`}
+        className={`cv-modal cv-modal-${size} ${className}`.trim()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="cv-modal-title"
@@ -82,7 +82,7 @@ export default function Modal({ isOpen, onClose, title, children, size = "medium
             ×
           </button>
         </div>
-        <div className="cv-modal-body">
+        <div className={`cv-modal-body ${bodyClassName}`.trim()}>
           {children}
         </div>
       </div>
