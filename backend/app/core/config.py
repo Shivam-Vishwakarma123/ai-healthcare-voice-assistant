@@ -131,6 +131,9 @@ class Settings(BaseSettings):
         else:
             self.ai_model = self.llm_model.strip()
 
+        if self.llm_provider == "ollama" and self.llm_primary_model.startswith("gpt-"):
+            self.llm_primary_model = self.llm_model
+
         if self.ai_api_key is not None:
             self.llm_api_key = self.ai_api_key
         else:

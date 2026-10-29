@@ -400,13 +400,17 @@ class BaseLLMProvider:
 
     # Returns prioritized fallback model chain (primary -> default -> fallback -> alternative).
     def get_fallback_models(self) -> list[str]:
-        """Deterministic model fallback chain: primary -> fallback -> alternative."""
-        candidates = [
-            settings.llm_primary_model,
-            self.model,
-            settings.llm_fallback_model,
-            settings.llm_alternative_model,
-        ]
+        """Deterministic model fallback chain: self.model -> fallbacks."""
+        candidates = [self.model]
+        if self.name == "ollama":
+            # Filter out hosted/cloud model IDs for local Ollama runtime
+            for m in [settings.llm_fallback_model, settings.llm_alternative_model]:
+                if m and not m.startswith(("gpt-", "text-", "claude-", "gemini-")):
+                    candidates.append(m)
+        else:
+            for m in [settings.llm_primary_model, settings.llm_fallback_model, settings.llm_alternative_model]:
+                if m:
+                    candidates.append(m)
         chain: list[str] = []
         for m in candidates:
             if m and m not in chain:
@@ -496,7 +500,8 @@ class BaseLLMProvider:
 
                 if response.status_code not in {408, 429, 500, 502, 503, 504} or attempt == self.retry_limit:
                     if response.is_error:
-                        if response.status_code >= 500 and model_idx < len(models_to_try) - 1:
+                        can_fallback = model_idx < len(models_to_try) - 1
+                        if can_fallback and (response.status_code >= 500 or response.status_code == 404):
                             logger.warning(
                                 "Model %s returned HTTP %d. Falling back to %s.",
                                 target_model,
@@ -561,18 +566,36 @@ class BaseLLMProvider:
             content = validate_chat_completion_response(response)
             return schema.model_validate_json(content)
 
-        response = await self.complete(
-            client,
-            messages,
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": schema.__name__,
-                    "strict": True,
-                    "schema": schema.model_json_schema(),
+        try:
+            response = await self.complete(
+                client,
+                messages,
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": schema.__name__,
+                        "strict": True,
+                        "schema": schema.model_json_schema(),
+                    },
                 },
-            },
-        )
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in {400, 422}:
+                logger.warning(
+                    "Provider %s rejected json_schema with HTTP %d. Retrying with fallback json/standard format.",
+                    self.name,
+                    exc.response.status_code,
+                )
+                try:
+                    response = await self.complete(
+                        client,
+                        messages,
+                        response_format={"type": "json_object"},
+                    )
+                except httpx.HTTPStatusError:
+                    response = await self.complete(client, messages)
+            else:
+                raise
         content = validate_chat_completion_response(response)
         try:
             return schema.model_validate_json(content)

@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
@@ -95,10 +95,25 @@ class AssistantAnswer(BaseModel):
 
 # Ingests patient symptoms and risk indicators for deterministic emergency triage.
 class TriageInput(BaseModel):
-    text: str = Field(min_length=2, max_length=4000)
+    text: str = Field(default="", max_length=4000)
+    symptoms: str | None = None
     age_band: str | None = Field(default=None, pattern=r"^(adult|child|infant|elderly)$")
     pregnancy: bool = False
     chronic_condition: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_text(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if not data.get("text") and data.get("symptoms"):
+                data["text"] = str(data["symptoms"])
+        return data
+
+    @model_validator(mode="after")
+    def validate_text_present(self) -> TriageInput:
+        if not self.text or len(self.text.strip()) < 2:
+            raise ValueError("text or symptoms must be at least 2 characters")
+        return self
 
 
 # Returns deterministic emergency acuity level, warning flags, and care guidance.

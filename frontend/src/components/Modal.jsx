@@ -1,15 +1,29 @@
 import { useEffect, useRef } from "react";
 
 // Accessible modal dialog primitive managing keyboard navigation, focus trap, and background scroll locking.
-export default function Modal({ isOpen, onClose, title, children, size = "medium", language = "en", className = "", bodyClassName = "" }) {
+export default function Modal({
+  isOpen,
+  onClose,
+  title,
+  subtitle = null,
+  headerBadge = null,
+  children,
+  footer = null,
+  size = "medium",
+  language = "en",
+  className = "",
+  bodyClassName = "",
+  triggerRef = null,
+  ariaDescribedBy = null,
+}) {
   const dialogRef = useRef(null);
   const hi = language === "hi";
 
   useEffect(() => {
     if (!isOpen) return undefined;
 
-    // Focus management
-    const previouslyFocused = document.activeElement;
+    // Focus management: remember trigger or active element
+    const previouslyFocused = triggerRef?.current || document.activeElement;
     dialogRef.current?.querySelector("button, input, select, textarea, [href], [tabindex]:not([tabindex='-1'])")?.focus();
 
     // Prevent background scroll
@@ -30,6 +44,7 @@ export default function Modal({ isOpen, onClose, title, children, size = "medium
             "button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [href], [tabindex]:not([tabindex='-1'])"
           ),
         ];
+        if (focusableElements.length === 0) return;
         const firstElement = focusableElements[0];
         const lastElement = focusableElements[focusableElements.length - 1];
 
@@ -48,11 +63,17 @@ export default function Modal({ isOpen, onClose, title, children, size = "medium
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       document.body.style.overflow = originalOverflow;
-      previouslyFocused?.focus();
+      if (triggerRef?.current && typeof triggerRef.current.focus === "function") {
+        triggerRef.current.focus();
+      } else if (previouslyFocused && typeof previouslyFocused.focus === "function") {
+        previouslyFocused.focus();
+      }
     };
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, triggerRef]);
 
   if (!isOpen) return null;
+
+  const descId = subtitle ? "cv-modal-subtitle" : ariaDescribedBy;
 
   return (
     <div
@@ -70,9 +91,20 @@ export default function Modal({ isOpen, onClose, title, children, size = "medium
         role="dialog"
         aria-modal="true"
         aria-labelledby="cv-modal-title"
+        aria-describedby={descId || undefined}
       >
         <div className="cv-modal-header">
-          <h2 id="cv-modal-title">{title}</h2>
+          <div className="cv-modal-title-group">
+            <div className="cv-modal-title-row">
+              <h2 id="cv-modal-title">{title}</h2>
+              {headerBadge}
+            </div>
+            {subtitle && (
+              <p id="cv-modal-subtitle" className="cv-modal-subtitle">
+                {subtitle}
+              </p>
+            )}
+          </div>
           <button
             className="cv-modal-close"
             type="button"
@@ -85,6 +117,7 @@ export default function Modal({ isOpen, onClose, title, children, size = "medium
         <div className={`cv-modal-body ${bodyClassName}`.trim()}>
           {children}
         </div>
+        {footer && <div className="cv-modal-footer">{footer}</div>}
       </div>
     </div>
   );

@@ -2,6 +2,33 @@ import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../services/api";
 import { useToast } from "./ToastProvider";
 
+const QUICK_PROMPTS = [
+  {
+    en: "I have had a mild fever and body ache for 2 days",
+    hi: "मुझे 2 दिन से हल्का बुखार और बदन दर्द है",
+    labelEn: "🌡️ Fever for 2 days",
+    labelHi: "🌡️ 2 दिन से बुखार",
+  },
+  {
+    en: "Experiencing persistent dry cough and throat irritation",
+    hi: "लगातार सूखी खांसी और गले में खराश हो रही है",
+    labelEn: "🗣️ Persistent dry cough",
+    labelHi: "🗣️ सूखी खांसी",
+  },
+  {
+    en: "How do I book an appointment with Dr. Asha in General Medicine?",
+    hi: "जनरल मेडिसिन में डॉ. आशा के साथ अपॉइंटमेंट कैसे बुक करें?",
+    labelEn: "📅 Book Dr. Asha",
+    labelHi: "📅 डॉ. आशा से अपॉइंटमेंट",
+  },
+  {
+    en: "What should I do if blood pressure readings are higher than normal?",
+    hi: "यदि रक्तचाप सामान्य से अधिक आए तो क्या प्राथमिक कदम उठाने चाहिए?",
+    labelEn: "🩺 High blood pressure advice",
+    labelHi: "🩺 उच्च रक्तचाप मार्गदर्शन",
+  },
+];
+
 function assistantErrorMessage(message, hindi) {
   const detail = String(message || "");
   if (/ollama|model.{0,80}(not downloaded|not found)|not downloaded.{0,80}model/i.test(detail)) {
@@ -10,6 +37,70 @@ function assistantErrorMessage(message, hindi) {
       : "The AI service is temporarily unavailable. Your safety-check result remains available; please try again later.";
   }
   return detail || (hindi ? "संदेश भेजा नहीं जा सका। कृपया फिर प्रयास करें।" : "Your message could not be sent. Please try again.");
+}
+
+function renderFormattedContent(text) {
+  if (!text) return null;
+  const lines = text.split("\n");
+  const elements = [];
+  let currentList = [];
+  let listType = null;
+
+  function flushList() {
+    if (currentList.length > 0) {
+      if (listType === "ol") {
+        elements.push(<ol key={`ol-${elements.length}`} className="cv-message-list ol">{currentList}</ol>);
+      } else {
+        elements.push(<ul key={`ul-${elements.length}`} className="cv-message-list ul">{currentList}</ul >);
+      }
+      currentList = [];
+      listType = null;
+    }
+  }
+
+  function formatInline(str) {
+    const parts = str.split(/(\*\*[^*]+\*\*)/g);
+    return parts.map((part, i) => {
+      if (part.startsWith("**") && part.endsWith("**")) {
+        return <strong key={i}>{part.slice(2, -2)}</strong>;
+      }
+      return part;
+    });
+  }
+
+  lines.forEach((line, idx) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flushList();
+      return;
+    }
+
+    const numMatch = trimmed.match(/^(\d+)\.\s+(.*)$/);
+    if (numMatch) {
+      if (listType !== "ol") flushList();
+      listType = "ol";
+      currentList.push(<li key={`li-${idx}`}>{formatInline(numMatch[2])}</li>);
+      return;
+    }
+
+    const bulletMatch = trimmed.match(/^[-*•]\s+(.*)$/);
+    if (bulletMatch) {
+      if (listType !== "ul") flushList();
+      listType = "ul";
+      currentList.push(<li key={`li-${idx}`}>{formatInline(bulletMatch[1])}</li>);
+      return;
+    }
+
+    flushList();
+    elements.push(
+      <p key={`p-${idx}`} className="cv-message-paragraph">
+        {formatInline(trimmed)}
+      </p>
+    );
+  });
+
+  flushList();
+  return <div className="cv-message-body">{elements}</div>;
 }
 
 // Interactive AI voice and text health assistant providing clinical triage, RAG evidence citations, and doctor discovery.
@@ -24,6 +115,7 @@ export default function VoiceAssistant({ token, language = "en", onNavigate }) {
   const [speechConfigError, setSpeechConfigError] = useState("");
   const [transcriptNeedsConfirmation, setTranscriptNeedsConfirmation] = useState(false);
   const [error, setError] = useState("");
+  const [lastFailedPrompt, setLastFailedPrompt] = useState("");
 
   // Consent and history state
   const [consentToStore, setConsentToStore] = useState(() => {
@@ -41,7 +133,13 @@ export default function VoiceAssistant({ token, language = "en", onNavigate }) {
   const mediaStreamRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const recordingTimeoutRef = useRef(null);
+  const messagesEndRef = useRef(null);
+  const textareaRef = useRef(null);
   const hi = language === "hi";
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, busy, transcriptionBusy]);
 
   useEffect(() => {
     if (!error) return;
@@ -159,18 +257,20 @@ export default function VoiceAssistant({ token, language = "en", onNavigate }) {
     setActiveConversationId(null);
     setMessages([]);
     setDraft("");
+    setLastFailedPrompt("");
   }
 
   // Dispatches user prompt to AI assistant with triage classification, RAG retrieval, and recommendation extraction.
-  async function sendMessage(event) {
+  async function sendMessage(event, textOverride = null) {
     event?.preventDefault();
-    const content = draft.trim();
+    const content = (textOverride !== null ? textOverride : draft).trim();
     if (!content || busy || transcriptionBusy || transcriptNeedsConfirmation) return;
 
     const nextMessages = [...messages, { role: "user", content }];
     setMessages(nextMessages);
     setDraft("");
     setError("");
+    setLastFailedPrompt("");
     setBusy(true);
 
     try {
@@ -205,12 +305,63 @@ export default function VoiceAssistant({ token, language = "en", onNavigate }) {
         retrieval_confidence: result.retrieval_confidence ?? null,
       };
       setMessages((current) => [...current, answer]);
+      setLastFailedPrompt("");
     } catch (requestError) {
       setError(assistantErrorMessage(requestError.message, hi));
+      setLastFailedPrompt(content);
       setMessages((current) => current.slice(0, -1));
       setDraft(content);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function copyToClipboard(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast(hi ? "मार्गदर्शन कॉपी किया गया।" : "Response copied to clipboard.", "success");
+    } catch {
+      toast("Could not copy text.", "error");
+    }
+  }
+
+  function downloadTranscript() {
+    if (!messages.length) return;
+    const header = `CareVoice AI Health Consultation Summary\nDate: ${new Date().toLocaleString()}\nLanguage: ${language}\nNotice: General health education only. Not a medical diagnosis.\nEmergency: Call 112 or 108 immediately if in danger.\n\n========================================\n\n`;
+    const transcriptText = messages
+      .map((m) => `[${m.role === "user" ? (hi ? "मरीज़" : "Patient") : "CareVoice Assistant"}]:\n${m.content}\n`)
+      .join("\n----------------------------------------\n\n");
+    const blob = new Blob([header + transcriptText], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `carevoice-consultation-${new Date().toISOString().slice(0, 10)}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast(hi ? "सारांश डाउनलोड किया गया।" : "Consultation summary downloaded.", "success");
+  }
+
+  function handleQuickPrompt(promptText) {
+    setDraft(promptText);
+    textareaRef.current?.focus();
+  }
+
+  function handleKeyDown(event) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      if (!busy && !transcriptionBusy && !transcriptNeedsConfirmation && draft.trim()) {
+        sendMessage(event);
+      }
+    }
+  }
+
+  function retryLastFailed() {
+    if (lastFailedPrompt) {
+      const promptToRetry = lastFailedPrompt;
+      setLastFailedPrompt("");
+      sendMessage(null, promptToRetry);
     }
   }
 
@@ -433,13 +584,57 @@ export default function VoiceAssistant({ token, language = "en", onNavigate }) {
       </div>
 
       <section className="card chat-card" aria-label="CareVoice conversation">
+        <div className="cv-chat-card-header">
+          <span className="cv-chat-card-title">💬 {hi ? "परामर्श बातचीत" : "Consultation Thread"}</span>
+          {messages.length > 0 && (
+            <div className="cv-chat-card-tools">
+              <button
+                type="button"
+                className="cv-chat-tool-btn"
+                onClick={downloadTranscript}
+                title={hi ? "परामर्श सारांश डाउनलोड करें" : "Download consultation transcript"}
+              >
+                📥 {hi ? "सारांश डाउनलोड" : "Download summary"}
+              </button>
+              <button
+                type="button"
+                className="cv-chat-tool-btn"
+                onClick={startNewConsultation}
+                title={hi ? "नई बातचीत शुरू करें" : "Start fresh session"}
+              >
+                + {hi ? "नया" : "New"}
+              </button>
+            </div>
+          )}
+        </div>
+
         <div className="chat-messages" aria-live="polite">
           {!messages.length && (
-            <p className="chat-empty">
-              {hi
-                ? "आपकी बातचीत यहाँ दिखाई देगी। लिखकर या बोलकर शुरू करें।"
-                : "Your conversation will appear here. Start by typing or using voice input."}
-            </p>
+            <div className="chat-empty-container">
+              <p className="chat-empty">
+                {hi
+                  ? "आपकी बातचीत यहाँ दिखाई देगी। एक त्वरित विषय चुनें या अपना प्रश्न लिखें।"
+                  : "Your conversation will appear here. Choose a quick topic below or type your question."}
+              </p>
+              <div className="cv-quick-prompts" aria-label={hi ? "त्वरित सुझाव" : "Quick suggestions"}>
+                <div className="cv-quick-prompts-title">
+                  💡 {hi ? "सुझाए गए प्रश्न" : "Suggested questions"}
+                </div>
+                <div className="cv-quick-prompts-grid">
+                  {QUICK_PROMPTS.map((qp, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      className="cv-quick-prompt-btn"
+                      onClick={() => handleQuickPrompt(hi ? qp.hi : qp.en)}
+                    >
+                      <span>{qp.icon}</span>
+                      <span>{hi ? qp.hi : qp.en}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
           )}
           {messages.map((message, index) => (
             <article className={`chat-message ${message.role}`} key={`${index}-${message.role}`}>
@@ -460,7 +655,11 @@ export default function VoiceAssistant({ token, language = "en", onNavigate }) {
                 )}
               </div>
 
-              <p>{message.content}</p>
+              {message.role === "assistant" ? (
+                renderFormattedContent(message.content)
+              ) : (
+                <p className="cv-message-paragraph">{message.content}</p>
+              )}
 
               {/* Module 4: Conflicting Clinical Guidance Alert */}
               {message.role === "assistant" && message.conflicting_sources && (
@@ -563,12 +762,65 @@ export default function VoiceAssistant({ token, language = "en", onNavigate }) {
               )}
 
               {message.role === "assistant" && (
-                <button className="text-button" type="button" onClick={() => speak(message.content)}>
-                  🔊 {hi ? "ज़ोर से सुनें" : "Read aloud"}
-                </button>
+                <div className="cv-message-actions">
+                  <button
+                    className="cv-message-action-btn"
+                    type="button"
+                    onClick={() => speak(message.content)}
+                    title={hi ? "ज़ोर से सुनें" : "Read aloud"}
+                  >
+                    🔊 {hi ? "सुनें" : "Read aloud"}
+                  </button>
+                  <button
+                    className="cv-message-action-btn"
+                    type="button"
+                    onClick={() => copyToClipboard(message.content)}
+                    title={hi ? "मार्गदर्शन कॉपी करें" : "Copy to clipboard"}
+                  >
+                    📋 {hi ? "कॉपी" : "Copy"}
+                  </button>
+                </div>
               )}
             </article>
           ))}
+
+          {messages.length > 0 && messages[messages.length - 1].urgency === "emergency" && (
+            <aside className="cv-chat-emergency-banner" role="alert">
+              <div>
+                <strong>🚨 {hi ? "आपातकालीन चेतावनी: तत्काल सहायता प्राप्त करें" : "Emergency Alert: Immediate Care Required"}</strong>
+                <div style={{ fontSize: "12px", marginTop: "2px" }}>
+                  {hi
+                    ? "पहचाने गए लक्षणों के लिए तत्काल आपातकालीन मूल्यांकन आवश्यक हो सकता है।"
+                    : "The symptoms described may represent an acute emergency. Contact emergency services right away."}
+                </div>
+              </div>
+              <div className="cv-chat-emergency-links">
+                <a href="tel:112" className="cv-chat-emergency-btn">📞 112</a>
+                <a href="tel:108" className="cv-chat-emergency-btn">🚑 108</a>
+                <a href="tel:14416" className="cv-chat-emergency-btn">🧠 14416</a>
+              </div>
+            </aside>
+          )}
+
+          {lastFailedPrompt && (
+            <aside className="cv-chat-retry-banner" role="status">
+              <div className="cv-chat-retry-content">
+                <span>
+                  ⚠️ {hi ? "पिछला संदेश भेजने में असमर्थ रहा।" : "Unable to reach CareVoice AI. You can retry with one click."}
+                </span>
+                <div className="cv-chat-retry-buttons">
+                  <button
+                    type="button"
+                    className="cv-button cv-button-primary cv-btn-sm"
+                    onClick={retryLastFailed}
+                    disabled={busy}
+                  >
+                    🔄 {hi ? "पुनः प्रयास करें" : "Retry now"}
+                  </button>
+                </div>
+              </div>
+            </aside>
+          )}
 
           {transcriptionBusy && (
             <p className="chat-empty" role="status">
@@ -580,6 +832,7 @@ export default function VoiceAssistant({ token, language = "en", onNavigate }) {
               {hi ? "CareVoice जवाब तैयार कर रहा है…" : "CareVoice is synthesizing guidance…"}
             </p>
           )}
+          <div ref={messagesEndRef} />
         </div>
 
         <form className="chat-form" onSubmit={sendMessage}>
@@ -601,10 +854,12 @@ export default function VoiceAssistant({ token, language = "en", onNavigate }) {
             </p>
           )}
           <textarea
+            ref={textareaRef}
             aria-label={hi ? "संदेश" : "Message"}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            placeholder={hi ? "सामान्य स्वास्थ्य प्रश्न लिखें…" : "Type a health or portal navigation question…"}
+            onKeyDown={handleKeyDown}
+            placeholder={hi ? "सामान्य स्वास्थ्य प्रश्न लिखें… (Enter दबाएँ भेजने के लिए)" : "Type a health question… (Press Enter to send, Shift+Enter for new line)"}
             maxLength={4000}
             rows={2}
           />
